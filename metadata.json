@@ -1,0 +1,6 @@
+{
+  "name": "Business Sales Manager (BSM) App",
+  "description": "A simple sales management system for small businesses and solo entrepreneurs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
