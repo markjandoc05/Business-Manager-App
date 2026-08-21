@@ -1,0 +1,159 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function canManageClients() {
+      return isActiveUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function canManageLeads() {
+      return isActiveUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function canManageDeals() {
+      return isActiveUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function canManageTasks() {
+      return isActiveUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function clientCanHaveDeals(clientId) {
+      return exists(/databases/$(database)/documents/clients/$(clientId))
+        && (!get(/databases/$(database)/documents/clients/$(clientId)).data.keys().hasAny(['status'])
+          || get(/databases/$(database)/documents/clients/$(clientId)).data.status != 'ARCHIVED');
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && request.resource.data.role == 'USER'
+        && request.resource.data.active == false
+        && request.resource.data.keys().hasOnly(['name', 'email', 'role', 'active', 'createdAt', 'lastLogin']);
+
+      allow update: if (signedIn() && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.active == resource.data.active
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'email', 'lastLogin']))
+        || (isAdmin() && request.auth.uid != userId);
+
+      allow delete: if isAdmin() && request.auth.uid != userId;
+    }
+
+    match /clients/{clientId} {
+      allow read: if isActiveUser();
+
+      allow create: if canManageClients()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status == 'ACTIVE';
+
+      allow update: if canManageClients()
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt;
+
+      allow delete: if false;
+    }
+
+    match /leads/{leadId} {
+      allow read: if isActiveUser();
+
+      allow create: if canManageLeads()
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status == 'New'
+        && request.resource.data.archived == false;
+
+      allow update: if canManageLeads()
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && (request.resource.data.status != 'Client'
+          || (resource.data.status != 'Client'
+            && request.resource.data.keys().hasAll(['convertedClientId'])
+            && request.resource.data.convertedClientId is string));
+
+      allow delete: if false;
+    }
+
+    match /deals/{dealId} {
+      allow read: if isActiveUser();
+
+      allow create: if canManageDeals()
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.clientId is string
+        && clientCanHaveDeals(request.resource.data.clientId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.archived == false
+        && request.resource.data.status == 'Active'
+        && request.resource.data.stage != 'Won'
+        && request.resource.data.stage != 'Lost';
+
+      allow update: if canManageDeals()
+        && request.resource.data.clientId == resource.data.clientId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && ((request.resource.data.status == 'Active' && request.resource.data.stage != 'Won' && request.resource.data.stage != 'Lost')
+          || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won')
+          || (request.resource.data.status == 'Lost' && request.resource.data.stage == 'Lost' && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
+
+      allow delete: if false;
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isActiveUser();
+
+      // ADMIN and MANAGER can create and manage operational tasks.
+      allow create: if canManageTasks()
+        && request.resource.data.keys().hasOnly([
+          'title', 'description', 'dueDate', 'status', 'priority', 'relatedTo',
+          'assignedTo', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'
+        ])
+        && request.resource.data.title is string
+        && request.resource.data.status in ['Pending', 'Completed']
+        && request.resource.data.priority in ['Low', 'Medium', 'High']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.archived == false;
+
+      allow update: if canManageTasks()
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status in ['Pending', 'Completed']
+        && request.resource.data.priority in ['Low', 'Medium', 'High'];
+
+      allow delete: if false;
+    }
+
+    // No other Firestore collections are publicly accessible.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

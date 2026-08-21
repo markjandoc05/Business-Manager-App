@@ -17,9 +17,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
+import { canManageLeads } from '@/lib/permissions';
 
 export default function DashboardPage() {
   const { leads, clients, deals, tasks, activities, settings, completeTask, addLead, addClient, addTask } = useApp();
+  const { user } = useAuth();
+  const canManage = canManageLeads(user);
 
   // Modals state
   const [activeModal, setActiveModal] = useState<'lead' | 'client' | 'task' | null>(null);
@@ -92,9 +96,9 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-500">Real-time performance metrics and pipeline execution.</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          <Button onClick={() => setActiveModal('lead')} className="gap-2">
+          {canManage && <Button onClick={() => setActiveModal('lead')} className="gap-2">
             <Plus size={16} /> Add Lead
-          </Button>
+          </Button>}
           <Button variant="outline" onClick={() => setActiveModal('client')} className="gap-2">
             <Plus size={16} /> Add Client
           </Button>

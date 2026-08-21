@@ -24,9 +24,7 @@ export const mockSettings: Settings = {
     { name: 'LinkedIn', isActive: true },
   ],
   customFields: [],
-  users: [
-    { id: 'u1', name: 'Admin User', email: 'admin@bsm.com', role: 'Administrator', isActive: true }
-  ],
+  users: [],
   license: {
     installationId: 'bsm-789-xyz',
     status: 'Active',
@@ -110,6 +108,7 @@ export const mockDeals: Deal[] = [
     clientId: 'c1',
     value: 5000,
     stage: 'Won',
+    status: 'Won',
     expectedCloseDate: '2026-08-25',
     createdAt: '2026-08-01T10:00:00Z',
   },
@@ -119,6 +118,7 @@ export const mockDeals: Deal[] = [
     clientId: 'c1',
     value: 10000,
     stage: 'Opportunity',
+    status: 'Active',
     expectedCloseDate: '2026-09-15',
     createdAt: '2026-08-05T12:00:00Z',
   },
@@ -165,4 +165,3 @@ export const mockActivities: Activity[] = [
     timestamp: '2026-08-15T09:30:00Z',
   },
 ];
-

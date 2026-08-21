@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { useApp } from '@/context/AppContext';
 import { 
@@ -21,22 +21,30 @@ import {
   Briefcase
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useAuth } from '@/context/AuthContext';
+import { canManageClients } from '@/lib/permissions';
+import { archiveClient, createClient, listClients, updateClient } from '@/lib/repositories/clients';
+import type { Client } from '@/types';
 
 export default function ClientsPage() {
   const { 
-    clients, 
     deals, 
     tasks, 
     activities, 
     settings, 
-    addClient, 
-    updateClient, 
     addDeal, 
     addTask, 
     addNote, 
     uploadDocument, 
     completeTask 
   } = useApp();
+  const { user } = useAuth();
+  const canManage = canManageClients(user);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientsLoading, setClientsLoading] = useState(true);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+  const [savingClient, setSavingClient] = useState(false);
+  const [archivingClient, setArchivingClient] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -58,6 +66,41 @@ export default function ClientsPage() {
   const [noteForm, setNoteForm] = useState({ content: '', author: 'Sarah Jenkins' });
   const [docForm, setDocForm] = useState({ name: '', size: '1.5 MB' });
 
+  const loadClients = async () => {
+    setClientsLoading(true);
+    setClientsError(null);
+    try {
+      setClients(await listClients(user));
+    } catch (error) {
+      console.error('Unable to load clients', error);
+      setClientsError('Unable to load clients. Please check your connection and try again.');
+    } finally {
+      setClientsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const load = async () => {
+      setClientsLoading(true);
+      setClientsError(null);
+      try {
+        const loadedClients = await listClients(user);
+        if (!cancelled) setClients(loadedClients);
+      } catch (error) {
+        console.error('Unable to load clients', error);
+        if (!cancelled) setClientsError('Unable to load clients. Please check your connection and try again.');
+      } finally {
+        if (!cancelled) setClientsLoading(false);
+      }
+    };
+
+    void load();
+    return () => { cancelled = true; };
+  }, [user]);
+
   // Selected client computed data
   const selectedClient = clients.find(c => c.id === selectedClientId);
 
@@ -70,40 +113,62 @@ export default function ClientsPage() {
   const sortedTasks = [...clientTasks].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   const nextFollowUp = sortedTasks[0]?.dueDate ? new Date(sortedTasks[0].dueDate).toISOString().replace('T', ' ').substring(0, 16) : 'No pending tasks';
 
-  const filteredClients = clients.filter(client => 
+  const visibleClients = clients.filter(client => client.status !== 'ARCHIVED');
+  const filteredClients = visibleClients.filter(client => 
     client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.company?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleCreateClient = (e: React.FormEvent) => {
+  const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clientForm.name || !clientForm.email) return;
-    addClient({
-      name: clientForm.name,
-      email: clientForm.email,
-      phone: clientForm.phone,
-      company: clientForm.company,
-      assignedTo: clientForm.assignedTo,
-      notes: [],
-      documents: []
-    });
-    setClientForm({ name: '', email: '', phone: '', company: '', assignedTo: 'Sarah Jenkins' });
-    setShowAddModal(false);
+    if (!clientForm.name || !clientForm.email || !canManage) return;
+    setSavingClient(true);
+    setClientsError(null);
+    try {
+      const savedClient = await createClient(user, clientForm);
+      setClients((currentClients) => [savedClient, ...currentClients]);
+      setClientForm({ name: '', email: '', phone: '', company: '', assignedTo: '' });
+      setShowAddModal(false);
+    } catch (error) {
+      console.error('Unable to create client', error);
+      setClientsError('Unable to save the client. Please try again.');
+    } finally {
+      setSavingClient(false);
+    }
   };
 
-  const handleUpdateClient = (e: React.FormEvent) => {
+  const handleUpdateClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClient) return;
-    updateClient({
-      ...selectedClient,
-      name: editClientForm.name,
-      email: editClientForm.email,
-      phone: editClientForm.phone,
-      company: editClientForm.company,
-      assignedTo: editClientForm.assignedTo,
-    });
-    setShowEditModal(false);
+    if (!selectedClient || !canManage) return;
+    setSavingClient(true);
+    setClientsError(null);
+    try {
+      await updateClient(user, selectedClient.id, editClientForm);
+      setClients((currentClients) => currentClients.map((client) => client.id === selectedClient.id ? { ...client, ...editClientForm, updatedAt: new Date().toISOString(), updatedBy: user?.uid } : client));
+      setShowEditModal(false);
+    } catch (error) {
+      console.error('Unable to update client', error);
+      setClientsError('Unable to update the client. Please try again.');
+    } finally {
+      setSavingClient(false);
+    }
+  };
+
+  const handleArchiveClient = async () => {
+    if (!selectedClient || !canManage) return;
+    setArchivingClient(true);
+    setClientsError(null);
+    try {
+      await archiveClient(user, selectedClient.id);
+      setClients((currentClients) => currentClients.map((client) => client.id === selectedClient.id ? { ...client, status: 'ARCHIVED', updatedAt: new Date().toISOString(), updatedBy: user?.uid } : client));
+      setSelectedClientId(null);
+    } catch (error) {
+      console.error('Unable to archive client', error);
+      setClientsError('Unable to archive the client. Please try again.');
+    } finally {
+      setArchivingClient(false);
+    }
   };
 
   const handleCreateDeal = (e: React.FormEvent) => {
@@ -152,6 +217,7 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6">
+      {clientsError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{clientsError}</p>}
       {/* If Client is Selected, Show Client Profile */}
       {selectedClient ? (
         <div className="space-y-6">
@@ -164,7 +230,7 @@ export default function ClientsPage() {
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">{selectedClient.name} Profile</h2>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => {
+              {canManage && <Button variant="outline" onClick={() => {
                 setEditClientForm({
                   name: selectedClient.name,
                   email: selectedClient.email,
@@ -175,7 +241,10 @@ export default function ClientsPage() {
                 setShowEditModal(true);
               }} className="gap-2">
                 <Edit size={16} /> Edit Client
-              </Button>
+              </Button>}
+              {canManage && <Button variant="outline" onClick={() => void handleArchiveClient()} disabled={archivingClient} className="gap-2 text-red-600 hover:text-red-700">
+                {archivingClient ? 'Archiving…' : 'Archive Client'}
+              </Button>}
               <Button onClick={() => setShowAddDealModal(true)} className="gap-2">
                 <Plus size={16} /> Add Deal
               </Button>
@@ -409,9 +478,9 @@ export default function ClientsPage() {
               <h2 className="text-2xl font-bold tracking-tight text-slate-900">Clients</h2>
               <p className="text-sm text-slate-500">Centralized customer records, deals, and history.</p>
             </div>
-            <Button onClick={() => setShowAddModal(true)} className="gap-2">
+            {canManage && <Button onClick={() => setShowAddModal(true)} className="gap-2">
               <Plus size={18} /> Add Client
-            </Button>
+            </Button>}
           </div>
 
           <Card className="flex flex-col gap-4 p-4 md:flex-row md:items-center">
@@ -425,11 +494,12 @@ export default function ClientsPage() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+            <Button variant="outline" onClick={() => void loadClients()} disabled={clientsLoading}>Refresh</Button>
           </Card>
 
           {/* Client Table */}
           <Card className="p-0 overflow-hidden">
-            <div className="overflow-x-auto">
+            {clientsLoading ? <p className="p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClients.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : 'No active clients found.'}</p> : <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
@@ -484,7 +554,7 @@ export default function ClientsPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+            </div>}
           </Card>
         </div>
       )}
@@ -548,7 +618,7 @@ export default function ClientsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button>
-                <Button type="submit">Save Client</Button>
+                <Button type="submit" disabled={savingClient}>{savingClient ? 'Saving…' : 'Save Client'}</Button>
               </div>
             </form>
           </div>
@@ -611,7 +681,7 @@ export default function ClientsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button>
-                <Button type="submit">Update Client</Button>
+                <Button type="submit" disabled={savingClient}>{savingClient ? 'Saving…' : 'Update Client'}</Button>
               </div>
             </form>
           </div>

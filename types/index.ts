@@ -10,6 +10,9 @@ export interface Lead {
   source: string;
   createdAt: string;
   updatedAt: string;
+  assignedTo?: string;
+  archived?: boolean;
+  convertedClientId?: string;
 }
 
 export interface Note {
@@ -38,6 +41,11 @@ export interface Client {
   notes?: Note[];
   documents?: DocumentItem[];
   createdAt: string;
+  status?: 'ACTIVE' | 'ARCHIVED';
+  createdBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  sourceLeadId?: string;
 }
 
 export interface Deal {
@@ -47,9 +55,15 @@ export interface Deal {
   value: number;
   stage: string;
   expectedCloseDate: string;
-  status?: 'Active' | 'Won' | 'Lost';
+  status: 'Active' | 'Won' | 'Lost';
   lossReason?: string;
   createdAt: string;
+  leadId?: string;
+  assignedTo?: string;
+  createdBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  archived?: boolean;
 }
 
 export interface Task {
@@ -63,6 +77,12 @@ export interface Task {
     type: 'Lead' | 'Client' | 'Deal';
     id: string;
   };
+  assignedTo?: string;
+  archived?: boolean;
+  createdAt?: string;
+  createdBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface Activity {
@@ -123,4 +143,3 @@ export interface Settings {
     appVersion: string;
   };
 }
-

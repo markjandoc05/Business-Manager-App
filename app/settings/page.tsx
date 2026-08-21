@@ -4,10 +4,38 @@ import React, { useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { useApp } from '@/context/AppContext';
 import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, Trash2 } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
+import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase/client';
+import type { UserRole } from '@/types/auth';
+import { canManageSettings } from '@/lib/permissions';
+
+interface ManagedUser {
+  uid: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  active: boolean;
+  lastLogin: unknown;
+}
+
+function formatLastLogin(value: unknown) {
+  if (!value || typeof value !== 'object' || !('toDate' in value) || typeof value.toDate !== 'function') {
+    return 'Never';
+  }
+
+  return value.toDate().toLocaleString();
+}
 
 export default function SettingsPage() {
   const { settings, updateSettings } = useApp();
+  const { user } = useAuth();
+  const canManageSystemSettings = canManageSettings(user);
   const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'users' | 'pipeline' | 'sources' | 'license'>('profile');
+  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
 
   // Profile form state
   const [profile, setProfile] = useState({
@@ -23,6 +51,57 @@ export default function SettingsPage() {
 
   const [newStageName, setNewStageName] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
+
+  const loadUsers = async () => {
+    if (user?.role !== 'ADMIN') return;
+
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      const snapshot = await getDocs(collection(db, 'users'));
+      const nextUsers = snapshot.docs.map((userDoc) => {
+        const data = userDoc.data();
+        const role = data.role === 'ADMIN' || data.role === 'MANAGER' || data.role === 'USER'
+          ? data.role as UserRole
+          : 'USER';
+
+        return {
+          uid: userDoc.id,
+          name: typeof data.name === 'string' ? data.name : 'Unnamed user',
+          email: typeof data.email === 'string' ? data.email : '',
+          role,
+          active: data.active === true,
+          lastLogin: data.lastLogin,
+        };
+      });
+
+      nextUsers.sort((left, right) => left.name.localeCompare(right.name));
+      setManagedUsers(nextUsers);
+    } catch (loadError) {
+      console.error('Unable to load Firestore users', loadError);
+      setUsersError('Unable to load users. Check your connection and try again.');
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const updateManagedUser = async (uid: string, changes: Partial<Pick<ManagedUser, 'role' | 'active'>>) => {
+    if (user?.role !== 'ADMIN' || uid === user.uid || updatingUserId) return;
+
+    setUpdatingUserId(uid);
+    setUsersError(null);
+    try {
+      await updateDoc(doc(db, 'users', uid), changes);
+      setManagedUsers((currentUsers) => currentUsers.map((managedUser) => (
+        managedUser.uid === uid ? { ...managedUser, ...changes } : managedUser
+      )));
+    } catch (updateError) {
+      console.error('Unable to update Firestore user', updateError);
+      setUsersError('Unable to save that user change. Please try again.');
+    } finally {
+      setUpdatingUserId(null);
+    }
+  };
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,13 +138,22 @@ export default function SettingsPage() {
   const tabs = [
     { id: 'profile', label: 'Business Profile', icon: Building2 },
     { id: 'branding', label: 'Branding', icon: Paintbrush },
-    { id: 'users', label: 'Users & Access', icon: Users },
+    ...(canManageSystemSettings ? [{ id: 'users', label: 'Users & Access', icon: Users }] : []),
     { id: 'pipeline', label: 'Pipeline', icon: Pipeline },
     { id: 'sources', label: 'Lead Sources', icon: Tag },
     { id: 'license', label: 'License', icon: CreditCard },
   ];
 
+  const handleTabChange = (tabId: typeof activeTab) => {
+    setActiveTab(tabId);
+    if (tabId === 'users') void loadUsers();
+  };
+
   const Icon = tabs.find(t => t.id === activeTab)?.icon || SettingsIcon;
+
+  if (!canManageSystemSettings) {
+    return <Card className="mx-auto max-w-xl space-y-2 p-8 text-center"><h2 className="text-xl font-bold text-slate-900">Settings access restricted</h2><p className="text-sm text-slate-500">System settings are available to ADMIN users only.</p></Card>;
+  }
 
   return (
     <div className="space-y-6">
@@ -76,7 +164,7 @@ export default function SettingsPage() {
           {tabs.map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
+              onClick={() => handleTabChange(tab.id as typeof activeTab)}
               className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
                 activeTab === tab.id ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
               }`}
@@ -151,34 +239,53 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'users' && (
+            {activeTab === 'users' && user?.role === 'ADMIN' && (
               <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-semibold">Team Members</h4>
-                  <Button size="sm" className="gap-1"><Plus size={16}/> Add User</Button>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-slate-500">Manage activation and roles for other users.</p></div>
+                  <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading}>Refresh</Button>
                 </div>
-                <div className="border rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-50 border-b">
-                      <tr>
-                        <th className="p-3 font-bold text-slate-500">Name</th>
-                        <th className="p-3 font-bold text-slate-500">Email</th>
-                        <th className="p-3 font-bold text-slate-500">Role</th>
-                        <th className="p-3 font-bold text-slate-500">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {settings.users?.map(u => (
-                        <tr key={u.id}>
-                          <td className="p-3 font-semibold">{u.name}</td>
-                          <td className="p-3 text-slate-600">{u.email}</td>
-                          <td className="p-3"><Badge variant={u.role === 'Administrator' ? 'blue' : 'gray'}>{u.role}</Badge></td>
-                          <td className="p-3"><Badge variant={u.isActive ? 'green' : 'red'}>{u.isActive ? 'Active' : 'Inactive'}</Badge></td>
+                {usersError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{usersError}</p>}
+                {usersLoading && <p className="py-8 text-center text-sm text-slate-500">Loading users…</p>}
+                {!usersLoading && !usersError && managedUsers.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No users found.</p>}
+                {!usersLoading && managedUsers.length > 0 && (
+                  <div className="overflow-x-auto rounded-xl border">
+                    <table className="w-full min-w-[760px] text-left text-sm">
+                      <thead className="border-b bg-slate-50">
+                        <tr>
+                          <th className="p-3 font-bold text-slate-500">Name</th>
+                          <th className="p-3 font-bold text-slate-500">Email</th>
+                          <th className="p-3 font-bold text-slate-500">Role</th>
+                          <th className="p-3 font-bold text-slate-500">Status</th>
+                          <th className="p-3 font-bold text-slate-500">Last login</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y">
+                        {managedUsers.map((managedUser) => {
+                          const isCurrentUser = managedUser.uid === user.uid;
+                          const isUpdating = updatingUserId === managedUser.uid;
+                          return (
+                            <tr key={managedUser.uid}>
+                              <td className="p-3 font-semibold text-slate-900">{managedUser.name}{isCurrentUser && <span className="ml-2 text-xs font-normal text-slate-400">(you)</span>}</td>
+                              <td className="p-3 text-slate-600">{managedUser.email}</td>
+                              <td className="p-3">
+                                <select aria-label={`Role for ${managedUser.email}`} value={managedUser.role} disabled={isCurrentUser || isUpdating} onChange={(event) => void updateManagedUser(managedUser.uid, { role: event.target.value as UserRole })} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">
+                                  <option value="ADMIN">ADMIN</option><option value="MANAGER">MANAGER</option><option value="USER">USER</option>
+                                </select>
+                              </td>
+                              <td className="p-3">
+                                <Button size="sm" variant={managedUser.active ? 'outline' : 'primary'} disabled={isCurrentUser || isUpdating} onClick={() => void updateManagedUser(managedUser.uid, { active: !managedUser.active })}>
+                                  {isUpdating ? 'Saving…' : managedUser.active ? 'Deactivate' : 'Activate'}
+                                </Button>
+                              </td>
+                              <td className="p-3 text-slate-600">{formatLastLogin(managedUser.lastLogin)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 

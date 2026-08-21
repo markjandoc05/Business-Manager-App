@@ -13,12 +13,15 @@ import {
   Settings, 
   Menu, 
   ChevronLeft,
-  Briefcase
+  Briefcase,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/context/AuthContext';
+import { canManageSettings } from '@/lib/permissions';
 
-const sidebarItems = [
+const baseSidebarItems = [
   { name: 'Dashboard', icon: LayoutDashboard, href: '/' },
   { name: 'Leads', icon: Users, href: '/leads' },
   { name: 'Clients', icon: UserCircle, href: '/clients' },
@@ -32,6 +35,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const pathname = usePathname();
+  const { user, signOut } = useAuth();
+  const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(user));
 
   const [isDesktop, setIsDesktop] = useState(true);
 
@@ -128,14 +133,16 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
           isCollapsed ? "flex justify-center" : ""
         )}>
           {isCollapsed ? (
-             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">AD</div>
+             <button title="Sign out" onClick={() => signOut()} className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">{user?.name.slice(0, 2).toUpperCase()}</button>
           ) : (
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">AD</div>
+              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">Admin User</p>
-                <p className="text-xs text-slate-500 truncate">Manager</p>
+                <p className="text-sm font-medium text-white truncate">{user?.name}</p>
+                <p className="text-xs text-slate-500 truncate">{user?.email}</p>
+                <p className="text-[10px] text-blue-400 truncate">{user?.role}</p>
               </div>
+              <button title="Sign out" onClick={() => signOut()} className="p-1.5 text-slate-500 hover:text-white" aria-label="Sign out"><LogOut size={16} /></button>
             </div>
           )}
         </div>
