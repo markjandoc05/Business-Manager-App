@@ -1,1 +1,6 @@
 @import "tailwindcss";
+
+/* Lead ownership remains in Firestore but is intentionally omitted from the compact table view. */
+table.min-w-\[900px\] tbody td:first-child > div > span:nth-child(3) {
+  display: none;
+}

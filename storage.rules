@@ -1,0 +1,57 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeUser() {
+      return signedIn()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.active == true;
+    }
+
+    function canManageClients() {
+      return activeUser()
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function organizationMember(organizationId) {
+      return signedIn()
+        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.status in ['trial', 'active'];
+    }
+
+    function organizationCanManageClients(organizationId) {
+      return organizationMember(organizationId)
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    match /organizations/{organizationId}/clients/{clientId}/documents/{documentId}/{fileName} {
+      allow read: if organizationMember(organizationId)
+        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId));
+      allow write: if organizationCanManageClients(organizationId)
+        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId))
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType != null;
+      allow delete: if false;
+    }
+
+    match /clients/{clientId}/documents/{documentId}/{fileName} {
+      allow read: if activeUser();
+
+      allow write: if canManageClients()
+        && request.resource.size > 0
+        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.contentType != null;
+
+      allow delete: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

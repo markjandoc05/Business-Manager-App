@@ -1,10 +1,12 @@
-import { addDoc, collection, doc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Task } from '@/types';
 import { canManageTasks, canViewBusinessData } from '@/lib/permissions';
+import { resolveAssignment } from '@/lib/ownership';
+import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 
-export type TaskInput = Pick<Task, 'title' | 'description' | 'dueDate' | 'priority' | 'relatedTo' | 'assignedTo'>;
+export type TaskInput = Pick<Task, 'title' | 'description' | 'dueDate' | 'priority' | 'relatedTo' | 'assignedToUid' | 'assignedToName'>;
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
   if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
@@ -22,7 +24,9 @@ function mapTask(id: string, data: Record<string, unknown>): Task {
     status: data.status === 'Completed' ? 'Completed' : 'Pending',
     priority: data.priority === 'High' || data.priority === 'Medium' ? data.priority : 'Low',
     relatedTo: data.relatedTo as Task['relatedTo'],
-    assignedTo: typeof data.assignedTo === 'string' ? data.assignedTo : '',
+    assignedToUid: typeof data.assignedToUid === 'string' ? data.assignedToUid : '',
+    assignedToName: typeof data.assignedToName === 'string' ? data.assignedToName : typeof data.assignedTo === 'string' ? data.assignedTo : '',
+    assignedTo: typeof data.assignedTo === 'string' ? data.assignedTo : undefined,
     archived: data.archived === true,
     createdAt: toIsoDate(data.createdAt),
     updatedAt: toIsoDate(data.updatedAt),
@@ -35,8 +39,10 @@ function requireActiveUser(user: AppUser | null) {
   if (!canViewBusinessData(user)) throw new Error('You do not have access to business data.');
 }
 
-function requireTaskManager(user: AppUser | null) {
-  if (!canManageTasks(user)) throw new Error('You do not have permission to manage tasks.');
+function requireTaskManager(user: AppUser | null, task?: Task) {
+  if (canManageTasks(user)) return;
+  if (user?.active === true && user.role === 'USER' && task?.assignedToUid === user.uid) return;
+  throw new Error('You do not have permission to manage this task.');
 }
 
 function reportFirestoreFailure(operation: string, error: unknown) {
@@ -51,14 +57,28 @@ function taskPayload(input: TaskInput) {
     dueDate: input.dueDate,
     priority: input.priority,
     ...(input.relatedTo ? { relatedTo: input.relatedTo } : {}),
-    assignedTo: input.assignedTo?.trim() || '',
+    assignedToUid: input.assignedToUid?.trim() || '',
+    assignedToName: input.assignedToName?.trim() || '',
   };
 }
 
-export async function listTasks(user: AppUser | null) {
+async function requireRelatedRecords(organizationId: string, relatedTo: TaskInput['relatedTo']) {
+  if (!relatedTo) return;
+  const relatedRef = organizationDocumentInCollection(db, organizationId, `${relatedTo.type.toLowerCase()}s`, relatedTo.id);
+  const snapshot = await getDoc(relatedRef);
+  if (!snapshot.exists() || snapshot.data().archived === true || snapshot.data().status === 'ARCHIVED') throw new Error('The related record is not available in this organization.');
+}
+
+async function getOrganizationTask(organizationId: string, taskId: string) {
+  const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId));
+  if (!snapshot.exists()) throw new Error('The task was not found.');
+  return mapTask(snapshot.id, snapshot.data());
+}
+
+export async function listTasks(user: AppUser | null, organizationId: string) {
   requireActiveUser(user);
   try {
-    const snapshot = await getDocs(collection(db, 'tasks'));
+    const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
     return snapshot.docs
       .map((taskDoc) => mapTask(taskDoc.id, taskDoc.data()))
       .filter((task) => !task.archived)
@@ -69,14 +89,15 @@ export async function listTasks(user: AppUser | null) {
   }
 }
 
-export async function createTask(user: AppUser | null, input: TaskInput) {
+export async function createTask(user: AppUser | null, organizationId: string, input: TaskInput) {
   requireTaskManager(user);
   if (!user) throw new Error('You must be signed in to create a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
+  await requireRelatedRecords(organizationId, input.relatedTo);
 
   try {
-    const payload = taskPayload(input);
-    const taskRef = await addDoc(collection(db, 'tasks'), {
+    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, input.assignedToUid, input.assignedToName)) };
+    const taskRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), {
       ...payload,
       status: 'Pending',
       archived: false,
@@ -93,34 +114,38 @@ export async function createTask(user: AppUser | null, input: TaskInput) {
   }
 }
 
-export async function updateTask(user: AppUser | null, taskId: string, input: TaskInput) {
-  requireTaskManager(user);
+export async function updateTask(user: AppUser | null, organizationId: string, taskId: string, input: TaskInput) {
+  const existingTask = await getOrganizationTask(organizationId, taskId);
+  requireTaskManager(user, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
+  await requireRelatedRecords(organizationId, input.relatedTo);
   try {
-    await updateDoc(doc(db, 'tasks', taskId), { ...taskPayload(input), updatedAt: serverTimestamp(), updatedBy: user.uid });
+    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { ...taskPayload(input), updatedAt: serverTimestamp(), updatedBy: user.uid });
   } catch (error) {
     reportFirestoreFailure('update', error);
     throw new Error('Unable to update the task. Please try again.');
   }
 }
 
-export async function completeTask(user: AppUser | null, taskId: string, status: Task['status']) {
-  requireTaskManager(user);
+export async function completeTask(user: AppUser | null, organizationId: string, taskId: string, status: Task['status']) {
+  const existingTask = await getOrganizationTask(organizationId, taskId);
+  requireTaskManager(user, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   try {
-    await updateDoc(doc(db, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
   } catch (error) {
     reportFirestoreFailure('complete', error);
     throw new Error('Unable to update the task status. Please try again.');
   }
 }
 
-export async function archiveTask(user: AppUser | null, taskId: string) {
-  requireTaskManager(user);
+export async function archiveTask(user: AppUser | null, organizationId: string, taskId: string) {
+  const existingTask = await getOrganizationTask(organizationId, taskId);
+  requireTaskManager(user, existingTask);
   if (!user) throw new Error('You must be signed in to archive a task.');
   try {
-    await updateDoc(doc(db, 'tasks', taskId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });
   } catch (error) {
     reportFirestoreFailure('archive', error);
     throw new Error('Unable to archive the task. Please try again.');

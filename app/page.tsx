@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
 import { canManageLeads } from '@/lib/permissions';
 
@@ -35,16 +36,21 @@ export default function DashboardPage() {
 
   // KPI Calculations
   const totalLeads = leads.length;
-  const activeOpportunities = deals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length;
+  const activeOpportunities = deals.filter(d => d.status === 'Active').length;
   const followUpsDue = tasks.filter(t => t.status === 'Pending').length;
-  const wonDealsCount = deals.filter(d => d.stage === 'Won').length;
-  const pipelineValue = deals.filter(d => d.stage !== 'Lost').reduce((sum, d) => sum + d.value, 0);
+  const wonDealsCount = deals.filter(d => d.status === 'Won').length;
+  const pipelineValue = deals.filter(d => d.status !== 'Lost').reduce((sum, d) => sum + d.value, 0);
 
-  // Sales this month calculation (assuming current month 2026-08 or current actual date)
-  const currentMonthStr = '2026-08';
+  const currentDate = new Date();
   const salesThisMonth = deals
-    .filter(d => d.stage === 'Won' && d.createdAt.startsWith(currentMonthStr))
-    .reduce((sum, d) => sum + d.value, 0) || 28450; // fallback mock value if date doesn't match exactly
+    .filter((deal) => {
+      if (deal.status !== 'Won') return false;
+      const createdAt = new Date(deal.createdAt);
+      return !Number.isNaN(createdAt.getTime())
+        && createdAt.getFullYear() === currentDate.getFullYear()
+        && createdAt.getMonth() === currentDate.getMonth();
+    })
+    .reduce((sum, deal) => sum + deal.value, 0);
 
   const handleCreateLead = (e: React.FormEvent) => {
     e.preventDefault();
@@ -145,7 +151,7 @@ export default function DashboardPage() {
         <Card className="flex flex-col justify-between">
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Pipeline Value</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">${pipelineValue.toLocaleString()}</span>
+            <span className="text-2xl font-bold text-slate-900">{formatCurrency(pipelineValue, settings.currency)}</span>
             <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><DollarSign size={18} /></div>
           </div>
         </Card>
@@ -153,7 +159,7 @@ export default function DashboardPage() {
         <Card className="flex flex-col justify-between">
           <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sales This Month</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">${salesThisMonth.toLocaleString()}</span>
+            <span className="text-2xl font-bold text-slate-900">{formatCurrency(salesThisMonth, settings.currency)}</span>
             <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Briefcase size={18} /></div>
           </div>
         </Card>
@@ -221,7 +227,7 @@ export default function DashboardPage() {
                     <p className="text-xs text-slate-500">{stageDeals.length} deals in stage</p>
                   </div>
                   <div className="text-right">
-                    <span className="font-bold text-sm text-slate-900">${stageValue.toLocaleString()}</span>
+                    <span className="font-bold text-sm text-slate-900">{formatCurrency(stageValue, settings.currency)}</span>
                   </div>
                 </div>
               );

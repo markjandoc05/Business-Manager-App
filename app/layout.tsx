@@ -3,6 +3,7 @@ import './globals.css';
 import SidebarLayout from '@/components/SidebarLayout';
 import { AppProvider } from '@/context/AppContext';
 import { AuthProvider } from '@/context/AuthContext';
+import { WorkspaceProvider } from '@/context/WorkspaceContext';
 import AuthGate from '@/components/AuthGate';
 
 export const metadata: Metadata = {
@@ -16,9 +17,11 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
       <body suppressHydrationWarning className="antialiased">
         <AuthProvider>
           <AuthGate>
-            <AppProvider>
-              <SidebarLayout>{children}</SidebarLayout>
-            </AppProvider>
+            <WorkspaceProvider>
+              <AppProvider>
+                <SidebarLayout>{children}</SidebarLayout>
+              </AppProvider>
+            </WorkspaceProvider>
           </AuthGate>
         </AuthProvider>
       </body>

@@ -39,7 +39,7 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
 
   return {
     uid: firebaseUser.uid,
-    name: typeof data.name === 'string' ? data.name : firebaseUser.displayName || 'User',
+    name: typeof data.displayName === 'string' ? data.displayName : typeof data.name === 'string' ? data.name : firebaseUser.displayName || 'User',
     email: typeof data.email === 'string' ? data.email : firebaseUser.email || '',
     role: role as UserRole,
     active: data.active === true,
@@ -54,25 +54,35 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
     const name = firebaseUser.displayName || 'User';
     const email = firebaseUser.email || '';
     await setDoc(userRef, {
+      uid: firebaseUser.uid,
       name,
       email,
+      displayName: name,
+      photoURL: firebaseUser.photoURL || '',
+      status: 'pending',
       role: 'USER',
       active: false,
       createdAt: serverTimestamp(),
       lastLogin: serverTimestamp(),
+      lastLoginAt: serverTimestamp(),
     });
     return { uid: firebaseUser.uid, name, email, role: 'USER', active: false };
   }
 
   const nextName = firebaseUser.displayName || snapshot.data().name || 'User';
   const nextEmail = firebaseUser.email || snapshot.data().email || '';
-  const appUser = getAppUser(firebaseUser, { ...snapshot.data(), name: nextName, email: nextEmail });
+  const appUser = getAppUser(firebaseUser, { ...snapshot.data(), name: nextName, displayName: nextName, email: nextEmail });
 
   // Do not make app-shell rendering wait for the audit write.
   void updateDoc(userRef, {
+    uid: firebaseUser.uid,
     name: nextName,
     email: nextEmail,
+    displayName: nextName,
+    photoURL: firebaseUser.photoURL || '',
+    status: appUser.active ? 'active' : 'pending',
     lastLogin: serverTimestamp(),
+    lastLoginAt: serverTimestamp(),
   }).catch((error) => console.error('Unable to update user login metadata', error));
 
   return appUser;

@@ -6,6 +6,7 @@ import { useApp } from '@/context/AppContext';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { startOfMonth, subMonths, startOfQuarter, startOfYear, isWithinInterval, parseISO } from 'date-fns';
 import { Download } from 'lucide-react';
+import { formatCurrency } from '@/lib/formatting';
 
 export default function ReportsPage() {
   const { leads, deals, settings } = useApp();
@@ -74,8 +75,8 @@ export default function ReportsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="p-4"><p className="text-xs text-slate-500">Total Leads</p><p className="text-2xl font-bold">{KPIs.totalLeads}</p></Card>
-        <Card className="p-4"><p className="text-xs text-slate-500">Won Sales</p><p className="text-2xl font-bold">${KPIs.totalWonSales.toLocaleString()}</p></Card>
-        <Card className="p-4"><p className="text-xs text-slate-500">Pipeline Value</p><p className="text-2xl font-bold">${KPIs.pipelineValue.toLocaleString()}</p></Card>
+        <Card className="p-4"><p className="text-xs text-slate-500">Won Sales</p><p className="text-2xl font-bold">{formatCurrency(KPIs.totalWonSales, settings.currency)}</p></Card>
+        <Card className="p-4"><p className="text-xs text-slate-500">Pipeline Value</p><p className="text-2xl font-bold">{formatCurrency(KPIs.pipelineValue, settings.currency)}</p></Card>
         <Card className="p-4"><p className="text-xs text-slate-500">Conversion Rate</p><p className="text-2xl font-bold">{(KPIs.totalLeads > 0 ? (KPIs.wonDeals / KPIs.totalLeads * 100).toFixed(1) : 0)}%</p></Card>
       </div>
 

@@ -10,9 +10,28 @@ export interface Lead {
   source: string;
   createdAt: string;
   updatedAt: string;
+  assignedToUid?: string;
+  assignedToName?: string;
   assignedTo?: string;
   archived?: boolean;
   convertedClientId?: string;
+  createdBy?: string;
+  updatedBy?: string;
+}
+
+export type LeadTimelineEntryType = 'ACTIVITY' | 'NOTE' | 'SYSTEM';
+export type LeadActivityType = 'Call' | 'Email' | 'Meeting' | 'Follow-up' | 'Message' | 'Other';
+
+export interface LeadTimelineEntry {
+  id: string;
+  leadId: string;
+  entryType: LeadTimelineEntryType;
+  activityType?: LeadActivityType;
+  content: string;
+  occurredAt: string;
+  createdAt: string;
+  createdByUid: string;
+  createdByName: string;
 }
 
 export interface Note {
@@ -20,6 +39,8 @@ export interface Note {
   clientId: string;
   content: string;
   author: string;
+  createdByUid?: string;
+  createdByName?: string;
   createdAt: string;
 }
 
@@ -27,8 +48,12 @@ export interface DocumentItem {
   id: string;
   clientId: string;
   name: string;
-  size: string;
+  storagePath: string;
+  downloadURL?: string;
+  mimeType: string;
+  size: number | string;
   uploadedAt: string;
+  uploadedBy?: string;
 }
 
 export interface Client {
@@ -37,6 +62,8 @@ export interface Client {
   email: string;
   phone: string;
   company?: string;
+  assignedToUid?: string;
+  assignedToName?: string;
   assignedTo?: string;
   notes?: Note[];
   documents?: DocumentItem[];
@@ -59,11 +86,28 @@ export interface Deal {
   lossReason?: string;
   createdAt: string;
   leadId?: string;
+  assignedToUid?: string;
+  assignedToName?: string;
   assignedTo?: string;
   createdBy?: string;
   updatedAt?: string;
   updatedBy?: string;
   archived?: boolean;
+}
+
+export type DealTimelineEntryType = 'ACTIVITY' | 'NOTE' | 'SYSTEM';
+export type DealActivityType = 'Call' | 'Email' | 'Meeting' | 'Follow-up' | 'Message' | 'Other';
+
+export interface DealTimelineEntry {
+  id: string;
+  dealId: string;
+  entryType: DealTimelineEntryType;
+  activityType?: DealActivityType;
+  content: string;
+  occurredAt: string;
+  createdAt: string;
+  createdByUid: string;
+  createdByName: string;
 }
 
 export interface Task {
@@ -77,6 +121,8 @@ export interface Task {
     type: 'Lead' | 'Client' | 'Deal';
     id: string;
   };
+  assignedToUid?: string;
+  assignedToName?: string;
   assignedTo?: string;
   archived?: boolean;
   createdAt?: string;
@@ -87,8 +133,13 @@ export interface Task {
 
 export interface Activity {
   id: string;
-  type: 'lead_creation' | 'task_completion' | 'stage_change' | 'client_conversion' | 'won_deal';
+  type: 'lead_creation' | 'task_completion' | 'stage_change' | 'client_conversion' | 'client_creation' | 'client_update' | 'client_archive' | 'deal_creation' | 'deal_update' | 'deal_won' | 'deal_lost' | 'settings_update' | 'won_deal';
   description: string;
+  entityType?: 'Lead' | 'Client' | 'Deal' | 'Task' | 'Settings';
+  entityId?: string;
+  createdAt: string;
+  createdBy?: string;
+  metadata?: Record<string, unknown>;
   timestamp: string;
   meta?: string;
 }
@@ -122,7 +173,7 @@ export interface Settings {
   timezone: string;
   
   // Branding
-  logo?: string;
+  logoUrl?: string;
   accentColor: string;
   
   // Pipeline & Lead Sources
@@ -134,7 +185,7 @@ export interface Settings {
   users: User[];
   
   // License
-  license: {
+  license?: {
     installationId: string;
     status: 'Active' | 'Expiring' | 'Expired' | 'Suspended';
     activationDate: string;

@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
+import { useApp } from '@/context/AppContext';
 import { canManageSettings } from '@/lib/permissions';
 
 const baseSidebarItems = [
@@ -36,6 +37,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const pathname = usePathname();
   const { user, signOut } = useAuth();
+  const { settings } = useApp();
   const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(user));
 
   const [isDesktop, setIsDesktop] = useState(true);
@@ -84,11 +86,14 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
           isCollapsed ? "justify-center" : "justify-between"
         )}>
           <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 bg-blue-500 rounded-lg shadow-lg">
-              <Briefcase size={18} className="text-white" />
+            <div
+              className="flex items-center justify-center w-8 h-8 rounded-lg shadow-lg bg-cover bg-center"
+              style={{ backgroundColor: settings.accentColor || '#3b82f6', ...(settings.logoUrl ? { backgroundImage: `url(${settings.logoUrl})` } : {}) }}
+            >
+              {!settings.logoUrl && <Briefcase size={18} className="text-white" />}
             </div>
             {!isCollapsed && (
-              <span className="text-lg font-bold tracking-tight text-white">Summit Agency</span>
+              <span className="text-lg font-bold tracking-tight text-white">{settings.businessName}</span>
             )}
           </div>
           {!isCollapsed && (
@@ -115,6 +120,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
                     ? "bg-blue-600/10 text-blue-400 font-medium" 
                     : "text-slate-400 hover:bg-slate-800 hover:text-white"
                 )}
+                style={isActive ? { color: settings.accentColor || '#3b82f6' } : undefined}
                 onClick={() => setIsMobileOpen(false)}
               >
                 <item.icon size={20} className={cn(
@@ -164,7 +170,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
                 {sidebarItems.find(i => i.href === pathname)?.name || 'Dashboard'}
               </h2>
               <span className="mx-4 text-slate-300 hidden sm:inline">|</span>
-              <span className="text-xs text-slate-500 hidden sm:inline">v1.2.0-stable</span>
+              {settings.license?.appVersion && <span className="text-xs text-slate-500 hidden sm:inline">v{settings.license.appVersion}</span>}
             </div>
           </div>
           <div className="flex items-center space-x-4">
@@ -176,7 +182,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
                 />
                 <div className="absolute left-3 top-2.5 w-4 h-4 border-2 border-slate-400 rounded-full"></div>
              </div>
-             <button className="px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg shadow-sm hover:bg-blue-700 active:scale-95 transition-all">
+             <button style={{ backgroundColor: settings.accentColor || '#3b82f6' }} className="px-4 py-2 text-white text-sm font-semibold rounded-lg shadow-sm hover:opacity-90 active:scale-95 transition-all">
                + New Lead
              </button>
           </div>

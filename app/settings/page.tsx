@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { useApp } from '@/context/AppContext';
 import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, Trash2 } from 'lucide-react';
@@ -51,6 +51,22 @@ export default function SettingsPage() {
 
   const [newStageName, setNewStageName] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
+
+  useEffect(() => {
+    const syncProfile = async () => {
+      setProfile({
+        businessName: settings.businessName,
+        businessType: settings.businessType,
+        email: settings.email || '',
+        phone: settings.phone || '',
+        website: settings.website || '',
+        address: settings.address || '',
+        currency: settings.currency || 'USD',
+        timezone: settings.timezone || 'UTC',
+      });
+    };
+    void syncProfile();
+  }, [settings]);
 
   const loadUsers = async () => {
     if (user?.role !== 'ADMIN') return;
@@ -105,8 +121,10 @@ export default function SettingsPage() {
 
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings(profile);
-    alert('Settings saved successfully!');
+    void updateSettings(profile).then(() => alert('Settings saved successfully!')).catch((error) => {
+      console.error('Unable to save settings', error);
+      alert('Unable to save settings. Please try again.');
+    });
   };
 
   const addPipelineStage = () => {
@@ -210,7 +228,7 @@ export default function SettingsPage() {
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Currency</label>
                     <select className="w-full p-2 border rounded-lg" value={profile.currency} onChange={e => setProfile({...profile, currency: e.target.value})}>
-                      {['USD', 'EUR', 'GBP', 'CAD', 'AUD'].map(c => <option key={c} value={c}>{c}</option>)}
+                      {['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'PHP'].map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -338,31 +356,31 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Installation ID</label>
-                    <p className="font-mono bg-slate-100 p-2 rounded text-sm">{settings.license.installationId}</p>
+                    <p className="font-mono bg-slate-100 p-2 rounded text-sm">{settings.license?.installationId || 'Not configured'}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">License Status</label>
-                    <div><Badge variant={settings.license.status === 'Active' ? 'green' : 'red'}>{settings.license.status}</Badge></div>
+                    <div><Badge variant={settings.license?.status === 'Active' ? 'green' : 'red'}>{settings.license?.status || 'Not configured'}</Badge></div>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Activation Date</label>
-                    <p className="text-sm">{new Date(settings.license.activationDate).toLocaleDateString()}</p>
+                    <p className="text-sm">{settings.license?.activationDate ? new Date(settings.license.activationDate).toLocaleDateString() : 'Not configured'}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Expiration Date</label>
-                    <p className="text-sm">{new Date(settings.license.expirationDate).toLocaleDateString()}</p>
+                    <p className="text-sm">{settings.license?.expirationDate ? new Date(settings.license.expirationDate).toLocaleDateString() : 'Not configured'}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Licensed Domain</label>
-                    <p className="text-sm">{settings.license.licensedDomain}</p>
+                    <p className="text-sm">{settings.license?.licensedDomain || 'Not configured'}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">App Version</label>
-                    <p className="text-sm font-mono">{settings.license.appVersion}</p>
+                    <p className="text-sm font-mono">{settings.license?.appVersion || 'Not configured'}</p>
                   </div>
                 </div>
                 <p className="text-xs text-slate-400 pt-2 border-t">License management is restricted to server administration.</p>

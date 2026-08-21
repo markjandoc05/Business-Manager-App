@@ -6,15 +6,92 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isAdmin() {
+    function isPlatformAdmin() {
       return signedIn()
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+        && exists(/databases/$(database)/documents/platformUsers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/platformUsers/$(request.auth.uid)).data.role == 'PLATFORM_ADMIN'
+        && get(/databases/$(database)/documents/platformUsers/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isOrganizationMember(organizationId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isOrganizationAdmin(organizationId) {
+      return isOrganizationMember(organizationId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+
+    function organizationCanView(organizationId) {
+      return isOrganizationMember(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.status in ['trial', 'active'];
+    }
+
+    function organizationCanManage(organizationId) {
+      return organizationCanView(organizationId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
+    }
+
+    function organizationCanAssign(organizationId, userId) {
+      return organizationCanView(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId)).data.status == 'active'
+        && (userId == request.auth.uid || organizationCanManage(organizationId));
+    }
+
+    function organizationCanUpdateDeal(organizationId) {
+      return organizationCanManage(organizationId)
+        || (organizationCanView(organizationId)
+          && resource.data.assignedToUid == request.auth.uid
+          && request.resource.data.assignedToUid == resource.data.assignedToUid);
+    }
+
+    function organizationRelatedRecordExists(organizationId, relatedTo) {
+      return relatedTo.type == 'Lead'
+        ? exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(relatedTo.id))
+          && get(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(relatedTo.id)).data.archived != true
+        : relatedTo.type == 'Client'
+          ? exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(relatedTo.id))
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(relatedTo.id)).data.status != 'ARCHIVED'
+          : relatedTo.type == 'Deal'
+            ? exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(relatedTo.id))
+              && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(relatedTo.id)).data.archived != true
+            : false;
+    }
+
+    function organizationTaskCanManage(organizationId) {
+      return organizationCanManage(organizationId)
+        || (organizationCanView(organizationId)
+          && resource.data.assignedToUid == request.auth.uid
+          && request.resource.data.assignedToUid == resource.data.assignedToUid);
+    }
+
+    function currentUserPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function hasUserProfile() {
+      return signedIn() && exists(currentUserPath());
+    }
+
+    function hasValidRole() {
+      return hasUserProfile()
+        && get(currentUserPath()).data.role in ['ADMIN', 'MANAGER', 'USER'];
+    }
+
+    function isAdmin() {
+      return hasValidRole()
+        && get(currentUserPath()).data.role == 'ADMIN'
+        && get(currentUserPath()).data.active == true;
     }
 
     function isActiveUser() {
-      return signedIn()
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true;
+      return hasValidRole()
+        && get(currentUserPath()).data.active == true;
     }
 
     function canManageClients() {
@@ -32,6 +109,26 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
     }
 
+    function canUpdateDeal() {
+      return isActiveUser()
+        && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER']
+          || (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'USER'
+            && resource.data.assignedToUid == request.auth.uid
+            && request.resource.data.assignedToUid == resource.data.assignedToUid));
+    }
+
+    function isActiveAssignee(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid))
+        && get(/databases/$(database)/documents/users/$(uid)).data.active == true
+        && get(/databases/$(database)/documents/users/$(uid)).data.role in ['ADMIN', 'MANAGER', 'USER'];
+    }
+
+    function canAssign(uid) {
+      return isActiveUser()
+        && isActiveAssignee(uid)
+        && (uid == request.auth.uid || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER']);
+    }
+
     function canManageTasks() {
       return isActiveUser()
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
@@ -44,21 +141,147 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if isActiveUser() || (signedIn() && request.auth.uid == userId) || isAdmin();
 
       allow create: if signedIn()
         && request.auth.uid == userId
         && request.resource.data.role == 'USER'
         && request.resource.data.active == false
-        && request.resource.data.keys().hasOnly(['name', 'email', 'role', 'active', 'createdAt', 'lastLogin']);
+        && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'role', 'active', 'createdAt', 'lastLogin', 'lastLoginAt']);
 
       allow update: if (signedIn() && request.auth.uid == userId
         && request.resource.data.role == resource.data.role
         && request.resource.data.active == resource.data.active
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'email', 'lastLogin']))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
+        && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
+        && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'disabled']))
         || (isAdmin() && request.auth.uid != userId);
 
       allow delete: if isAdmin() && request.auth.uid != userId;
+    }
+
+    match /organizations/{organizationId} {
+      allow read: if isPlatformAdmin() || isOrganizationMember(organizationId);
+      allow create, update: if isPlatformAdmin();
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/members/{userId} {
+      allow read: if isPlatformAdmin()
+        || (signedIn() && userId == request.auth.uid && resource.data.status == 'active')
+        || isOrganizationMember(organizationId);
+      allow create: if (isPlatformAdmin() || isOrganizationAdmin(organizationId))
+        && request.resource.data.keys().hasOnly(['userId', 'email', 'displayName', 'role', 'status', 'joinedAt', 'activatedAt', 'activatedBy'])
+        && request.resource.data.userId == userId
+        && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
+        && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived'];
+      allow update: if (isPlatformAdmin() || isOrganizationAdmin(organizationId))
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
+        && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived'];
+      allow delete: if isPlatformAdmin() || (isOrganizationAdmin(organizationId) && userId != request.auth.uid);
+    }
+
+    match /platformUsers/{userId} {
+      allow read: if isPlatformAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update, delete: if isPlatformAdmin();
+    }
+
+    match /organizations/{organizationId}/clients/{clientId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'assignedTo', 'assignedToUid', 'assignedToName', 'status', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'sourceLeadId'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.assignedToUid is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && request.resource.data.assignedToName is string;
+      allow update: if organizationCanManage(organizationId)
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.assignedToUid is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && ((!resource.data.keys().hasAny(['sourceLeadId']) && !request.resource.data.keys().hasAny(['sourceLeadId']))
+          || request.resource.data.sourceLeadId == resource.data.sourceLeadId);
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/clients/{clientId}/notes/{noteId} {
+      allow read: if organizationCanView(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['content', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.content is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
+      allow update, delete: if false;
+    }
+
+    match /organizations/{organizationId}/clients/{clientId}/documents/{documentId} {
+      allow read: if organizationCanView(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedAt', 'uploadedBy'])
+        && request.resource.data.name is string
+        && request.resource.data.storagePath is string
+        && request.resource.data.downloadURL is string
+        && request.resource.data.mimeType is string
+        && request.resource.data.size is number
+        && request.resource.data.uploadedAt is timestamp
+        && request.resource.data.uploadedBy == request.auth.uid
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
+      allow update, delete: if false;
+    }
+
+    match /organizations/{organizationId}/leads/{leadId} {
+      allow read: if organizationCanManage(organizationId)
+        || (organizationCanView(organizationId) && resource.data.assignedToUid == request.auth.uid);
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status == 'New'
+        && request.resource.data.archived == false
+        && request.resource.data.assignedToUid is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && request.resource.data.assignedToName is string;
+      allow update: if (organizationCanManage(organizationId)
+        || (organizationCanView(organizationId)
+          && resource.data.assignedToUid == request.auth.uid
+          && request.resource.data.assignedToUid == resource.data.assignedToUid))
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.assignedToUid is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && (resource.data.status == 'Client'
+          ? request.resource.data.status == 'Client'
+            && request.resource.data.convertedClientId == resource.data.convertedClientId
+            && request.resource.data.source == resource.data.source
+          : request.resource.data.status != 'Client'
+            || (request.resource.data.keys().hasAll(['convertedClientId']) && request.resource.data.convertedClientId is string));
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/leads/{leadId}/timeline/{entryId} {
+      allow read: if organizationCanView(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId));
+      allow create: if organizationCanView(organizationId)
+        && (exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId))
+          || getAfter(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId)).data.keys().hasAny(['name']))
+        && request.resource.data.keys().hasOnly(['entryType', 'activityType', 'content', 'occurredAt', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.entryType in ['ACTIVITY', 'NOTE', 'SYSTEM']
+        && request.resource.data.content is string
+        && request.resource.data.content != ''
+        && request.resource.data.occurredAt is timestamp
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string;
+      allow update, delete: if false;
     }
 
     match /clients/{clientId} {
@@ -67,62 +290,284 @@ service cloud.firestore {
       allow create: if canManageClients()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.status == 'ACTIVE';
+        && request.resource.data.status == 'ACTIVE'
+        && canAssign(request.resource.data.assignedToUid)
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string;
 
       allow update: if canManageClients()
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt;
+        && request.resource.data.createdAt == resource.data.createdAt
+        && ((!resource.data.keys().hasAny(['sourceLeadId']) && !request.resource.data.keys().hasAny(['sourceLeadId']))
+          || request.resource.data.sourceLeadId == resource.data.sourceLeadId);
 
       allow delete: if false;
+    }
+
+    match /clients/{clientId}/notes/{noteId} {
+      allow read: if isActiveUser();
+
+      allow create: if canManageClients()
+        && request.resource.data.keys().hasOnly(['content', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.content is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string;
+
+      allow update, delete: if false;
+    }
+
+    match /clients/{clientId}/documents/{documentId} {
+      allow read: if isActiveUser();
+
+      allow create: if canManageClients()
+        && request.resource.data.keys().hasOnly([
+          'name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedAt', 'uploadedBy'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.storagePath is string
+        && request.resource.data.downloadURL is string
+        && request.resource.data.mimeType is string
+        && request.resource.data.size is number
+        && request.resource.data.uploadedAt is timestamp
+        && request.resource.data.uploadedBy == request.auth.uid;
+
+      allow update, delete: if false;
     }
 
     match /leads/{leadId} {
       allow read: if isActiveUser();
 
       allow create: if canManageLeads()
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status == 'New'
-        && request.resource.data.archived == false;
+        && request.resource.data.archived == false
+        && canAssign(request.resource.data.assignedToUid)
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string;
 
       allow update: if canManageLeads()
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
-        && (request.resource.data.status != 'Client'
-          || (resource.data.status != 'Client'
-            && request.resource.data.keys().hasAll(['convertedClientId'])
-            && request.resource.data.convertedClientId is string));
+        && (resource.data.status == 'Client'
+          ? request.resource.data.status == 'Client'
+            && request.resource.data.convertedClientId == resource.data.convertedClientId
+            && request.resource.data.source == resource.data.source
+          : request.resource.data.status != 'Client'
+            || (request.resource.data.keys().hasAll(['convertedClientId'])
+              && request.resource.data.convertedClientId is string));
 
       allow delete: if false;
+    }
+
+    match /leads/{leadId}/timeline/{entryId} {
+      allow read: if isActiveUser()
+        && exists(/databases/$(database)/documents/leads/$(leadId));
+
+      allow create: if isActiveUser()
+        && (exists(/databases/$(database)/documents/leads/$(leadId))
+          || getAfter(/databases/$(database)/documents/leads/$(leadId)).data.keys().hasAny(['name']))
+        && request.resource.data.keys().hasOnly([
+          'entryType', 'activityType', 'content', 'occurredAt',
+          'createdAt', 'createdByUid', 'createdByName'
+        ])
+        && request.resource.data.entryType in ['ACTIVITY', 'NOTE', 'SYSTEM']
+        && request.resource.data.content is string
+        && request.resource.data.content != ''
+        && request.resource.data.occurredAt is timestamp
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string
+        && (request.resource.data.entryType != 'ACTIVITY'
+          || (request.resource.data.keys().hasAll(['activityType'])
+            && request.resource.data.activityType in ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other']))
+        && (request.resource.data.entryType != 'NOTE'
+          || !request.resource.data.keys().hasAny(['activityType']))
+        && (request.resource.data.entryType != 'SYSTEM'
+          || !request.resource.data.keys().hasAny(['activityType']));
+
+      allow update, delete: if false;
+    }
+
+    match /organizations/{organizationId}/deals/{dealId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.clientId is string
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId)).data.status != 'ARCHIVED'
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.archived == false
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && request.resource.data.status == 'Active'
+        && request.resource.data.stage != 'Won'
+        && request.resource.data.stage != 'Lost';
+      allow update: if organizationCanUpdateDeal(organizationId)
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.clientId == resource.data.clientId
+        && request.resource.data.leadId == resource.data.leadId
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && ((request.resource.data.status == 'Active' && request.resource.data.stage != 'Won' && request.resource.data.stage != 'Lost')
+          || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won'
+            && (!request.resource.data.keys().hasAny(['lossReason']) || request.resource.data.lossReason == null))
+          || (request.resource.data.status == 'Lost' && request.resource.data.stage == 'Lost' && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/deals/{dealId}/timeline/{entryId} {
+      allow read: if organizationCanView(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId));
+      allow create: if organizationCanView(organizationId)
+        && (exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId))
+          || getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.keys().hasAny(['title']))
+        && request.resource.data.keys().hasOnly(['entryType', 'activityType', 'content', 'occurredAt', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.entryType in ['ACTIVITY', 'NOTE', 'SYSTEM']
+        && request.resource.data.content is string
+        && request.resource.data.content != ''
+        && request.resource.data.occurredAt is timestamp
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string;
+      allow update, delete: if false;
+    }
+
+    match /organizations/{organizationId}/tasks/{taskId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.title is string
+        && request.resource.data.status == 'Pending'
+        && request.resource.data.priority in ['Low', 'Medium', 'High']
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.archived == false
+        && (!request.resource.data.keys().hasAny(['relatedTo']) || organizationRelatedRecordExists(organizationId, request.resource.data.relatedTo));
+      allow update: if organizationTaskCanManage(organizationId)
+        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.status in ['Pending', 'Completed']
+        && request.resource.data.priority in ['Low', 'Medium', 'High']
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
+        && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
+        && (!request.resource.data.keys().hasAny(['relatedTo']) || organizationRelatedRecordExists(organizationId, request.resource.data.relatedTo));
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/settings/{settingsId} {
+      allow read: if organizationCanView(organizationId);
+      allow create, update: if isOrganizationAdmin(organizationId)
+        && settingsId == 'settings'
+        && request.resource.data.keys().hasOnly([
+          'businessName', 'businessType', 'email', 'phone', 'website', 'address',
+          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources'
+        ]);
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/activities/{activityId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanView(organizationId)
+        && request.resource.data.keys().hasOnly(['type', 'description', 'entityType', 'entityId', 'createdAt', 'createdBy', 'metadata'])
+        && request.resource.data.type in [
+          'lead_creation', 'client_conversion', 'client_creation', 'client_update',
+          'client_archive', 'deal_creation', 'deal_update', 'stage_change', 'deal_won', 'deal_lost',
+          'task_completion', 'settings_update', 'won_deal'
+        ]
+        && request.resource.data.description is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdBy == request.auth.uid
+        && (!request.resource.data.keys().hasAny(['entityType']) || request.resource.data.entityType in ['Lead', 'Client', 'Deal', 'Task', 'Settings'])
+        && (!request.resource.data.keys().hasAny(['entityId']) || request.resource.data.entityId is string)
+        && (!request.resource.data.keys().hasAny(['metadata']) || request.resource.data.metadata is map)
+        && (!request.resource.data.keys().hasAny(['entityType']) || request.resource.data.entityType == 'Settings'
+          || (request.resource.data.keys().hasAll(['entityId'])
+            && (request.resource.data.entityType == 'Lead' && exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(request.resource.data.entityId))
+              || request.resource.data.entityType == 'Client' && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.entityId))
+              || request.resource.data.entityType == 'Deal' && exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId))
+              || request.resource.data.entityType == 'Task' && exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(request.resource.data.entityId)))));
+      allow update, delete: if false;
     }
 
     match /deals/{dealId} {
       allow read: if isActiveUser();
 
       allow create: if canManageDeals()
-        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
         && request.resource.data.clientId is string
         && clientCanHaveDeals(request.resource.data.clientId)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.archived == false
+        && canAssign(request.resource.data.assignedToUid)
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
         && request.resource.data.status == 'Active'
         && request.resource.data.stage != 'Won'
         && request.resource.data.stage != 'Lost';
 
-      allow update: if canManageDeals()
+      allow update: if canUpdateDeal()
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
         && request.resource.data.clientId == resource.data.clientId
+        && request.resource.data.leadId == resource.data.leadId
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
+        && canAssign(request.resource.data.assignedToUid)
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string
         && ((request.resource.data.status == 'Active' && request.resource.data.stage != 'Won' && request.resource.data.stage != 'Lost')
-          || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won')
+          || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won'
+            && (!request.resource.data.keys().hasAny(['lossReason']) || request.resource.data.lossReason == null))
           || (request.resource.data.status == 'Lost' && request.resource.data.stage == 'Lost' && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
 
       allow delete: if false;
+    }
+
+    match /deals/{dealId}/timeline/{entryId} {
+      allow read: if isActiveUser()
+        && exists(/databases/$(database)/documents/deals/$(dealId));
+
+      allow create: if isActiveUser()
+        && (exists(/databases/$(database)/documents/deals/$(dealId))
+          || getAfter(/databases/$(database)/documents/deals/$(dealId)).data.keys().hasAny(['title']))
+        && request.resource.data.keys().hasOnly([
+          'entryType', 'activityType', 'content', 'occurredAt',
+          'createdAt', 'createdByUid', 'createdByName'
+        ])
+        && request.resource.data.entryType in ['ACTIVITY', 'NOTE', 'SYSTEM']
+        && request.resource.data.content is string
+        && request.resource.data.content != ''
+        && request.resource.data.occurredAt is timestamp
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string
+        && (request.resource.data.entryType != 'ACTIVITY'
+          || (request.resource.data.keys().hasAll(['activityType'])
+            && request.resource.data.activityType in ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other']))
+        && (request.resource.data.entryType != 'NOTE'
+          || !request.resource.data.keys().hasAny(['activityType']))
+        && (request.resource.data.entryType != 'SYSTEM'
+          || !request.resource.data.keys().hasAny(['activityType']));
+
+      allow update, delete: if false;
     }
 
     match /tasks/{taskId} {
@@ -132,11 +577,12 @@ service cloud.firestore {
       allow create: if canManageTasks()
         && request.resource.data.keys().hasOnly([
           'title', 'description', 'dueDate', 'status', 'priority', 'relatedTo',
-          'assignedTo', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'
+          'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'
         ])
         && request.resource.data.title is string
         && request.resource.data.status in ['Pending', 'Completed']
         && request.resource.data.priority in ['Low', 'Medium', 'High']
+        && canAssign(request.resource.data.assignedToUid)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.archived == false;
@@ -146,9 +592,46 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status in ['Pending', 'Completed']
-        && request.resource.data.priority in ['Low', 'Medium', 'High'];
+        && request.resource.data.priority in ['Low', 'Medium', 'High']
+        && canAssign(request.resource.data.assignedToUid)
+        && request.resource.data.assignedToUid is string
+        && request.resource.data.assignedToName is string;
 
       allow delete: if false;
+    }
+
+    match /system/settings {
+      allow read: if isActiveUser();
+
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'businessName', 'businessType', 'email', 'phone', 'website', 'address',
+          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /activities/{activityId} {
+      allow read: if isActiveUser();
+
+      allow create: if isActiveUser()
+        && request.resource.data.keys().hasOnly([
+          'type', 'description', 'entityType', 'entityId', 'createdAt', 'createdBy', 'metadata'
+        ])
+        && request.resource.data.type in [
+          'lead_creation', 'client_conversion', 'client_creation', 'client_update',
+          'client_archive', 'deal_creation', 'deal_update', 'stage_change', 'deal_won', 'deal_lost',
+          'task_completion', 'settings_update', 'won_deal'
+        ]
+        && request.resource.data.description is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.createdBy == request.auth.uid
+        && (!request.resource.data.keys().hasAny(['entityType']) || request.resource.data.entityType in ['Lead', 'Client', 'Deal', 'Task', 'Settings'])
+        && (!request.resource.data.keys().hasAny(['entityId']) || request.resource.data.entityId is string)
+        && (!request.resource.data.keys().hasAny(['metadata']) || request.resource.data.metadata is map);
+
+      allow update, delete: if false;
     }
 
     // No other Firestore collections are publicly accessible.
