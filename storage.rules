@@ -19,6 +19,7 @@ service firebase.storage {
     function organizationMember(organizationId) {
       return signedIn()
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.status in ['trial', 'active'];
     }

@@ -16,13 +16,13 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
     <html lang="en">
       <body suppressHydrationWarning className="antialiased">
         <AuthProvider>
-          <AuthGate>
-            <WorkspaceProvider>
+          <WorkspaceProvider>
+            <AuthGate>
               <AppProvider>
                 <SidebarLayout>{children}</SidebarLayout>
               </AppProvider>
-            </WorkspaceProvider>
-          </AuthGate>
+            </AuthGate>
+          </WorkspaceProvider>
         </AuthProvider>
       </body>
     </html>

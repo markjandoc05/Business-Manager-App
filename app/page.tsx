@@ -20,11 +20,13 @@ import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
 import { canManageLeads } from '@/lib/permissions';
+import { useWorkspace } from '@/context/WorkspaceContext';
 
 export default function DashboardPage() {
   const { leads, clients, deals, tasks, activities, settings, completeTask, addLead, addClient, addTask } = useApp();
   const { user } = useAuth();
-  const canManage = canManageLeads(user);
+  const { loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
+  const canManage = canManageLeads(membership);
 
   // Modals state
   const [activeModal, setActiveModal] = useState<'lead' | 'client' | 'task' | null>(null);
@@ -33,6 +35,8 @@ export default function DashboardPage() {
   const [leadForm, setLeadForm] = useState({ name: '', email: '', phone: '', company: '', source: settings.leadSources[0]?.name || 'Website' });
   const [clientForm, setClientForm] = useState({ name: '', email: '', phone: '', company: '' });
   const [taskForm, setTaskForm] = useState({ title: '', description: '', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High' });
+  const [leadSaving, setLeadSaving] = useState(false);
+  const [leadError, setLeadError] = useState<string | null>(null);
 
   // KPI Calculations
   const totalLeads = leads.length;
@@ -52,19 +56,36 @@ export default function DashboardPage() {
     })
     .reduce((sum, deal) => sum + deal.value, 0);
 
-  const handleCreateLead = (e: React.FormEvent) => {
+  const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!leadForm.name || !leadForm.email) return;
-    addLead({
-      name: leadForm.name,
-      email: leadForm.email,
-      phone: leadForm.phone,
-      company: leadForm.company,
-      status: 'New',
-      source: leadForm.source,
-    });
-    setLeadForm({ name: '', email: '', phone: '', company: '', source: settings.leadSources[0]?.name || 'Website' });
-    setActiveModal(null);
+    if (workspaceLoading) {
+      setLeadError('Workspace is still loading. Please wait a moment and try again.');
+      return;
+    }
+    if (!workspaceReady) {
+      setLeadError('No active organization is available. Please contact an administrator.');
+      return;
+    }
+    setLeadSaving(true);
+    setLeadError(null);
+    try {
+      await addLead({
+        name: leadForm.name,
+        email: leadForm.email,
+        phone: leadForm.phone,
+        company: leadForm.company,
+        status: 'New',
+        source: leadForm.source,
+      });
+      setLeadForm({ name: '', email: '', phone: '', company: '', source: settings.leadSources[0]?.name || 'Website' });
+      setActiveModal(null);
+    } catch (error) {
+      console.error('Unable to create dashboard lead', error);
+      setLeadError(error instanceof Error ? error.message : 'Unable to save the lead. Please try again.');
+    } finally {
+      setLeadSaving(false);
+    }
   };
 
   const handleCreateClient = (e: React.FormEvent) => {
@@ -102,7 +123,7 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-500">Real-time performance metrics and pipeline execution.</p>
         </div>
         <div className="flex flex-wrap gap-3">
-          {canManage && <Button onClick={() => setActiveModal('lead')} className="gap-2">
+          {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2">
             <Plus size={16} /> Add Lead
           </Button>}
           <Button variant="outline" onClick={() => setActiveModal('client')} className="gap-2">
@@ -313,6 +334,7 @@ export default function DashboardPage() {
               {activeModal === 'lead' && (
                 <form onSubmit={handleCreateLead} className="space-y-4">
                   <h3 className="text-lg font-bold text-slate-900">Add New Lead</h3>
+                  {(leadError || workspaceLoading) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700" role="alert">{leadError || 'Workspace is still loading. Please wait a moment.'}</p>}
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-slate-500 uppercase">Full Name</label>
                     <input 
@@ -367,7 +389,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex justify-end gap-3 pt-4">
                     <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
-                    <Button type="submit">Save Lead</Button>
+                    <Button type="submit" disabled={leadSaving || !workspaceReady}>{leadSaving ? 'Saving…' : 'Save Lead'}</Button>
                   </div>
                 </form>
               )}

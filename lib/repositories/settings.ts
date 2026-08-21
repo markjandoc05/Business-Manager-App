@@ -2,7 +2,7 @@ import { getDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { BusinessType, Settings } from '@/types';
-import { canManageSettings, canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationDocumentInCollection } from '@/lib/organizations/paths';
 
 function settingsDocument(organizationId: string) {
@@ -44,12 +44,12 @@ const persistedKeys = [
 
 type PersistedSettings = Pick<Settings, typeof persistedKeys[number]>;
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to business settings.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
-function requireSettingsManager(user: AppUser | null) {
-  if (!canManageSettings(user)) throw new Error('You do not have permission to modify business settings.');
+async function requireSettingsManager(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId, ['ADMIN']);
 }
 
 function isBusinessType(value: unknown): value is BusinessType {
@@ -77,7 +77,7 @@ function pickPersistedSettings(changes: Partial<Settings>): Partial<PersistedSet
 }
 
 export async function loadSettings(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   try {
     const snapshot = await getDoc(settingsDocument(organizationId));
     // Defaults are returned in memory only; an absent document is never overwritten automatically.
@@ -89,7 +89,7 @@ export async function loadSettings(user: AppUser | null, organizationId: string)
 }
 
 export async function updateSettings(user: AppUser | null, organizationId: string, changes: Partial<Settings>) {
-  requireSettingsManager(user);
+  await requireSettingsManager(user, organizationId);
   const persistedChanges = pickPersistedSettings(changes);
   if (Object.keys(persistedChanges).length === 0) return;
 

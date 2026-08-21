@@ -70,8 +70,8 @@ export default function ClientsPage() {
     archiveClient: archiveClientInApp,
   } = useApp();
   const { user } = useAuth();
-  const { currentOrganizationId } = useWorkspace();
-  const canManage = canManageClients(user);
+  const { currentOrganizationId, membership } = useWorkspace();
+  const canManage = canManageClients(membership);
   const [actionError, setActionError] = useState<string | null>(null);
   const [savingClient, setSavingClient] = useState(false);
   const [archivingClient, setArchivingClient] = useState(false);
@@ -667,7 +667,7 @@ export default function ClientsPage() {
           </div>
         )}
 
-        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canEdit={canManage || (user.active === true && selectedDeal.assignedToUid === user.uid)} canAssign={canManage} saving={savingClient} tasks={tasks} canAddTask={canManageTasks(user)} onAddTask={addTask} onCompleteTask={completeTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingClient(true); try { await updateDeal(selectedDeal.id, input); } finally { setSavingClient(false); } }} />}
+        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid)} canAssign={canManage} saving={savingClient} tasks={tasks} canAddTask={canManageTasks(membership)} onAddTask={addTask} onCompleteTask={completeTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingClient(true); try { await updateDeal(selectedDeal.id, input); } finally { setSavingClient(false); } }} />}
 
         {showEditModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

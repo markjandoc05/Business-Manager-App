@@ -56,6 +56,9 @@ export interface AppUser {
   uid: string;
   name: string;
   email: string;
+  /** Legacy global profile fields retained for login/pending-account compatibility only. */
   role: UserRole;
   active: boolean;
+  /** Global account state. Organization access is controlled by membership status. */
+  accountStatus: 'pending' | 'active' | 'disabled';
 }

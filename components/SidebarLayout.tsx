@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { canManageSettings } from '@/lib/permissions';
+import { useWorkspace } from '@/context/WorkspaceContext';
 
 const baseSidebarItems = [
   { name: 'Dashboard', icon: LayoutDashboard, href: '/' },
@@ -38,7 +39,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const { settings } = useApp();
-  const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(user));
+  const { membership } = useWorkspace();
+  const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(membership));
 
   const [isDesktop, setIsDesktop] = useState(true);
 
@@ -146,7 +148,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-white truncate">{user?.name}</p>
                 <p className="text-xs text-slate-500 truncate">{user?.email}</p>
-                <p className="text-[10px] text-blue-400 truncate">{user?.role}</p>
+                <p className="text-[10px] text-blue-400 truncate">{membership?.role || 'Loading role…'}</p>
               </div>
               <button title="Sign out" onClick={() => signOut()} className="p-1.5 text-slate-500 hover:text-white" aria-label="Sign out"><LogOut size={16} /></button>
             </div>

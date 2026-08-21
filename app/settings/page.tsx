@@ -5,19 +5,10 @@ import { Card, Button, Badge } from '@/components/ui/core';
 import { useApp } from '@/context/AppContext';
 import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/client';
 import type { UserRole } from '@/types/auth';
 import { canManageSettings } from '@/lib/permissions';
-
-interface ManagedUser {
-  uid: string;
-  name: string;
-  email: string;
-  role: UserRole;
-  active: boolean;
-  lastLogin: unknown;
-}
+import { listOrganizationMembers, updateOrganizationMember, type ManagedOrganizationMember } from '@/lib/repositories/users';
+import { useWorkspace } from '@/context/WorkspaceContext';
 
 function formatLastLogin(value: unknown) {
   if (!value || typeof value !== 'object' || !('toDate' in value) || typeof value.toDate !== 'function') {
@@ -30,9 +21,10 @@ function formatLastLogin(value: unknown) {
 export default function SettingsPage() {
   const { settings, updateSettings } = useApp();
   const { user } = useAuth();
-  const canManageSystemSettings = canManageSettings(user);
+  const { currentOrganizationId, membership } = useWorkspace();
+  const canManageSystemSettings = canManageSettings(membership);
   const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'users' | 'pipeline' | 'sources' | 'license'>('profile');
-  const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
+  const [managedUsers, setManagedUsers] = useState<ManagedOrganizationMember[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
@@ -69,30 +61,12 @@ export default function SettingsPage() {
   }, [settings]);
 
   const loadUsers = async () => {
-    if (user?.role !== 'ADMIN') return;
+    if (!user || !currentOrganizationId || !canManageSystemSettings) return;
 
     setUsersLoading(true);
     setUsersError(null);
     try {
-      const snapshot = await getDocs(collection(db, 'users'));
-      const nextUsers = snapshot.docs.map((userDoc) => {
-        const data = userDoc.data();
-        const role = data.role === 'ADMIN' || data.role === 'MANAGER' || data.role === 'USER'
-          ? data.role as UserRole
-          : 'USER';
-
-        return {
-          uid: userDoc.id,
-          name: typeof data.name === 'string' ? data.name : 'Unnamed user',
-          email: typeof data.email === 'string' ? data.email : '',
-          role,
-          active: data.active === true,
-          lastLogin: data.lastLogin,
-        };
-      });
-
-      nextUsers.sort((left, right) => left.name.localeCompare(right.name));
-      setManagedUsers(nextUsers);
+      setManagedUsers(await listOrganizationMembers(user, currentOrganizationId));
     } catch (loadError) {
       console.error('Unable to load Firestore users', loadError);
       setUsersError('Unable to load users. Check your connection and try again.');
@@ -101,15 +75,18 @@ export default function SettingsPage() {
     }
   };
 
-  const updateManagedUser = async (uid: string, changes: Partial<Pick<ManagedUser, 'role' | 'active'>>) => {
-    if (user?.role !== 'ADMIN' || uid === user.uid || updatingUserId) return;
+  const updateManagedUser = async (uid: string, changes: Partial<Pick<ManagedOrganizationMember, 'role'>> & { active?: boolean }) => {
+    if (!user || !currentOrganizationId || !canManageSystemSettings || uid === user.uid || updatingUserId) return;
 
     setUpdatingUserId(uid);
     setUsersError(null);
     try {
-      await updateDoc(doc(db, 'users', uid), changes);
+      await updateOrganizationMember(user, currentOrganizationId, uid, {
+        ...(changes.role ? { role: changes.role } : {}),
+        ...(changes.active !== undefined ? { status: changes.active ? 'active' : 'inactive' } : {}),
+      });
       setManagedUsers((currentUsers) => currentUsers.map((managedUser) => (
-        managedUser.uid === uid ? { ...managedUser, ...changes } : managedUser
+        managedUser.uid === uid ? { ...managedUser, ...(changes.role ? { role: changes.role } : {}), ...(changes.active !== undefined ? { status: changes.active ? 'active' : 'inactive' } : {}) } : managedUser
       )));
     } catch (updateError) {
       console.error('Unable to update Firestore user', updateError);
@@ -257,7 +234,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            {activeTab === 'users' && user?.role === 'ADMIN' && (
+            {activeTab === 'users' && canManageSystemSettings && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-slate-500">Manage activation and roles for other users.</p></div>
@@ -280,7 +257,7 @@ export default function SettingsPage() {
                       </thead>
                       <tbody className="divide-y">
                         {managedUsers.map((managedUser) => {
-                          const isCurrentUser = managedUser.uid === user.uid;
+                          const isCurrentUser = managedUser.uid === user?.uid;
                           const isUpdating = updatingUserId === managedUser.uid;
                           return (
                             <tr key={managedUser.uid}>
@@ -292,8 +269,8 @@ export default function SettingsPage() {
                                 </select>
                               </td>
                               <td className="p-3">
-                                <Button size="sm" variant={managedUser.active ? 'outline' : 'primary'} disabled={isCurrentUser || isUpdating} onClick={() => void updateManagedUser(managedUser.uid, { active: !managedUser.active })}>
-                                  {isUpdating ? 'Saving…' : managedUser.active ? 'Deactivate' : 'Activate'}
+                                <Button size="sm" variant={managedUser.status === 'active' ? 'outline' : 'primary'} disabled={isCurrentUser || isUpdating} onClick={() => void updateManagedUser(managedUser.uid, { active: managedUser.status !== 'active' })}>
+                                  {isUpdating ? 'Saving…' : managedUser.status === 'active' ? 'Deactivate' : 'Activate'}
                                 </Button>
                               </td>
                               <td className="p-3 text-slate-600">{formatLastLogin(managedUser.lastLogin)}</td>

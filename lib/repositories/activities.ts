@@ -2,7 +2,7 @@ import { addDoc, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Activity } from '@/types';
-import { canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
 
 export type ActivityInput = Pick<Activity, 'type' | 'description' | 'entityType' | 'entityId' | 'metadata'>;
@@ -34,12 +34,12 @@ function mapActivity(id: string, data: Record<string, unknown>): Activity {
   };
 }
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to activity history.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
 export async function listActivities(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   try {
     const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'));
     return snapshot.docs.map((activityDoc) => mapActivity(activityDoc.id, activityDoc.data())).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -50,7 +50,7 @@ export async function listActivities(user: AppUser | null, organizationId: strin
 }
 
 export async function createActivity(user: AppUser | null, organizationId: string, input: ActivityInput) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   if (!user) throw new Error('You must be signed in to create an activity.');
   try {
     const activityRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'), {

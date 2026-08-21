@@ -2,7 +2,7 @@ import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc } 
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Task } from '@/types';
-import { canManageTasks, canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 
@@ -35,13 +35,14 @@ function mapTask(id: string, data: Record<string, unknown>): Task {
   };
 }
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to business data.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
-function requireTaskManager(user: AppUser | null, task?: Task) {
-  if (canManageTasks(user)) return;
-  if (user?.active === true && user.role === 'USER' && task?.assignedToUid === user.uid) return;
+async function requireTaskManager(user: AppUser | null, organizationId: string, task?: Task) {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  if (['ADMIN', 'MANAGER'].includes(membership.role)) return;
+  if (membership.role === 'USER' && task?.assignedToUid === user?.uid) return;
   throw new Error('You do not have permission to manage this task.');
 }
 
@@ -76,7 +77,7 @@ async function getOrganizationTask(organizationId: string, taskId: string) {
 }
 
 export async function listTasks(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   try {
     const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
     return snapshot.docs
@@ -90,13 +91,13 @@ export async function listTasks(user: AppUser | null, organizationId: string) {
 }
 
 export async function createTask(user: AppUser | null, organizationId: string, input: TaskInput) {
-  requireTaskManager(user);
+  await requireTaskManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
   await requireRelatedRecords(organizationId, input.relatedTo);
 
   try {
-    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, input.assignedToUid, input.assignedToName)) };
+    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName)) };
     const taskRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), {
       ...payload,
       status: 'Pending',
@@ -116,7 +117,7 @@ export async function createTask(user: AppUser | null, organizationId: string, i
 
 export async function updateTask(user: AppUser | null, organizationId: string, taskId: string, input: TaskInput) {
   const existingTask = await getOrganizationTask(organizationId, taskId);
-  requireTaskManager(user, existingTask);
+  await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
   await requireRelatedRecords(organizationId, input.relatedTo);
@@ -130,7 +131,7 @@ export async function updateTask(user: AppUser | null, organizationId: string, t
 
 export async function completeTask(user: AppUser | null, organizationId: string, taskId: string, status: Task['status']) {
   const existingTask = await getOrganizationTask(organizationId, taskId);
-  requireTaskManager(user, existingTask);
+  await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   try {
     await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
@@ -142,7 +143,7 @@ export async function completeTask(user: AppUser | null, organizationId: string,
 
 export async function archiveTask(user: AppUser | null, organizationId: string, taskId: string) {
   const existingTask = await getOrganizationTask(organizationId, taskId);
-  requireTaskManager(user, existingTask);
+  await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to archive a task.');
   try {
     await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });

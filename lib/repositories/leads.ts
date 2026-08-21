@@ -2,7 +2,7 @@ import { collection, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, wh
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Client, Lead, LeadStatus } from '@/types';
-import { canManageLeads, canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveOrganizationAssignment } from '@/lib/ownership';
 import { systemTimelineData, systemTimelineRef } from '@/lib/repositories/leadTimeline';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
@@ -38,30 +38,31 @@ function mapLead(id: string, data: Record<string, unknown>): Lead {
   };
 }
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to business data.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
-function requireLeadManager(user: AppUser | null) {
-  if (!canManageLeads(user)) throw new Error('You do not have permission to manage leads.');
+async function requireLeadManager(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId, ['ADMIN', 'MANAGER']);
 }
 
-function requireLeadEditor(user: AppUser | null, assignedToUid?: string) {
-  if (!user?.active || !['ADMIN', 'MANAGER', 'USER'].includes(user.role)) throw new Error('You do not have permission to update a lead.');
-  if (user.role === 'USER' && assignedToUid !== user.uid) throw new Error('You can only update Leads assigned to you.');
+async function requireLeadEditor(user: AppUser | null, organizationId: string, assignedToUid?: string) {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  if (membership.role === 'USER' && assignedToUid !== user?.uid) throw new Error('You can only update Leads assigned to you.');
 }
 
 export async function listLeads(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
+  const { membership } = await requireOrganizationAccess(user, organizationId);
   const leadsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'leads');
-  const snapshot = await getDocs(user?.role === 'USER' ? query(leadsCollection, where('assignedToUid', '==', user.uid)) : leadsCollection);
+  const snapshot = await getDocs(membership.role === 'USER' ? query(leadsCollection, where('assignedToUid', '==', user?.uid)) : leadsCollection);
   return snapshot.docs
     .map((leadDoc) => mapLead(leadDoc.id, leadDoc.data()))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
 export async function createLead(user: AppUser | null, organizationId: string, input: LeadInput) {
-  requireLeadManager(user);
+  await requireLeadManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a lead.');
 
   const leadRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'leads'));
@@ -94,8 +95,8 @@ export async function createLead(user: AppUser | null, organizationId: string, i
       organizationId,
       leadPath: leadRef.path,
       authUid: user.uid,
-      role: user.role,
-      active: user.active,
+      role: 'organization membership',
+      active: true,
       payload: {
         ...data,
         createdAt: 'serverTimestamp()',
@@ -109,7 +110,7 @@ export async function createLead(user: AppUser | null, organizationId: string, i
 }
 
 export async function updateLead(user: AppUser | null, organizationId: string, leadId: string, input: LeadInput) {
-  requireLeadEditor(user, input.assignedToUid);
+  await requireLeadEditor(user, organizationId, input.assignedToUid);
   if (!user) throw new Error('You must be signed in to update a lead.');
   const assignment = await resolveOrganizationAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
   await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), {
@@ -122,7 +123,7 @@ export async function updateLead(user: AppUser | null, organizationId: string, l
 }
 
 export async function updateLeadStatus(user: AppUser | null, organizationId: string, lead: Lead, status: LeadStatus) {
-  requireLeadEditor(user, lead.assignedToUid);
+  await requireLeadEditor(user, organizationId, lead.assignedToUid);
   if (!user) throw new Error('You must be signed in to update a lead.');
   if (status === 'Client') throw new Error('Use lead conversion to create a client.');
   const leadRef = organizationDocumentInCollection(db, organizationId, 'leads', lead.id);
@@ -135,9 +136,10 @@ export async function updateLeadStatus(user: AppUser | null, organizationId: str
 }
 
 export async function archiveLead(user: AppUser | null, organizationId: string, leadId: string) {
-  requireLeadEditor(user);
+  await requireLeadEditor(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a lead.');
-  if (user.role === 'USER') {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  if (membership.role === 'USER') {
     const existing = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
     if (!existing.exists() || existing.data().assignedToUid !== user.uid) throw new Error('You can only archive Leads assigned to you.');
   }
@@ -145,7 +147,7 @@ export async function archiveLead(user: AppUser | null, organizationId: string, 
 }
 
 export async function convertLeadToClient(user: AppUser | null, organizationId: string, lead: Lead) {
-  requireLeadManager(user);
+  await requireLeadManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to convert a lead.');
   if (lead.status === 'Client' || lead.convertedClientId) throw new Error('This lead has already been converted.');
 

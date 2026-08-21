@@ -2,7 +2,7 @@ import { doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch } from 'fi
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Deal } from '@/types';
-import { canManageClients, canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { getDealStatusForStage } from '@/lib/deal-workflow';
 import { resolveAssignment } from '@/lib/ownership';
 import { dealSystemTimelineData, dealSystemTimelineRef } from '@/lib/repositories/dealTimeline';
@@ -44,13 +44,14 @@ function mapDeal(id: string, data: Record<string, unknown>): Deal {
   };
 }
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to business data.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
-function requireDealManager(user: AppUser | null, deal?: Deal) {
-  if (canManageClients(user)) return;
-  if (user?.active === true && user.role === 'USER' && deal?.assignedToUid === user.uid) return;
+async function requireDealManager(user: AppUser | null, organizationId: string, deal?: Deal) {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  if (['ADMIN', 'MANAGER'].includes(membership.role)) return;
+  if (membership.role === 'USER' && deal?.assignedToUid === user?.uid) return;
   throw new Error('You do not have permission to manage this deal.');
 }
 
@@ -66,7 +67,7 @@ async function requireExistingClient(organizationId: string, clientId: string) {
 }
 
 export async function listDeals(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   try {
     const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'));
     return snapshot.docs.map((dealDoc) => mapDeal(dealDoc.id, dealDoc.data())).filter((deal) => !deal.archived).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -77,7 +78,7 @@ export async function listDeals(user: AppUser | null, organizationId: string) {
 }
 
 export async function createDeal(user: AppUser | null, organizationId: string, input: DealInput) {
-  requireDealManager(user);
+  await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a deal.');
   if (!input.title.trim() || !input.clientId || !Number.isFinite(input.value) || input.value < 0) throw new Error('Deal details are incomplete.');
   validateDealState(input.stage, 'Active');
@@ -88,7 +89,7 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
     throw error;
   }
 
-  const assignment = await resolveAssignment(user, input.assignedToUid, input.assignedToName);
+  const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
   let dealRef;
   try {
     dealRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'));
@@ -115,7 +116,7 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
 }
 
 export async function updateDeal(user: AppUser | null, organizationId: string, deal: Deal, input: DealInput) {
-  requireDealManager(user, deal);
+  await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to update a deal.');
   if (deal.clientId !== input.clientId || deal.leadId !== (input.leadId || undefined)) throw new Error('Client and lead relationships cannot be changed from Deal editing.');
   if (deal.status !== 'Active' && input.stage !== deal.stage) throw new Error('Won and Lost deals cannot be reopened or moved.');
@@ -170,7 +171,7 @@ export async function updateDealStage(user: AppUser | null, organizationId: stri
 }
 
 export async function archiveDeal(user: AppUser | null, organizationId: string, dealId: string) {
-  requireDealManager(user);
+  await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a deal.');
   try {
     await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });

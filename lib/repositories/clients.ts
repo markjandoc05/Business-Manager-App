@@ -3,7 +3,7 @@ import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage
 import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Client, DocumentItem, Note } from '@/types';
-import { canManageClients, canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection, organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
 
@@ -36,16 +36,16 @@ function mapClient(id: string, data: Record<string, unknown>): Client {
   };
 }
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to business data.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
-function requireClientManager(user: AppUser | null) {
-  if (!canManageClients(user)) throw new Error('You do not have permission to manage clients.');
+async function requireClientManager(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId, ['ADMIN', 'MANAGER']);
 }
 
 export async function listClients(user: AppUser | null, organizationId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
   return snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
@@ -53,10 +53,10 @@ export async function listClients(user: AppUser | null, organizationId: string) 
 }
 
 export async function createClient(user: AppUser | null, organizationId: string, input: ClientInput) {
-  requireClientManager(user);
+  await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a client.');
 
-  const assignment = await resolveAssignment(user, input.assignedToUid, input.assignedToName);
+  const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
   const clientRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'), {
     ...input,
     company: input.company || '',
@@ -72,7 +72,7 @@ export async function createClient(user: AppUser | null, organizationId: string,
 }
 
 export async function updateClient(user: AppUser | null, organizationId: string, clientId: string, input: ClientInput) {
-  requireClientManager(user);
+  await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to update a client.');
 
   await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
@@ -86,7 +86,7 @@ export async function updateClient(user: AppUser | null, organizationId: string,
 }
 
 export async function archiveClient(user: AppUser | null, organizationId: string, clientId: string) {
-  requireClientManager(user);
+  await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a client.');
 
   await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
@@ -97,7 +97,7 @@ export async function archiveClient(user: AppUser | null, organizationId: string
 }
 
 export async function addClientNote(user: AppUser | null, organizationId: string, clientId: string, content: string) {
-  requireClientManager(user);
+  await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a client note.');
 
   const noteRef = await addDoc(organizationSubcollection(db, organizationId, 'clients', clientId, 'notes'), {
@@ -119,7 +119,7 @@ export async function addClientNote(user: AppUser | null, organizationId: string
 }
 
 export async function listClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   const snapshot = await getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'));
   return snapshot.docs.map((noteDoc) => {
     const data = noteDoc.data();
@@ -141,7 +141,7 @@ function safeStorageFilename(filename: string) {
 }
 
 export async function listClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   const snapshot = await getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'));
   return snapshot.docs.map((documentDoc) => {
     const data = documentDoc.data();
@@ -160,7 +160,7 @@ export async function listClientDocuments(user: AppUser | null, organizationId: 
 }
 
 export async function uploadClientDocument(user: AppUser | null, organizationId: string, clientId: string, file: File) {
-  requireClientManager(user);
+  await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to upload a client document.');
   if (!file || file.size === 0) throw new Error('Please select a file to upload.');
   if (file.size > 10 * 1024 * 1024) throw new Error('Files must be 10 MB or smaller.');

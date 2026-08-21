@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { getOrganization, listUserMemberships } from '@/lib/repositories/workspaces';
 import type { Organization, OrganizationMembership } from '@/types/auth';
@@ -13,6 +13,8 @@ interface WorkspaceContextValue {
   organizationStatus: Organization['status'] | null;
   availableOrganizations: Organization[];
   loading: boolean;
+  ready: boolean;
+  refresh: () => void;
   error: string | null;
 }
 
@@ -25,6 +27,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [availableOrganizations, setAvailableOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [refreshToken, setRefreshToken] = useState(0);
 
   const clearWorkspace = () => {
     setCurrentOrganization(null);
@@ -61,10 +64,13 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (!cancelled && userId === user.uid) setError('Workspace information is not available yet.');
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [authStatus, user]);
+  }, [authStatus, user, refreshToken]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
-  return <WorkspaceContext.Provider value={{ currentOrganization, currentOrganizationId: currentOrganization?.id || null, membership, organizationRole: membership?.role || null, organizationStatus: currentOrganization?.status || null, availableOrganizations, loading, error }}>{children}</WorkspaceContext.Provider>;
+  const ready = !loading && currentOrganization !== null && membership?.status === 'active';
+  const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
+
+  return <WorkspaceContext.Provider value={{ currentOrganization, currentOrganizationId: currentOrganization?.id || null, membership, organizationRole: membership?.role || null, organizationStatus: currentOrganization?.status || null, availableOrganizations, loading, ready, refresh, error }}>{children}</WorkspaceContext.Provider>;
 }
 
 export function useWorkspace() {

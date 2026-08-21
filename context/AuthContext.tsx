@@ -18,7 +18,7 @@ import {
 import { auth, db } from '@/lib/firebase/client';
 import type { AppUser, UserRole } from '@/types/auth';
 
-type AuthStatus = 'loading' | 'signed-out' | 'pending' | 'active' | 'error';
+type AuthStatus = 'loading' | 'signed-out' | 'active' | 'disabled' | 'error';
 
 interface AuthContextValue {
   firebaseUser: FirebaseUser | null;
@@ -37,12 +37,15 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
     ? data.role
     : 'USER';
 
+  const accountStatus = data.status === 'disabled' ? 'disabled' : data.status === 'active' || data.active === true ? 'active' : 'pending';
+
   return {
     uid: firebaseUser.uid,
     name: typeof data.displayName === 'string' ? data.displayName : typeof data.name === 'string' ? data.name : firebaseUser.displayName || 'User',
     email: typeof data.email === 'string' ? data.email : firebaseUser.email || '',
     role: role as UserRole,
     active: data.active === true,
+    accountStatus,
   };
 }
 
@@ -66,7 +69,7 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
       lastLogin: serverTimestamp(),
       lastLoginAt: serverTimestamp(),
     });
-    return { uid: firebaseUser.uid, name, email, role: 'USER', active: false };
+    return { uid: firebaseUser.uid, name, email, role: 'USER', active: false, accountStatus: 'pending' };
   }
 
   const nextName = firebaseUser.displayName || snapshot.data().name || 'User';
@@ -80,7 +83,7 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
     email: nextEmail,
     displayName: nextName,
     photoURL: firebaseUser.photoURL || '',
-    status: appUser.active ? 'active' : 'pending',
+    status: appUser.accountStatus,
     lastLogin: serverTimestamp(),
     lastLoginAt: serverTimestamp(),
   }).catch((error) => console.error('Unable to update user login metadata', error));
@@ -109,7 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const nextUser = await syncUser(nextFirebaseUser);
         setUser(nextUser);
-        setStatus(nextUser.active ? 'active' : 'pending');
+        setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : 'active');
       } catch (syncError) {
         console.error('Unable to load the authenticated Firestore user', syncError);
         setUser(null);

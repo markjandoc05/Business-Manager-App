@@ -64,9 +64,9 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { user, status: authStatus } = useAuth();
-  const { currentOrganizationId, loading: workspaceLoading } = useWorkspace();
-  const canLoadBusinessData = authStatus === 'active' && user?.active === true && !workspaceLoading;
-  const canLoadTenantData = canLoadBusinessData && Boolean(currentOrganizationId);
+  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
+  const canLoadBusinessData = authStatus === 'active' && Boolean(user) && !workspaceLoading;
+  const canLoadTenantData = canLoadBusinessData && workspaceReady && Boolean(currentOrganizationId);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsOrganizationId, setLeadsOrganizationId] = useState<string | null>(null);
   const [leadsLoading, setLeadsLoading] = useState(true);
@@ -108,7 +108,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try {
         if (!currentOrganizationId) return;
         const loadedUsers = await listAssignableOrganizationUsers(user, currentOrganizationId);
-        if (!cancelled) setUsers(user.role === 'USER' ? loadedUsers.filter((item) => item.uid === user.uid) : loadedUsers);
+        if (!cancelled) setUsers(membership?.role === 'USER' ? loadedUsers.filter((item) => item.uid === user.uid) : loadedUsers);
       } catch (error) {
         console.error('Unable to load assignees', error);
         if (!cancelled) setUsersError('Unable to load assignees.');
@@ -118,7 +118,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     void loadUsers();
     return () => { cancelled = true; };
-  }, [canLoadBusinessData, currentOrganizationId, user]);
+  }, [canLoadBusinessData, currentOrganizationId, membership, user]);
 
   const loadClientNotes = useCallback(async (clientId: string) => {
     if (!user) return;
@@ -362,7 +362,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const addLead = async (leadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt'>) => {
     if (!user) return;
-    if (!currentOrganizationId) throw new Error('No active organization is selected.');
+    if (workspaceLoading) throw new Error('Workspace is still loading. Please wait a moment and try again.');
+    if (!workspaceReady || !currentOrganizationId) throw new Error('No active organization is available. Please contact an administrator.');
     const newLead = await createLeadRepository(user, currentOrganizationId, leadData);
     setLeads(prev => [newLead, ...prev]);
     setLeadsOrganizationId(currentOrganizationId);

@@ -17,7 +17,8 @@ service cloud.firestore {
       return signedIn()
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
-        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active';
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER', 'USER'];
     }
 
     function isOrganizationAdmin(organizationId) {
@@ -40,6 +41,7 @@ service cloud.firestore {
       return organizationCanView(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId)).data.status == 'active'
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId)).data.role in ['ADMIN', 'MANAGER', 'USER']
         && (userId == request.auth.uid || organizationCanManage(organizationId));
     }
 
@@ -78,6 +80,7 @@ service cloud.firestore {
       return signedIn() && exists(currentUserPath());
     }
 
+    // Legacy root-collection compatibility only. Organization-scoped rules below use membership.
     function hasValidRole() {
       return hasUserProfile()
         && get(currentUserPath()).data.role in ['ADMIN', 'MANAGER', 'USER'];
@@ -141,7 +144,8 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isActiveUser() || (signedIn() && request.auth.uid == userId) || isAdmin();
+      // Global profiles are identity records, not an organization directory.
+      allow read: if isPlatformAdmin() || (signedIn() && request.auth.uid == userId);
 
       allow create: if signedIn()
         && request.auth.uid == userId
@@ -149,15 +153,15 @@ service cloud.firestore {
         && request.resource.data.active == false
         && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'role', 'active', 'createdAt', 'lastLogin', 'lastLoginAt']);
 
-      allow update: if (signedIn() && request.auth.uid == userId
+      allow update: if signedIn() && request.auth.uid == userId
         && request.resource.data.role == resource.data.role
         && request.resource.data.active == resource.data.active
+        && request.resource.data.status == resource.data.status
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
         && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
-        && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'disabled']))
-        || (isAdmin() && request.auth.uid != userId);
+        && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'disabled']);
 
-      allow delete: if isAdmin() && request.auth.uid != userId;
+      allow delete: if false;
     }
 
     match /organizations/{organizationId} {
@@ -176,6 +180,8 @@ service cloud.firestore {
         && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
         && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived'];
       allow update: if (isPlatformAdmin() || isOrganizationAdmin(organizationId))
+        && userId != request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status', 'activatedAt', 'activatedBy'])
         && request.resource.data.userId == resource.data.userId
         && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
         && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived'];

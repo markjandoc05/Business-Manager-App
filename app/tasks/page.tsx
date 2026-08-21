@@ -5,6 +5,7 @@ import { Card, Button, Badge } from '@/components/ui/core';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import { canManageTasks } from '@/lib/permissions';
+import { useWorkspace } from '@/context/WorkspaceContext';
 import type { Task } from '@/types';
 import { Archive, Edit, Plus, RefreshCw } from 'lucide-react';
 import { format, isFuture, isPast, isToday } from 'date-fns';
@@ -26,7 +27,8 @@ function parseRelated(value: string): Task['relatedTo'] {
 export default function TasksPage() {
   const { user } = useAuth();
   const { tasks, tasksLoading, tasksError, refreshTasks, addTask, updateTask, completeTask, archiveTask, leads, clients, deals, users, usersLoading } = useApp();
-  const canManage = canManageTasks(user);
+  const { membership } = useWorkspace();
+  const canManage = canManageTasks(membership);
   const [activeTab, setActiveTab] = useState<TaskTab>('Today');
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -36,7 +38,7 @@ export default function TasksPage() {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const displayedError = actionError || tasksError;
-  const canActOnTask = (task: Task) => canManage || (user?.active === true && user.role === 'USER' && task.assignedToUid === user.uid);
+  const canActOnTask = (task: Task) => canManage || (membership?.role === 'USER' && task.assignedToUid === user?.uid);
 
   const filteredTasks = useMemo(() => tasks.filter((task) => {
     const dueDate = new Date(task.dueDate);

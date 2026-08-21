@@ -15,15 +15,15 @@ import {
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { LeadActivityType, LeadTimelineEntry, LeadTimelineEntryType } from '@/types';
-import { canViewBusinessData } from '@/lib/permissions';
+import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
 
 export const LEAD_TIMELINE_PAGE_SIZE = 20;
 
 export type LeadTimelineCursor = QueryDocumentSnapshot<DocumentData> | null;
 
-function requireActiveUser(user: AppUser | null) {
-  if (!canViewBusinessData(user)) throw new Error('You do not have access to this lead timeline.');
+async function requireActiveUser(user: AppUser | null, organizationId: string) {
+  await requireOrganizationAccess(user, organizationId);
 }
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
@@ -52,7 +52,7 @@ function timelineCollection(organizationId: string, leadId: string) {
 }
 
 export async function listLeadTimeline(user: AppUser | null, organizationId: string, leadId: string, cursor: LeadTimelineCursor = null) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   try {
     const timelineQuery = cursor
       ? query(timelineCollection(organizationId, leadId), orderBy('occurredAt', 'desc'), startAfter(cursor), limit(LEAD_TIMELINE_PAGE_SIZE))
@@ -74,7 +74,7 @@ export async function createLeadTimelineEntry(
   leadId: string,
   input: { entryType: Exclude<LeadTimelineEntryType, 'SYSTEM'>; activityType?: LeadActivityType; content: string; occurredAt: Date },
 ) {
-  requireActiveUser(user);
+  await requireActiveUser(user, organizationId);
   if (!user) throw new Error('You must be signed in to add a timeline entry.');
   const content = input.content.trim();
   if (!content) throw new Error('Please enter a description or note.');
