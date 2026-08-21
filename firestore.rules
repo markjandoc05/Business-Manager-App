@@ -188,6 +188,16 @@ service cloud.firestore {
       allow delete: if isPlatformAdmin() || (isOrganizationAdmin(organizationId) && userId != request.auth.uid);
     }
 
+    // Collection-group workspace discovery is limited to the caller's own active,
+    // valid-role membership. This grants no write access and does not expose a directory.
+    match /{path=**}/members/{memberId} {
+      allow read: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && resource.data.status == 'active'
+        && resource.data.role in ['ADMIN', 'MANAGER', 'USER'];
+      allow write: if false;
+    }
+
     match /platformUsers/{userId} {
       allow read: if isPlatformAdmin() || (signedIn() && request.auth.uid == userId);
       allow create, update, delete: if isPlatformAdmin();

@@ -1,7 +1,6 @@
 import { collectionGroup, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
-import type { AppUser } from '@/types/auth';
-import type { MembershipStatus, Organization, OrganizationMembership, OrganizationRole, OrganizationStatus } from '@/types/auth';
+import type { AppUser, MembershipStatus, Organization, OrganizationMembership, OrganizationRole, OrganizationStatus } from '@/types/auth';
 
 const organizationStatuses: OrganizationStatus[] = ['trial', 'active', 'expired', 'suspended'];
 const membershipStatuses: MembershipStatus[] = ['pending', 'active', 'inactive', 'suspended', 'archived'];
@@ -26,7 +25,12 @@ function mapOrganization(id: string, data: Record<string, unknown>): Organizatio
 
 export async function listUserMemberships(user: AppUser | null) {
   if (!user) return [];
-  const snapshot = await getDocs(query(collectionGroup(db, 'members'), where('userId', '==', user.uid), where('status', '==', 'active')));
+  const snapshot = await getDocs(query(
+    collectionGroup(db, 'members'),
+    where('userId', '==', user.uid),
+    where('status', '==', 'active'),
+    where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
+  ));
   return snapshot.docs.map((membershipDoc) => mapMembership(membershipDoc.data(), membershipDoc.ref.parent.parent?.id || '')).filter((membership): membership is OrganizationMembership => membership !== null && membership.status === 'active');
 }
 

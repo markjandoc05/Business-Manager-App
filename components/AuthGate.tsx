@@ -40,13 +40,30 @@ function PendingScreen({ disabled = false }: { disabled?: boolean }) {
   );
 }
 
+function WorkspaceErrorScreen({ error, refresh }: { error: string; refresh: () => void }) {
+  const { signOut } = useAuth();
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+      <Card className="w-full max-w-md space-y-4 p-8 text-center">
+        <h1 className="text-xl font-bold text-slate-900">Unable to load workspace</h1>
+        <p className="text-sm text-slate-500">{error}</p>
+        <div className="flex justify-center gap-3">
+          <Button type="button" onClick={refresh}>Retry</Button>
+          <Button type="button" variant="outline" onClick={signOut}>Sign out</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();
-  const { loading: workspaceLoading, ready: workspaceReady } = useWorkspace();
+  const { loading: workspaceLoading, ready: workspaceReady, error: workspaceError, refresh } = useWorkspace();
   if (status === 'loading') return <LoadingScreen />;
   if (status === 'signed-out' || status === 'error') return <LoginScreen />;
   if (status === 'disabled') return <PendingScreen disabled />;
   if (workspaceLoading) return <LoadingScreen />;
+  if (workspaceError) return <WorkspaceErrorScreen error={workspaceError} refresh={refresh} />;
   if (!workspaceReady) return <PendingScreen />;
   return <>{children}</>;
 }
