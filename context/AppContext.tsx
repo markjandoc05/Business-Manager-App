@@ -72,6 +72,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [leadsLoading, setLeadsLoading] = useState(true);
   const [leadsError, setLeadsError] = useState<string | null>(null);
   const currentOrganizationRef = useRef(currentOrganizationId);
+  const clientNotesRequestRef = useRef(0);
+  const clientDocumentsRequestRef = useRef(0);
   useEffect(() => {
     currentOrganizationRef.current = currentOrganizationId;
   }, [currentOrganizationId]);
@@ -122,50 +124,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadClientNotes = useCallback(async (clientId: string) => {
     if (!user) return;
+    const organizationId = currentOrganizationId;
+    const requestId = ++clientNotesRequestRef.current;
     setClientNotesLoading(true);
     setClientNotesError(null);
     setClientNotes([]);
     try {
-      if (!currentOrganizationId) return;
-      setClientNotes(await listClientNotes(user, currentOrganizationId, clientId));
-      setClientNotesOrganizationId(currentOrganizationId);
+      if (!organizationId) return;
+      const loadedNotes = await listClientNotes(user, organizationId, clientId);
+      if (requestId !== clientNotesRequestRef.current || organizationId !== currentOrganizationRef.current) return;
+      setClientNotes(loadedNotes);
+      setClientNotesOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load client notes', error);
-      setClientNotesError('Unable to load client notes. Please try again.');
+      if (requestId === clientNotesRequestRef.current && organizationId === currentOrganizationRef.current) setClientNotesError('Unable to load client notes. Please try again.');
     } finally {
-      setClientNotesLoading(false);
+      if (requestId === clientNotesRequestRef.current) setClientNotesLoading(false);
     }
   }, [currentOrganizationId, user]);
 
   const loadClientDocuments = useCallback(async (clientId: string) => {
     if (!user) return;
+    const organizationId = currentOrganizationId;
+    const requestId = ++clientDocumentsRequestRef.current;
     setClientDocumentsLoading(true);
     setClientDocumentsError(null);
     setClientDocuments([]);
     try {
-      if (!currentOrganizationId) return;
-      setClientDocuments(await listClientDocuments(user, currentOrganizationId, clientId));
-      setClientDocumentsOrganizationId(currentOrganizationId);
+      if (!organizationId) return;
+      const loadedDocuments = await listClientDocuments(user, organizationId, clientId);
+      if (requestId !== clientDocumentsRequestRef.current || organizationId !== currentOrganizationRef.current) return;
+      setClientDocuments(loadedDocuments);
+      setClientDocumentsOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load client documents', error);
-      setClientDocumentsError('Unable to load client documents. Please try again.');
+      if (requestId === clientDocumentsRequestRef.current && organizationId === currentOrganizationRef.current) setClientDocumentsError('Unable to load client documents. Please try again.');
     } finally {
-      setClientDocumentsLoading(false);
+      if (requestId === clientDocumentsRequestRef.current) setClientDocumentsLoading(false);
     }
   }, [currentOrganizationId, user]);
 
   const refreshClients = useCallback(async () => {
     if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
     setClientsLoading(true);
     setClientsError(null);
     try {
-      setClients(await listClients(user, currentOrganizationId));
-      setClientsOrganizationId(currentOrganizationId);
+      const loadedClients = await listClients(user, organizationId);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setClients(loadedClients);
+      setClientsOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load shared clients', error);
-      setClientsError('Unable to load clients. Please check your connection and try again.');
+      if (organizationId === currentOrganizationRef.current) setClientsError('Unable to load clients. Please check your connection and try again.');
     } finally {
-      setClientsLoading(false);
+      if (organizationId === currentOrganizationRef.current) setClientsLoading(false);
     }
   }, [currentOrganizationId, user]);
 

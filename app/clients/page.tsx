@@ -24,7 +24,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
-import { canManageClients, canManageTasks } from '@/lib/permissions';
+import { canManageClients, canManageDeals, canManageTasks } from '@/lib/permissions';
 import { formatCurrency } from '@/lib/formatting';
 import { getActiveDealCreationStages, getDefaultDealCreationStage } from '@/lib/deal-workflow';
 import { DealDetailsModal } from '@/components/DealDetailsModal';
@@ -35,6 +35,10 @@ function formatFileSize(size: number | string) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function isValidDate(value: string) {
+  return Number.isFinite(Date.parse(value));
 }
 
 export default function ClientsPage() {
@@ -72,8 +76,11 @@ export default function ClientsPage() {
   const { user } = useAuth();
   const { currentOrganizationId, membership } = useWorkspace();
   const canManage = canManageClients(membership);
+  const canManageDeal = canManageDeals(membership);
+  const canManageTask = canManageTasks(membership);
   const [actionError, setActionError] = useState<string | null>(null);
   const [savingClient, setSavingClient] = useState(false);
+  const [savingTask, setSavingTask] = useState(false);
   const [archivingClient, setArchivingClient] = useState(false);
   const [uploadingDocument, setUploadingDocument] = useState(false);
 
@@ -100,6 +107,7 @@ export default function ClientsPage() {
   const [noteForm, setNoteForm] = useState({ content: '' });
   const [docForm, setDocForm] = useState<{ file: File | null }>({ file: null });
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const previousOrganizationId = useRef(currentOrganizationId);
 
   // Selected client computed data
   const selectedClient = clients.find(c => c.id === selectedClientId);
@@ -109,6 +117,15 @@ export default function ClientsPage() {
     setClientForm({ name: '', email: '', phone: '', company: '', ...getDefaultAssignment(user) });
     setShowAddModal(true);
   };
+
+  useEffect(() => {
+    if (previousOrganizationId.current && previousOrganizationId.current !== currentOrganizationId) {
+      setSelectedClientId(null);
+      setSelectedDealId(null);
+      setActiveTab('overview');
+    }
+    previousOrganizationId.current = currentOrganizationId;
+  }, [currentOrganizationId]);
 
   useEffect(() => {
     if (selectedClientId) {
@@ -124,7 +141,7 @@ export default function ClientsPage() {
 
   // Next follow up task
   const clientTasks = selectedClientId ? tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId && t.status === 'Pending') : [];
-  const sortedTasks = [...clientTasks].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+  const sortedTasks = [...clientTasks].filter((task) => isValidDate(task.dueDate)).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
   const nextFollowUp = sortedTasks[0]?.dueDate ? new Date(sortedTasks[0].dueDate).toISOString().replace('T', ' ').substring(0, 16) : 'No pending tasks';
 
   const visibleClients = clients.filter(client => client.status !== 'ARCHIVED');
@@ -217,18 +234,27 @@ export default function ClientsPage() {
     setShowAddDealModal(true);
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClientId || !taskForm.title) return;
-    addTask({
-      title: taskForm.title,
-      description: taskForm.description,
-      dueDate: taskForm.dueDate,
-      priority: taskForm.priority,
-      relatedTo: { type: 'Client', id: selectedClientId }
-    });
-    setTaskForm({ title: '', dueDate: new Date().toISOString().split('T')[0], priority: 'Medium', description: '' });
-    setShowAddTaskModal(false);
+    if (!selectedClientId || !taskForm.title || !taskForm.dueDate || !canManageTask) return;
+    setSavingTask(true);
+    setActionError(null);
+    try {
+      await addTask({
+        title: taskForm.title,
+        description: taskForm.description,
+        dueDate: taskForm.dueDate,
+        priority: taskForm.priority,
+        relatedTo: { type: 'Client', id: selectedClientId }
+      });
+      setTaskForm({ title: '', dueDate: new Date().toISOString().split('T')[0], priority: 'Medium', description: '' });
+      setShowAddTaskModal(false);
+    } catch (error) {
+      console.error('Unable to create client task', error);
+      setActionError('Unable to save the task. Please try again.');
+    } finally {
+      setSavingTask(false);
+    }
   };
 
   const handleCreateNote = async (e: React.FormEvent) => {
@@ -293,9 +319,9 @@ export default function ClientsPage() {
               {canManage && <Button variant="outline" onClick={() => void handleArchiveClient()} disabled={archivingClient} className="gap-2 text-red-600 hover:text-red-700">
                 {archivingClient ? 'Archiving…' : 'Archive Client'}
               </Button>}
-              <Button onClick={openAddDeal} className="gap-2">
+              {canManageDeal && <Button onClick={openAddDeal} className="gap-2">
                 <Plus size={16} /> Add Deal
-              </Button>
+              </Button>}
             </div>
           </div>
 
@@ -319,9 +345,9 @@ export default function ClientsPage() {
             <div className="space-y-1">
               <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Next Follow-up</p>
               <p className="text-sm font-semibold text-orange-300">{nextFollowUp}</p>
-              <Button size="sm" variant="outline" onClick={() => setShowAddTaskModal(true)} className="mt-2 text-xs bg-white/10 text-white border-white/20 hover:bg-white/20">
+              {canManageTask && <Button size="sm" variant="outline" onClick={() => setShowAddTaskModal(true)} className="mt-2 text-xs bg-white/10 text-white border-white/20 hover:bg-white/20">
                 + Add Task
-              </Button>
+              </Button>}
             </div>
           </Card>
 
@@ -368,9 +394,9 @@ export default function ClientsPage() {
                     {!clientNotesLoading && !clientNotesError && clientNotes.length === 0 && (
                       <p className="text-xs text-slate-400">No notes recorded yet.</p>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => setShowAddNoteModal(true)} className="w-full gap-2 mt-2">
-                      <Plus size={14} /> Add Note
-                    </Button>
+                  {canManage && <Button variant="outline" size="sm" onClick={() => setShowAddNoteModal(true)} className="w-full gap-2 mt-2">
+                    <Plus size={14} /> Add Note
+                    </Button>}
                   </div>
                 </Card>
 
@@ -403,9 +429,9 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Deals</h3>
-                  <Button size="sm" onClick={openAddDeal} className="gap-2">
+                  {canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2">
                     <Plus size={14} /> Add Deal
-                  </Button>
+                  </Button>}
                 </div>
                 <div className="space-y-3">
                   {clientDeals.map(deal => (
@@ -431,9 +457,9 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Tasks & Follow-ups</h3>
-                  <Button size="sm" onClick={() => setShowAddTaskModal(true)} className="gap-2">
+                  {canManageTask && <Button size="sm" onClick={() => setShowAddTaskModal(true)} className="gap-2">
                     <Plus size={14} /> Add Task
-                  </Button>
+                  </Button>}
                 </div>
                 <div className="space-y-3">
                   {tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId).map(task => (
@@ -458,7 +484,11 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <h3 className="font-bold text-slate-900">Activity History</h3>
                 <div className="space-y-3">
-                  {activities.map(act => (
+                  {activities.filter((activity) => (
+                    (activity.entityType === 'Client' && activity.entityId === selectedClientId)
+                    || (activity.entityType === 'Lead' && activity.entityId === selectedClient.sourceLeadId)
+                    || activity.metadata?.clientId === selectedClientId
+                  )).map(act => (
                     <div key={act.id} className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
                       <div className="w-2 h-2 mt-1.5 rounded-full bg-blue-600 shrink-0" />
                       <div className="flex-1 min-w-0">
@@ -497,9 +527,9 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Documents</h3>
-                  <Button size="sm" onClick={() => setShowUploadDocModal(true)} className="gap-2">
+                  {canManage && <Button size="sm" onClick={() => setShowUploadDocModal(true)} className="gap-2">
                     <Upload size={14} /> Upload Document
-                  </Button>
+                  </Button>}
                 </div>
                 <div className="space-y-3">
                   {clientDocumentsLoading ? <p className="text-xs text-slate-400">Loading documents…</p> : clientDocumentsError ? <p className="text-xs text-red-600">{clientDocumentsError}</p> : clientDocuments.map(doc => (
@@ -568,7 +598,7 @@ export default function ClientsPage() {
                     const totalSales = cDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
 
                     // Next task
-                    const cTasks = tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === client.id && t.status === 'Pending');
+                    const cTasks = tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === client.id && t.status === 'Pending' && isValidDate(t.dueDate));
                     const sortedC = [...cTasks].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
                     const nextFU = sortedC[0]?.dueDate ? sortedC[0].dueDate : '-';
 
@@ -833,7 +863,7 @@ export default function ClientsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowAddTaskModal(false)}>Cancel</Button>
-                <Button type="submit">Create Task</Button>
+                <Button type="submit" disabled={savingTask}>{savingTask ? 'Saving…' : 'Create Task'}</Button>
               </div>
             </form>
           </div>
