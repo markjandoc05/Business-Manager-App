@@ -7,7 +7,7 @@ import { Search, Filter, Plus, Mail, Phone, Edit, Archive, RefreshCw, UserPlus, 
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { canManageLeads } from '@/lib/permissions';
-import { archiveLead, convertLeadToClient, createLead, updateLead, updateLeadStatus } from '@/lib/repositories/leads';
+import { archiveLead, createLead, updateLead, updateLeadStatus } from '@/lib/repositories/leads';
 import type { Lead, LeadStatus } from '@/types';
 import { getDefaultAssignment } from '@/lib/ownership';
 import { LeadDetailsModal } from '@/components/LeadDetailsModal';
@@ -20,7 +20,7 @@ const emptyForm: LeadForm = { name: '', email: '', phone: '', company: '', sourc
 
 export default function LeadsPage() {
   const { user } = useAuth();
-  const { leads, leadsLoading, leadsError, refreshLeads, users, usersLoading, settings } = useApp();
+  const { leads, leadsLoading, leadsError, refreshLeads, convertLeadToClient, users, usersLoading, settings } = useApp();
   const router = useRouter();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
   const canManage = canManageLeads(membership);
@@ -94,8 +94,7 @@ export default function LeadsPage() {
     setBusyLeadId(lead.id); setActionError(null);
     try {
       if (status === 'Client') {
-        await convertLeadToClient(user, currentOrganizationId, lead);
-        await refreshLeads();
+        await convertLeadToClient(lead.id);
       } else {
         await updateLeadStatus(user, currentOrganizationId, lead, status);
         await refreshLeads();
