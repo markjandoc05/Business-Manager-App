@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
+import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { 
   Search, 
@@ -12,12 +13,10 @@ import {
   Building2, 
   Calendar, 
   DollarSign, 
-  FileText, 
   CheckCircle2, 
   Clock, 
   ArrowLeft, 
   UserCheck, 
-  Upload, 
   Edit,
   Briefcase
 } from 'lucide-react';
@@ -26,15 +25,23 @@ import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageClients, canManageDeals, canManageTasks } from '@/lib/permissions';
 import { formatCurrency } from '@/lib/formatting';
-import { getActiveDealCreationStages, getDefaultDealCreationStage } from '@/lib/deal-workflow';
+import { getActiveDealCreationStages, getDealProbability, getDefaultDealCreationStage } from '@/lib/deal-workflow';
 import { DealDetailsModal } from '@/components/DealDetailsModal';
+import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
+import { TaskCard } from '@/components/TaskCard';
+import { getNextFollowUp, sortOpenTasks } from '@/lib/task-utils';
 import { getDefaultAssignment } from '@/lib/ownership';
+function currentDateTimeValue() {
+  const date = new Date();
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
+}
 
-function formatFileSize(size: number | string) {
-  if (typeof size !== 'number') return size;
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+function toDateTimeInput(value?: string) {
+  if (!value || !isValidDate(value)) return currentDateTimeValue();
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
 }
 
 function isValidDate(value: string) {
@@ -53,10 +60,6 @@ export default function ClientsPage() {
     clientNotesLoading,
     clientNotesError,
     loadClientNotes,
-    clientDocuments,
-    clientDocumentsLoading,
-    clientDocumentsError,
-    loadClientDocuments,
     refreshClients,
     deals, 
     leads,
@@ -67,11 +70,14 @@ export default function ClientsPage() {
     updateDeal,
     addTask, 
     addNote, 
-    uploadDocument, 
     completeTask,
     addClient: addClientToApp,
     updateClient: updateClientInApp,
     archiveClient: archiveClientInApp,
+    archivedClients,
+    loadArchivedRecords,
+    restoreClient,
+    permanentlyDeleteClient,
   } = useApp();
   const { user } = useAuth();
   const { currentOrganizationId, membership } = useWorkspace();
@@ -81,12 +87,13 @@ export default function ClientsPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [savingClient, setSavingClient] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
-  const [archivingClient, setArchivingClient] = useState(false);
-  const [uploadingDocument, setUploadingDocument] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => searchParams.get('clientId'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes' | 'documents'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes'>('overview');
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
@@ -95,18 +102,16 @@ export default function ClientsPage() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
-  const [showUploadDocModal, setShowUploadDocModal] = useState(false);
 
   // Form states
   const [clientForm, setClientForm] = useState({ name: '', email: '', phone: '', company: '', assignedToUid: '', assignedToName: '' });
   const [editClientForm, setEditClientForm] = useState({ name: '', email: '', phone: '', company: '', assignedToUid: '', assignedToName: '' });
   const dealCreationStages = getActiveDealCreationStages(settings.pipelineStages);
   const defaultDealStage = getDefaultDealCreationStage(settings.pipelineStages);
-  const [dealForm, setDealForm] = useState({ title: '', value: 0, stage: defaultDealStage, expectedCloseDate: '' });
+  const [dealForm, setDealForm] = useState({ title: '', productServiceName: '', value: 0, stage: defaultDealStage, expectedCloseDate: '', notes: '' });
   const [taskForm, setTaskForm] = useState({ title: '', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High', description: '' });
   const [noteForm, setNoteForm] = useState({ content: '' });
-  const [docForm, setDocForm] = useState<{ file: File | null }>({ file: null });
-  const documentInputRef = useRef<HTMLInputElement>(null);
+  const [currentTime] = useState(() => Date.now());
   const previousOrganizationId = useRef(currentOrganizationId);
 
   // Selected client computed data
@@ -128,21 +133,43 @@ export default function ClientsPage() {
   }, [currentOrganizationId]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const queryClientId = searchParams.get('clientId');
+      const queryTab = searchParams.get('tab');
+      setSelectedClientId(queryClientId);
+      if (searchParams.get('action') === 'create' && user) {
+        setClientForm({ name: '', email: '', phone: '', company: '', ...getDefaultAssignment(user) });
+        setShowAddModal(true);
+      }
+      if (queryTab === 'tasks' || queryTab === 'deals' || queryTab === 'activity' || queryTab === 'notes' || queryTab === 'overview') {
+        setActiveTab(queryTab);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [searchParams, user]);
+
+  useEffect(() => {
     if (selectedClientId) {
       void loadClientNotes(selectedClientId);
-      void loadClientDocuments(selectedClientId);
     }
-  }, [loadClientDocuments, loadClientNotes, selectedClientId]);
+  }, [loadClientNotes, selectedClientId]);
 
   const clientDeals = selectedClientId ? deals.filter(d => d.clientId === selectedClientId) : [];
   const selectedDeal = selectedDealId ? deals.find((deal) => deal.id === selectedDealId) : undefined;
   const activeDealsCount = clientDeals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length;
   const totalSalesValue = clientDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
+  const activePipelineDeals = clientDeals.filter((deal) => ['Opportunity', 'Proposal', 'Negotiation'].includes(deal.stage));
+  const activePipelineValue = activePipelineDeals.reduce((sum, deal) => sum + deal.value, 0);
+  const weightedForecast = activePipelineDeals.reduce((sum, deal) => sum + deal.value * getDealProbability(deal.stage) / 100, 0);
+  const wonValue = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
 
   // Next follow up task
   const clientTasks = selectedClientId ? tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId && t.status === 'Pending') : [];
-  const sortedTasks = [...clientTasks].filter((task) => isValidDate(task.dueDate)).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-  const nextFollowUp = sortedTasks[0]?.dueDate ? new Date(sortedTasks[0].dueDate).toISOString().replace('T', ' ').substring(0, 16) : 'No pending tasks';
+  const validPendingTasks = [...clientTasks].filter((task) => isValidDate(task.dueDate));
+  const upcomingTasks = validPendingTasks.filter((task) => Date.parse(task.dueDate) > currentTime).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
+  const overdueTasks = validPendingTasks.filter((task) => Date.parse(task.dueDate) <= currentTime).sort((a, b) => Date.parse(b.dueDate) - Date.parse(a.dueDate));
+  const nextTask = upcomingTasks[0] || overdueTasks[0];
+  const nextFollowUp = nextTask ? `${upcomingTasks.length ? '' : 'Overdue: '}${new Date(nextTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
 
   const visibleClients = clients.filter(client => client.status !== 'ARCHIVED');
   const filteredClients = visibleClients.filter(client => 
@@ -150,6 +177,12 @@ export default function ClientsPage() {
     client.company?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     client.email.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const toggleArchived = () => {
+    const next = !showArchived;
+    setShowArchived(next);
+    if (next && archivedClients.length === 0) void loadArchivedRecords();
+  };
 
   const handleCreateClient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,18 +217,25 @@ export default function ClientsPage() {
     }
   };
 
-  const handleArchiveClient = async () => {
-    if (!selectedClient || !canManage) return;
-    setArchivingClient(true);
+  const executeConfirmedAction = async () => {
+    if (!confirmAction || confirmBusy) return;
+    setConfirmBusy(true);
     setActionError(null);
     try {
-      await archiveClientInApp(selectedClient.id);
-      setSelectedClientId(null);
+      if (confirmAction.kind === 'archive') {
+        await archiveClientInApp(confirmAction.id);
+        setSelectedClientId(null);
+      } else if (confirmAction.kind === 'restore') {
+        await restoreClient(confirmAction.id);
+      } else {
+        await permanentlyDeleteClient(confirmAction.id);
+      }
+      setConfirmAction(null);
     } catch (error) {
-      console.error('Unable to archive client', error);
-      setActionError('Unable to archive the client. Please try again.');
+      console.error('Unable to complete client lifecycle action', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to complete the client action. Please try again.');
     } finally {
-      setArchivingClient(false);
+      setConfirmBusy(false);
     }
   };
 
@@ -211,11 +251,13 @@ export default function ClientsPage() {
       await addDeal({
         title: dealForm.title,
         clientId: selectedClientId,
+        productServiceName: dealForm.productServiceName,
         value: Number(dealForm.value),
         stage: dealForm.stage,
         expectedCloseDate: dealForm.expectedCloseDate,
+        notes: dealForm.notes,
       });
-      setDealForm({ title: '', value: 0, stage: defaultDealStage, expectedCloseDate: '' });
+      setDealForm({ title: '', productServiceName: '', value: 0, stage: defaultDealStage, expectedCloseDate: '', notes: '' });
       setShowAddDealModal(false);
     } catch (error) {
       console.error('Unable to create deal', error);
@@ -247,7 +289,7 @@ export default function ClientsPage() {
         priority: taskForm.priority,
         relatedTo: { type: 'Client', id: selectedClientId }
       });
-      setTaskForm({ title: '', dueDate: new Date().toISOString().split('T')[0], priority: 'Medium', description: '' });
+      setTaskForm({ title: '', dueDate: currentDateTimeValue(), priority: 'Medium', description: '' });
       setShowAddTaskModal(false);
     } catch (error) {
       console.error('Unable to create client task', error);
@@ -255,6 +297,11 @@ export default function ClientsPage() {
     } finally {
       setSavingTask(false);
     }
+  };
+
+  const openAddTask = () => {
+    setTaskForm((current) => ({ ...current, dueDate: toDateTimeInput(current.dueDate) }));
+    setShowAddTaskModal(true);
   };
 
   const handleCreateNote = async (e: React.FormEvent) => {
@@ -267,24 +314,6 @@ export default function ClientsPage() {
     } catch (error) {
       console.error('Unable to save client note', error);
       setActionError('Unable to save the note. Please try again.');
-    }
-  };
-
-  const handleUploadDoc = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClientId || !docForm.file) return;
-    setUploadingDocument(true);
-    setActionError(null);
-    try {
-      await uploadDocument(selectedClientId, docForm.file);
-      setDocForm({ file: null });
-      if (documentInputRef.current) documentInputRef.current.value = '';
-      setShowUploadDocModal(false);
-    } catch (error) {
-      console.error('Unable to upload client document', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to upload the document. Please try again.');
-    } finally {
-      setUploadingDocument(false);
     }
   };
 
@@ -316,8 +345,8 @@ export default function ClientsPage() {
               }} className="gap-2">
                 <Edit size={16} /> Edit Client
               </Button>}
-              {canManage && <Button variant="outline" onClick={() => void handleArchiveClient()} disabled={archivingClient} className="gap-2 text-red-600 hover:text-red-700">
-                {archivingClient ? 'Archiving…' : 'Archive Client'}
+              {canManage && <Button variant="warning" onClick={() => setConfirmAction({ kind: 'archive', id: selectedClient.id, name: selectedClient.name })} className="gap-2">
+                Archive Client
               </Button>}
               {canManageDeal && <Button onClick={openAddDeal} className="gap-2">
                 <Plus size={16} /> Add Deal
@@ -326,26 +355,26 @@ export default function ClientsPage() {
           </div>
 
           {/* Client Summary Banner */}
-          <Card className="grid gap-6 md:grid-cols-4 p-6 bg-slate-900 text-white">
+          <Card className="grid gap-4 border-slate-200 bg-white p-4 md:grid-cols-4">
             <div className="space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Company & Contact</p>
-              <p className="text-lg font-bold">{selectedClient.company || 'Independent'}</p>
-              <p className="text-xs text-slate-300">{selectedClient.email} • {selectedClient.phone}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Company & Contact</p>
+              <p className="text-base font-semibold text-slate-900">{selectedClient.company || 'Independent'}</p>
+              <p className="text-xs text-slate-500">{selectedClient.email} • {selectedClient.phone}</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Total Sales / Deals</p>
-              <p className="text-lg font-bold text-green-400">{formatCurrency(totalSalesValue, settings.currency)}</p>
-              <p className="text-xs text-slate-300">{activeDealsCount} Active Deals / {clientDeals.length} Total</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Total Sales / Deals</p>
+              <p className="text-base font-semibold text-emerald-700">{formatCurrency(totalSalesValue, settings.currency)}</p>
+              <p className="text-xs text-slate-500">{activeDealsCount} Active Deals / {clientDeals.length} Total</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Assigned To</p>
-              <p className="text-lg font-bold">{selectedClient.assignedToName || selectedClient.assignedTo || 'Unassigned'}</p>
-              <p className="text-xs text-slate-300">Client Since: {new Date(selectedClient.createdAt).toLocaleDateString()}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned To</p>
+              <p className="text-base font-semibold text-slate-900">{selectedClient.assignedToName || selectedClient.assignedTo || 'Unassigned'}</p>
+              <p className="text-xs text-slate-500">Client Since: {new Date(selectedClient.createdAt).toLocaleDateString()}</p>
             </div>
             <div className="space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-bold">Next Follow-up</p>
-              <p className="text-sm font-semibold text-orange-300">{nextFollowUp}</p>
-              {canManageTask && <Button size="sm" variant="outline" onClick={() => setShowAddTaskModal(true)} className="mt-2 text-xs bg-white/10 text-white border-white/20 hover:bg-white/20">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Next Follow-up</p>
+              <p className="text-sm font-medium text-amber-700">{nextFollowUp}</p>
+              {canManageTask && <Button size="sm" variant="outline" onClick={openAddTask} className="mt-2 text-xs">
                 + Add Task
               </Button>}
             </div>
@@ -359,7 +388,6 @@ export default function ClientsPage() {
               { id: 'tasks', label: `Tasks (${clientTasks.length})` },
               { id: 'activity', label: 'Activity Log' },
               { id: 'notes', label: `Notes (${clientNotes.length})` },
-              { id: 'documents', label: `Documents (${clientDocuments.length})` },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -378,7 +406,16 @@ export default function ClientsPage() {
           {/* Tab Content */}
           <div className="space-y-6">
             {activeTab === 'overview' && (
-              <div className="grid gap-6 lg:grid-cols-2">
+              <div className="space-y-6">
+                <Card className="space-y-4">
+                  <h3 className="font-bold text-slate-900">Deals Overview</h3>
+                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Open Deals</p><p className="mt-1 text-lg font-bold text-slate-900">{activePipelineDeals.length}</p><p className="text-xs text-slate-500">Deals in progress</p></div>
+                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Potential Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(activePipelineValue, settings.currency)}</p><p className="text-xs text-slate-500">Total value of open deals</p></div>
+                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Expected Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(weightedForecast, settings.currency)}</p><p className="text-xs text-slate-500">Based on deal probability</p></div>
+                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Won Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(wonValue, settings.currency)}</p><p className="text-xs text-slate-500">Successfully closed deals</p></div>
+                  </div>
+                </Card>
                 <Card className="space-y-4">
                   <h3 className="font-bold text-slate-900">Recent Notes</h3>
                   <div className="space-y-3">
@@ -400,83 +437,47 @@ export default function ClientsPage() {
                   </div>
                 </Card>
 
-                <Card className="space-y-4">
-                  <h3 className="font-bold text-slate-900">Recent Documents</h3>
-                  <div className="space-y-3">
-                    {clientDocumentsLoading ? <p className="text-xs text-slate-400">Loading documents…</p> : clientDocumentsError ? <p className="text-xs text-red-600">{clientDocumentsError}</p> : clientDocuments.map(doc => (
-                      <div key={doc.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                        <div className="flex items-center gap-3">
-                          <FileText size={20} className="text-blue-600" />
-                          <div>
-                            {doc.downloadURL ? <a href={doc.downloadURL} target="_blank" rel="noreferrer" className="text-sm font-medium text-blue-600 hover:underline">{doc.name}</a> : <p className="text-sm font-medium text-slate-900">{doc.name}</p>}
-                            <span className="text-[10px] text-slate-400">{formatFileSize(doc.size)} • {new Date(doc.uploadedAt).toLocaleDateString()}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    {!clientDocumentsLoading && !clientDocumentsError && clientDocuments.length === 0 && (
-                      <p className="text-xs text-slate-400">No documents uploaded.</p>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => setShowUploadDocModal(true)} className="w-full gap-2 mt-2">
-                      <Upload size={14} /> Upload Document
-                    </Button>
-                  </div>
-                </Card>
               </div>
             )}
 
             {activeTab === 'deals' && (
-              <Card className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-900">Client Deals</h3>
-                  {canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2">
-                    <Plus size={14} /> Add Deal
-                  </Button>}
-                </div>
-                <div className="space-y-3">
-                  {clientDeals.map(deal => (
-                    <button type="button" key={deal.id} onClick={() => setSelectedDealId(deal.id)} className="flex w-full items-center justify-between rounded-xl border border-slate-100 bg-slate-50 p-4 text-left">
-                      <div>
-                        <h4 className="font-semibold text-slate-900">{deal.title}</h4>
-                        <span className="text-xs text-slate-500">Expected close: {deal.expectedCloseDate || 'Not set'}</span>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>
-                          {deal.stage}
-                        </Badge>
-                        <span className="font-bold text-slate-900">{formatCurrency(deal.value, settings.currency)}</span>
-                      </div>
-                    </button>
-                  ))}
-                  {clientDeals.length === 0 && <p className="text-xs text-slate-400 py-6 text-center">No deals recorded for this client.</p>}
-                </div>
-              </Card>
+              <div className="space-y-4">
+                <Card className="space-y-4">
+                  <div className="flex items-center justify-between"><h3 className="font-bold text-slate-900">Client Deals</h3>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}</div>
+                  {clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center"><p className="text-sm text-slate-500">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left"><thead><tr className="border-b border-slate-200"><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Tasks</th></tr></thead><tbody className="divide-y divide-slate-100">
+                  {clientDeals.map(deal => {
+                    const openTaskCount = tasks.filter((task) => task.relatedTo?.type === 'Deal' && task.relatedTo.id === deal.id && task.status === 'Pending').length;
+                    return (
+                    <tr key={deal.id} className="hover:bg-slate-50"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-slate-900 hover:text-blue-600">{deal.title}</button></td><td className="px-3 py-3 text-sm text-slate-600">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-slate-600">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-slate-900">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-slate-600">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-slate-600">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td></tr>
+                    );
+                  })}
+                  </tbody></table></div>}
+                </Card>
+              </div>
             )}
 
             {activeTab === 'tasks' && (
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Tasks & Follow-ups</h3>
-                  {canManageTask && <Button size="sm" onClick={() => setShowAddTaskModal(true)} className="gap-2">
+                  {canManageTask && <Button size="sm" onClick={openAddTask} className="gap-2">
                     <Plus size={14} /> Add Task
                   </Button>}
                 </div>
-                <div className="space-y-3">
-                  {tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId).map(task => (
-                    <div key={task.id} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm text-slate-900">{task.title}</span>
-                          <Badge variant={task.priority === 'High' ? 'red' : 'orange'}>{task.priority}</Badge>
-                        </div>
-                        <p className="text-xs text-slate-500">Due: {new Date(task.dueDate).toLocaleString()}</p>
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => completeTask(task.id)}>
-                        {task.status === 'Completed' ? 'Completed' : 'Complete'}
-                      </Button>
+                {(() => {
+                  const clientTasks = tasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId);
+                  const openTasks = sortOpenTasks(clientTasks.filter((task) => task.status === 'Pending'), currentTime);
+                  const completedTasks = clientTasks.filter((task) => task.status === 'Completed').sort((left, right) => (right.updatedAt || right.dueDate).localeCompare(left.updatedAt || left.dueDate));
+                  const nextFollowUp = getNextFollowUp(clientTasks, currentTime);
+                  return <>
+                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{openTasks.length} Open Tasks</p>{nextFollowUp && <p className="text-xs text-slate-500">Next: {nextFollowUp.title}</p>}</div>
+                    <div className="space-y-3">
+                      {openTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onToggle={(taskId) => void completeTask(taskId)} />)}
+                      {openTasks.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No open tasks for this client.</p>}
                     </div>
-                  ))}
-                </div>
+                    {completedTasks.length > 0 && <details className="rounded-xl border border-slate-100 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-600">Completed ({completedTasks.length})</summary><div className="mt-3 space-y-3">{completedTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onToggle={(taskId) => void completeTask(taskId)} />)}</div></details>}
+                  </>;
+                })()}
               </Card>
             )}
 
@@ -493,7 +494,7 @@ export default function ClientsPage() {
                       <div className="w-2 h-2 mt-1.5 rounded-full bg-blue-600 shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-slate-900">{act.description}</p>
-                        <span className="text-[10px] text-slate-400">{new Date(act.timestamp).toLocaleString()}</span>
+                        <span className="text-[10px] text-slate-400">Created by {act.createdBy || 'Unknown user'}</span>
                       </div>
                     </div>
                   ))}
@@ -523,43 +524,12 @@ export default function ClientsPage() {
               </Card>
             )}
 
-            {activeTab === 'documents' && (
-              <Card className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-900">Client Documents</h3>
-                  {canManage && <Button size="sm" onClick={() => setShowUploadDocModal(true)} className="gap-2">
-                    <Upload size={14} /> Upload Document
-                  </Button>}
-                </div>
-                <div className="space-y-3">
-                  {clientDocumentsLoading ? <p className="text-xs text-slate-400">Loading documents…</p> : clientDocumentsError ? <p className="text-xs text-red-600">{clientDocumentsError}</p> : clientDocuments.map(doc => (
-                    <div key={doc.id} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <FileText size={24} className="text-blue-600" />
-                        <div>
-                          {doc.downloadURL ? <a href={doc.downloadURL} target="_blank" rel="noreferrer" className="font-semibold text-blue-600 hover:underline">{doc.name}</a> : <p className="font-semibold text-slate-900">{doc.name}</p>}
-                          <span className="text-xs text-slate-400">{formatFileSize(doc.size)} • Uploaded {new Date(doc.uploadedAt).toLocaleDateString()}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            )}
           </div>
         </div>
       ) : (
         /* Client List View */
         <div className="space-y-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900">Clients</h2>
-              <p className="text-sm text-slate-500">Centralized customer records, deals, and history.</p>
-            </div>
-            {canManage && <Button onClick={openAddClient} className="gap-2">
-              <Plus size={18} /> Add Client
-            </Button>}
-          </div>
+          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}{canManage && <Button onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} />
 
           <Card className="flex flex-col gap-4 p-4 md:flex-row md:items-center">
             <div className="relative flex-1">
@@ -573,7 +543,10 @@ export default function ClientsPage() {
               />
             </div>
             <Button variant="outline" onClick={() => void refreshClients()} disabled={clientsLoading}>Refresh</Button>
+            <Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>
           </Card>
+
+          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setConfirmAction({ kind: 'restore', id: client.id, name: client.name })}>Restore</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => setConfirmAction({ kind: 'delete', id: client.id, name: client.name })}>Delete permanently</Button></div></div>)}</div>}</Card>}
 
           {/* Client Table */}
           <Card className="p-0 overflow-hidden">
@@ -599,8 +572,9 @@ export default function ClientsPage() {
 
                     // Next task
                     const cTasks = tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === client.id && t.status === 'Pending' && isValidDate(t.dueDate));
-                    const sortedC = [...cTasks].sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
-                    const nextFU = sortedC[0]?.dueDate ? sortedC[0].dueDate : '-';
+                    const upcoming = cTasks.filter((task) => Date.parse(task.dueDate) > currentTime).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
+                    const overdue = cTasks.filter((task) => Date.parse(task.dueDate) <= currentTime).sort((a, b) => Date.parse(b.dueDate) - Date.parse(a.dueDate));
+                    const nextFU = upcoming[0]?.dueDate ? `Scheduled for ${new Date(upcoming[0].dueDate).toLocaleString()}` : overdue[0]?.dueDate ? `Overdue: Due ${new Date(overdue[0].dueDate).toLocaleString()}` : 'No pending follow-ups';
 
                     return (
                       <tr key={client.id} className="hover:bg-slate-50 transition-colors">
@@ -765,6 +739,7 @@ export default function ClientsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <form onSubmit={handleCreateDeal} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
               <h3 className="text-lg font-bold text-slate-900">Add Deal for Client</h3>
+              <div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs font-bold uppercase text-slate-500">Client</p><p className="mt-1 text-sm font-semibold text-slate-900">{selectedClient?.name || 'Client'}</p></div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 uppercase">Deal Title</label>
                 <input 
@@ -775,9 +750,13 @@ export default function ClientsPage() {
                   onChange={e => setDealForm({...dealForm, title: e.target.value})}
                 />
               </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase">Product / Service (Optional)</label>
+                <input type="text" className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={dealForm.productServiceName} onChange={e => setDealForm({...dealForm, productServiceName: e.target.value})} placeholder="e.g. Website Development" />
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Value ({settings.currency})</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Deal Value</label>
                   <input 
                     type="number" 
                     required 
@@ -795,6 +774,7 @@ export default function ClientsPage() {
                   >
                     {dealCreationStages.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                   </select>
+                  <p className="text-xs font-semibold text-blue-600">{getDealProbability(dealForm.stage)}% Probability</p>
                 </div>
               </div>
               <div className="space-y-2">
@@ -805,6 +785,10 @@ export default function ClientsPage() {
                   value={dealForm.expectedCloseDate}
                   onChange={e => setDealForm({...dealForm, expectedCloseDate: e.target.value})}
                 />
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-500 uppercase">Notes (Optional)</label>
+                <textarea rows={3} className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={dealForm.notes} onChange={e => setDealForm({...dealForm, notes: e.target.value})} placeholder="Short context about this deal" />
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowAddDealModal(false)}>Cancel</Button>
@@ -818,6 +802,7 @@ export default function ClientsPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <form onSubmit={handleCreateTask} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
               <h3 className="text-lg font-bold text-slate-900">Add Task & Follow-up</h3>
+              <p className="text-sm text-slate-500">Related to: {selectedClient?.name || 'Client'}</p>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 uppercase">Task Title</label>
                 <input 
@@ -830,9 +815,9 @@ export default function ClientsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Due Date</label>
+                  <label className="text-xs font-bold text-slate-500 uppercase">Schedule Date &amp; Time</label>
                   <input 
-                    type="date" 
+                    type="datetime-local"
                     required 
                     className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
                     value={taskForm.dueDate}
@@ -852,6 +837,7 @@ export default function ClientsPage() {
                   </select>
                 </div>
               </div>
+              <p className="text-xs font-medium text-slate-600">{Date.parse(taskForm.dueDate) > currentTime ? 'This task will be scheduled.' : 'This task is due now or overdue.'}</p>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 uppercase">Description</label>
                 <textarea 
@@ -891,28 +877,8 @@ export default function ClientsPage() {
           </div>
         )}
 
-        {showUploadDocModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <form onSubmit={handleUploadDoc} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Upload Document</h3>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Select File</label>
-                <input
-                  ref={documentInputRef}
-                  type="file"
-                  required
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
-                  onChange={e => setDocForm({ file: e.target.files?.[0] || null })}
-                />
-              </div>
-              <div className="flex justify-end gap-3 pt-4">
-                <Button type="button" variant="outline" onClick={() => setShowUploadDocModal(false)}>Cancel</Button>
-                <Button type="submit" disabled={uploadingDocument || !docForm.file}>{uploadingDocument ? 'Uploading…' : 'Upload'}</Button>
-              </div>
-            </form>
-          </div>
-        )}
       </AnimatePresence>
+      {confirmAction && <ConfirmActionDialog open title={`${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.kind === 'archive' ? 'This client will be moved to Archived and can be restored later.' : confirmAction.kind === 'restore' ? 'This client will be restored to the active list.' : 'This action cannot be undone. This archived client will be permanently deleted.'} confirmLabel={confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={confirmAction.kind === 'delete' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
     </div>
   );
 }

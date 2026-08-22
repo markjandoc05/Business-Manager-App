@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
@@ -27,6 +27,9 @@ function mapClient(id: string, data: Record<string, unknown>): Client {
     assignedToName: typeof data.assignedToName === 'string' ? data.assignedToName : typeof data.assignedTo === 'string' ? data.assignedTo : '',
     assignedTo: typeof data.assignedTo === 'string' ? data.assignedTo : undefined,
     status: data.status === 'ARCHIVED' ? 'ARCHIVED' : 'ACTIVE',
+    archived: data.archived === true || data.status === 'ARCHIVED',
+    archivedAt: typeof data.archivedAt === 'object' && data.archivedAt && 'toDate' in data.archivedAt && typeof data.archivedAt.toDate === 'function' ? data.archivedAt.toDate().toISOString() : undefined,
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
     createdAt: toIsoDate(data.createdAt),
     updatedAt: toIsoDate(data.updatedAt),
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
@@ -49,6 +52,7 @@ export async function listClients(user: AppUser | null, organizationId: string) 
   const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
   return snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
+    .filter((client) => !client.archived)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
 }
 
@@ -62,13 +66,14 @@ export async function createClient(user: AppUser | null, organizationId: string,
     company: input.company || '',
     ...assignment,
     status: 'ACTIVE',
+    archived: false,
     createdAt: serverTimestamp(),
     createdBy: user.uid,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
   });
 
-  return mapClient(clientRef.id, { ...input, ...assignment, status: 'ACTIVE', createdAt: new Date().toISOString(), createdBy: user.uid, updatedAt: new Date().toISOString(), updatedBy: user.uid });
+  return mapClient(clientRef.id, { ...input, ...assignment, status: 'ACTIVE', archived: false, createdAt: new Date().toISOString(), createdBy: user.uid, updatedAt: new Date().toISOString(), updatedBy: user.uid });
 }
 
 export async function updateClient(user: AppUser | null, organizationId: string, clientId: string, input: ClientInput) {
@@ -91,9 +96,44 @@ export async function archiveClient(user: AppUser | null, organizationId: string
 
   await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
     status: 'ARCHIVED',
+    archived: true,
+    archivedAt: serverTimestamp(),
+    archivedBy: user.uid,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
   });
+}
+
+export async function listArchivedClients(user: AppUser | null, organizationId: string) {
+  await requireActiveUser(user, organizationId);
+  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
+  return snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.archived);
+}
+
+export async function restoreClient(user: AppUser | null, organizationId: string, clientId: string) {
+  await requireClientManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to restore a client.');
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), { status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function permanentlyDeleteClient(user: AppUser | null, organizationId: string, clientId: string) {
+  await requireClientManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to delete a client.');
+  const clientRef = organizationDocumentInCollection(db, organizationId, 'clients', clientId);
+  const snapshot = await getDoc(clientRef);
+  if (!snapshot.exists() || !(snapshot.data().archived === true || snapshot.data().status === 'ARCHIVED')) throw new Error('Only archived clients can be permanently deleted.');
+  const [deals, tasks, notes, activities] = await Promise.all([
+    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals')),
+    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks')),
+    getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes')),
+    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities')),
+  ]);
+  const hasRelated = deals.docs.some((item) => item.data().clientId === clientId)
+    || tasks.docs.some((item) => { const related = item.data().relatedTo as { type?: string; id?: string } | undefined; return related?.type === 'Client' && related.id === clientId; })
+    || notes.size > 0
+    || activities.docs.some((item) => item.data().entityType === 'Client' && item.data().entityId === clientId);
+  if (hasRelated) throw new Error('This client cannot be deleted while related deals, tasks, notes, or activity history exist.');
+  await deleteDoc(clientRef);
 }
 
 export async function addClientNote(user: AppUser | null, organizationId: string, clientId: string, content: string) {

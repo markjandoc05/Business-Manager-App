@@ -22,7 +22,6 @@ export const defaultSettings: Settings = {
   accentColor: '#3b82f6',
   pipelineStages: [
     { name: 'Opportunity', isActive: true },
-    { name: 'Qualified', isActive: true },
     { name: 'Proposal', isActive: true },
     { name: 'Negotiation', isActive: true },
     { name: 'Won', isActive: true },

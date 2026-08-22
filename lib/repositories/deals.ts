@@ -1,19 +1,19 @@
-import { doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Deal } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
-import { getDealStatusForStage } from '@/lib/deal-workflow';
+import { DEAL_ACTIVE_STAGES, getDealStatusForStage } from '@/lib/deal-workflow';
 import { resolveAssignment } from '@/lib/ownership';
 import { dealSystemTimelineData, dealSystemTimelineRef } from '@/lib/repositories/dealTimeline';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 
 export type DealStatus = 'Active' | 'Won' | 'Lost';
-export type DealInput = Pick<Deal, 'title' | 'clientId' | 'leadId' | 'value' | 'stage' | 'expectedCloseDate' | 'assignedToUid' | 'assignedToName' | 'lossReason'>;
+export type DealInput = Pick<Deal, 'title' | 'clientId' | 'leadId' | 'value' | 'stage' | 'expectedCloseDate' | 'productServiceName' | 'notes' | 'assignedToUid' | 'assignedToName' | 'lossReason'>;
 
-function reportFirestoreFailure(operation: string, error: unknown) {
+function reportFirestoreFailure(operation: string, error: unknown, details?: Record<string, unknown>) {
   const firebaseError = error as { code?: string; message?: string };
-  console.error(`[Firestore] deals:${operation} failed code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`);
+  console.error(`[Firestore] deals:${operation} failed code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`, details || {});
 }
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
@@ -32,6 +32,8 @@ function mapDeal(id: string, data: Record<string, unknown>): Deal {
     stage: typeof data.stage === 'string' ? data.stage : 'Opportunity',
     status,
     expectedCloseDate: typeof data.expectedCloseDate === 'string' ? data.expectedCloseDate : '',
+    productServiceName: typeof data.productServiceName === 'string' ? data.productServiceName : undefined,
+    notes: typeof data.notes === 'string' ? data.notes : undefined,
     assignedToUid: typeof data.assignedToUid === 'string' ? data.assignedToUid : '',
     assignedToName: typeof data.assignedToName === 'string' ? data.assignedToName : typeof data.assignedTo === 'string' ? data.assignedTo : '',
     assignedTo: typeof data.assignedTo === 'string' ? data.assignedTo : undefined,
@@ -41,6 +43,8 @@ function mapDeal(id: string, data: Record<string, unknown>): Deal {
     updatedAt: toIsoDate(data.updatedAt),
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+    archivedAt: toIsoDate(data.archivedAt, ''),
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
   };
 }
 
@@ -56,6 +60,7 @@ async function requireDealManager(user: AppUser | null, organizationId: string, 
 }
 
 function validateDealState(stage: string, status: DealStatus, lossReason?: string) {
+  if (status === 'Active' && !DEAL_ACTIVE_STAGES.includes(stage as typeof DEAL_ACTIVE_STAGES[number])) throw new Error('Active deals must use Opportunity, Proposal, or Negotiation stages.');
   if (status === 'Won' && stage !== 'Won') throw new Error('Won deals must be in the Won stage.');
   if (status === 'Lost' && (stage !== 'Lost' || !lossReason?.trim())) throw new Error('Lost deals require a loss reason and Lost stage.');
   if (status === 'Active' && (stage === 'Won' || stage === 'Lost')) throw new Error('Active deals cannot be in Won or Lost stages.');
@@ -91,6 +96,9 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
 
   const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
   let dealRef;
+  let dealPath = '';
+  let timelinePath = '';
+  let payloadKeys: string[] = [];
   try {
     dealRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'));
     const dealData = {
@@ -104,12 +112,20 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
       updatedAt: serverTimestamp(),
       updatedBy: user.uid,
     };
+    dealPath = dealRef.path;
+    timelinePath = dealSystemTimelineRef(organizationId, dealRef.id, 'system-created').path;
+    payloadKeys = Object.keys(dealData);
     const batch = writeBatch(db);
     batch.set(dealRef, dealData);
     batch.set(dealSystemTimelineRef(organizationId, dealRef.id, 'system-created'), dealSystemTimelineData(user, 'Deal created.'));
     await batch.commit();
   } catch (error) {
-    reportFirestoreFailure('create', error);
+    reportFirestoreFailure('create', error, {
+      organizationId,
+      dealPath,
+      timelinePath,
+      payloadKeys,
+    });
     throw error;
   }
   return mapDeal(dealRef.id, { ...input, ...assignment, status: 'Active', archived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: user.uid, updatedBy: user.uid });
@@ -133,6 +149,8 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
       stage: input.stage,
       status: nextStatus,
       expectedCloseDate: input.expectedCloseDate || '',
+      ...(input.productServiceName !== undefined ? { productServiceName: input.productServiceName.trim() } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes.trim() } : {}),
       assignedToUid: input.assignedToUid || '',
       assignedToName: input.assignedToName || '',
       lossReason: nextLossReason || null,
@@ -174,9 +192,30 @@ export async function archiveDeal(user: AppUser | null, organizationId: string, 
   await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a deal.');
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
   } catch (error) {
     reportFirestoreFailure('archive', error);
     throw error;
   }
+}
+
+export async function listArchivedDeals(user: AppUser | null, organizationId: string) {
+  await requireActiveUser(user, organizationId);
+  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'));
+  return snapshot.docs.map((dealDoc) => mapDeal(dealDoc.id, dealDoc.data())).filter((deal) => deal.archived);
+}
+
+export async function restoreDeal(user: AppUser | null, organizationId: string, dealId: string) {
+  await requireDealManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to restore a deal.');
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function permanentlyDeleteDeal(user: AppUser | null, organizationId: string, dealId: string) {
+  await requireDealManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to delete a deal.');
+  const dealRef = organizationDocumentInCollection(db, organizationId, 'deals', dealId);
+  const snapshot = await getDoc(dealRef);
+  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived deals can be permanently deleted.');
+  await deleteDoc(dealRef);
 }

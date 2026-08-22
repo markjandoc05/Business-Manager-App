@@ -1,11 +1,11 @@
-import { collection, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Client, Lead, LeadStatus } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveOrganizationAssignment } from '@/lib/ownership';
 import { systemTimelineData, systemTimelineRef } from '@/lib/repositories/leadTimeline';
-import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
+import { organizationCollection, organizationDocumentInCollection, organizationSubcollection } from '@/lib/organizations/paths';
 
 export type LeadInput = Pick<Lead, 'name' | 'company' | 'email' | 'phone' | 'source' | 'assignedToUid' | 'assignedToName'>;
 
@@ -35,6 +35,8 @@ function mapLead(id: string, data: Record<string, unknown>): Lead {
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
     createdAt: toIsoDate(data.createdAt),
     updatedAt: toIsoDate(data.updatedAt),
+    archivedAt: toIsoDate(data.archivedAt, ''),
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
   };
 }
 
@@ -143,7 +145,40 @@ export async function archiveLead(user: AppUser | null, organizationId: string, 
     const existing = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
     if (!existing.exists() || existing.data().assignedToUid !== user.uid) throw new Error('You can only archive Leads assigned to you.');
   }
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function listArchivedLeads(user: AppUser | null, organizationId: string) {
+  await requireActiveUser(user, organizationId);
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const leadsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'leads');
+  const snapshot = await getDocs(membership.role === 'USER' ? query(leadsCollection, where('assignedToUid', '==', user?.uid)) : leadsCollection);
+  return snapshot.docs.map((leadDoc) => mapLead(leadDoc.id, leadDoc.data())).filter((lead) => lead.archived);
+}
+
+export async function restoreLead(user: AppUser | null, organizationId: string, leadId: string) {
+  await requireLeadEditor(user, organizationId);
+  if (!user) throw new Error('You must be signed in to restore a lead.');
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function permanentlyDeleteLead(user: AppUser | null, organizationId: string, leadId: string) {
+  await requireLeadManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to delete a lead.');
+  const leadRef = organizationDocumentInCollection(db, organizationId, 'leads', leadId);
+  const snapshot = await getDoc(leadRef);
+  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived leads can be permanently deleted.');
+  if (snapshot.data().convertedClientId) throw new Error('This lead cannot be deleted after conversion because its client relationship must be preserved.');
+  const [timeline, tasks, activities] = await Promise.all([
+    getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'leads', leadId, 'timeline')),
+    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks')),
+    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities')),
+  ]);
+  const hasHistory = timeline.size > 0
+    || tasks.docs.some((item) => { const related = item.data().relatedTo as { type?: string; id?: string } | undefined; return related?.type === 'Lead' && related.id === leadId; })
+    || activities.docs.some((item) => item.data().entityType === 'Lead' && item.data().entityId === leadId);
+  if (hasHistory) throw new Error('This lead cannot be deleted while related timeline, task, or activity history exists.');
+  await deleteDoc(leadRef);
 }
 
 export async function convertLeadToClient(user: AppUser | null, organizationId: string, lead: Lead) {

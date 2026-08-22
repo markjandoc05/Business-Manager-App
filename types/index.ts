@@ -14,6 +14,8 @@ export interface Lead {
   assignedToName?: string;
   assignedTo?: string;
   archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
   convertedClientId?: string;
   createdBy?: string;
   updatedBy?: string;
@@ -21,12 +23,14 @@ export interface Lead {
 
 export type LeadTimelineEntryType = 'ACTIVITY' | 'NOTE' | 'SYSTEM';
 export type LeadActivityType = 'Call' | 'Email' | 'Meeting' | 'Follow-up' | 'Message' | 'Other';
+export type LeadActivityStatus = 'SCHEDULED' | 'COMPLETED';
 
 export interface LeadTimelineEntry {
   id: string;
   leadId: string;
   entryType: LeadTimelineEntryType;
   activityType?: LeadActivityType;
+  activityStatus?: LeadActivityStatus;
   content: string;
   occurredAt: string;
   createdAt: string;
@@ -69,6 +73,9 @@ export interface Client {
   documents?: DocumentItem[];
   createdAt: string;
   status?: 'ACTIVE' | 'ARCHIVED';
+  archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
   createdBy?: string;
   updatedAt?: string;
   updatedBy?: string;
@@ -82,6 +89,8 @@ export interface Deal {
   value: number;
   stage: string;
   expectedCloseDate: string;
+  productServiceName?: string;
+  notes?: string;
   status: 'Active' | 'Won' | 'Lost';
   lossReason?: string;
   createdAt: string;
@@ -93,6 +102,8 @@ export interface Deal {
   updatedAt?: string;
   updatedBy?: string;
   archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
 }
 
 export type DealTimelineEntryType = 'ACTIVITY' | 'NOTE' | 'SYSTEM';
@@ -125,6 +136,8 @@ export interface Task {
   assignedToName?: string;
   assignedTo?: string;
   archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
   createdAt?: string;
   createdBy?: string;
   updatedAt?: string;

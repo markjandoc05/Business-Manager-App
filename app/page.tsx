@@ -1,7 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
+import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { 
   Users, 
@@ -10,23 +12,121 @@ import {
   CheckCircle2, 
   DollarSign, 
   Briefcase, 
-  Plus, 
+  Plus,
   Calendar, 
   ArrowRight,
-  X
+  X,
+  GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
-import { canManageLeads } from '@/lib/permissions';
 import { useWorkspace } from '@/context/WorkspaceContext';
+import { canManageLeads } from '@/lib/permissions';
+import { completeLeadTimelineActivity, listScheduledLeadActivities } from '@/lib/repositories/leadTimeline';
+import { formatCompactDateTime } from '@/lib/task-utils';
+import type { LeadTimelineEntry } from '@/types';
+import { PipelineFunnel } from '@/components/PipelineFunnel';
+
+type DashboardFollowUpItem =
+  | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' }
+  | { id: string; source: 'LEAD'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; leadId: string; activityId: string };
+
+type PrimaryDashboardCard = 'pipeline' | 'followups';
+type SecondaryDashboardCard = 'leads' | 'activity';
+type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
+const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
+const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'activity'] as SecondaryDashboardCard[] };
+
+function getDashboardLayoutPreference() {
+  if (typeof window === 'undefined') return DEFAULT_DASHBOARD_LAYOUT;
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(DASHBOARD_LAYOUT_KEY) || '{}') as { kpis?: KpiDashboardCard[]; primary?: PrimaryDashboardCard[]; secondary?: SecondaryDashboardCard[] };
+    return {
+      kpis: saved.kpis?.length === 6 && DEFAULT_DASHBOARD_LAYOUT.kpis.every((card) => saved.kpis?.includes(card)) ? saved.kpis : DEFAULT_DASHBOARD_LAYOUT.kpis,
+      primary: saved.primary?.length === 2 && saved.primary.includes('pipeline') && saved.primary.includes('followups') ? saved.primary : DEFAULT_DASHBOARD_LAYOUT.primary,
+      secondary: saved.secondary?.length === 2 && saved.secondary.includes('leads') && saved.secondary.includes('activity') ? saved.secondary : DEFAULT_DASHBOARD_LAYOUT.secondary,
+    };
+  } catch {
+    return DEFAULT_DASHBOARD_LAYOUT;
+  }
+}
 
 export default function DashboardPage() {
   const { leads, clients, deals, tasks, activities, settings, completeTask, addLead, addClient, addTask } = useApp();
+  const router = useRouter();
   const { user } = useAuth();
-  const { loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
+  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
   const canManage = canManageLeads(membership);
+  const [leadActivities, setLeadActivities] = useState<LeadTimelineEntry[]>([]);
+  const [leadActivitiesOrganizationId, setLeadActivitiesOrganizationId] = useState<string | null>(null);
+  const [leadActivitiesLoading, setLeadActivitiesLoading] = useState(false);
+  const [leadActivitiesError, setLeadActivitiesError] = useState<string | null>(null);
+  const [completingLeadActivityId, setCompletingLeadActivityId] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
+  const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
+  const [kpiCardOrder, setKpiCardOrder] = useState<KpiDashboardCard[]>(() => getDashboardLayoutPreference().kpis);
+  const [draggingCard, setDraggingCard] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
+  }, [kpiCardOrder, primaryCardOrder, secondaryCardOrder]);
+
+  const moveDashboardCard = (target: string, group: 'kpis' | 'primary' | 'secondary') => {
+    if (!draggingCard || draggingCard === target) return;
+    if (group === 'kpis') {
+      setKpiCardOrder((current) => reorderCards(current, draggingCard as KpiDashboardCard, target as KpiDashboardCard));
+    } else if (group === 'primary') {
+      setPrimaryCardOrder((current) => reorderCards(current, draggingCard as PrimaryDashboardCard, target as PrimaryDashboardCard));
+    } else {
+      setSecondaryCardOrder((current) => reorderCards(current, draggingCard as SecondaryDashboardCard, target as SecondaryDashboardCard));
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLeadActivities = async () => {
+      await Promise.resolve();
+      if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading || leads.length === 0) {
+        if (!cancelled) {
+          setLeadActivities([]);
+          setLeadActivitiesOrganizationId(null);
+          setLeadActivitiesLoading(false);
+          setLeadActivitiesError(null);
+        }
+        return;
+      }
+      const organizationId = currentOrganizationId;
+      const visibleLeads = leads.filter((lead) => !lead.archived);
+      setLeadActivitiesLoading(true);
+      setLeadActivitiesError(null);
+      setLeadActivitiesOrganizationId(null);
+      try {
+        const results = await Promise.all(visibleLeads.map((lead) => listScheduledLeadActivities(user, organizationId, lead.id)));
+        if (!cancelled) {
+          setLeadActivities(results.flat());
+          setLeadActivitiesOrganizationId(organizationId);
+        }
+      } catch (error) {
+        console.error('Unable to load dashboard lead activities', error);
+        if (!cancelled) {
+          setLeadActivities([]);
+          setLeadActivitiesError('Scheduled lead activities could not be loaded.');
+        }
+      } finally {
+        if (!cancelled) setLeadActivitiesLoading(false);
+      }
+    };
+    void loadLeadActivities();
+    return () => { cancelled = true; };
+  }, [currentOrganizationId, leads, user, workspaceLoading, workspaceReady]);
 
   // Modals state
   const [activeModal, setActiveModal] = useState<'lead' | 'client' | 'task' | null>(null);
@@ -40,10 +140,11 @@ export default function DashboardPage() {
 
   // KPI Calculations
   const totalLeads = leads.length;
-  const activeOpportunities = deals.filter(d => d.status === 'Active').length;
-  const followUpsDue = tasks.filter(t => t.status === 'Pending').length;
+  const openDealStages = new Set(['Opportunity', 'Proposal', 'Negotiation']);
+  const openDeals = deals.filter((deal) => openDealStages.has(deal.stage));
+  const activeOpportunities = openDeals.length;
   const wonDealsCount = deals.filter(d => d.status === 'Won').length;
-  const pipelineValue = deals.filter(d => d.status !== 'Lost').reduce((sum, d) => sum + d.value, 0);
+  const pipelineValue = openDeals.reduce((sum, d) => sum + d.value, 0);
 
   const currentDate = new Date();
   const salesThisMonth = deals
@@ -55,6 +156,93 @@ export default function DashboardPage() {
         && createdAt.getMonth() === currentDate.getMonth();
     })
     .reduce((sum, deal) => sum + deal.value, 0);
+
+  const followUpItems = useMemo<DashboardFollowUpItem[]>(() => {
+    const now = currentTime;
+    const taskItems: DashboardFollowUpItem[] = tasks
+      .filter((task) => task.status === 'Pending' && !task.archived && Number.isFinite(Date.parse(task.dueDate)))
+      .map((task) => {
+        const scheduledAt = task.dueDate;
+        const source = task.relatedTo?.type === 'Client' || task.relatedTo?.type === 'Deal' || task.relatedTo?.type === 'Lead'
+          ? task.relatedTo.type.toUpperCase() as 'LEAD' | 'CLIENT' | 'DEAL'
+          : 'TASK';
+        const relatedName = source === 'CLIENT'
+          ? clients.find((client) => client.id === task.relatedTo?.id)?.name || 'Client'
+          : source === 'DEAL'
+            ? deals.find((deal) => deal.id === task.relatedTo?.id)?.title || 'Deal'
+            : source === 'LEAD'
+              ? leads.find((lead) => lead.id === task.relatedTo?.id)?.name || 'Lead'
+              : 'Task';
+        return {
+          id: `task:${task.id}`,
+          source,
+          relatedName,
+          title: task.title,
+          description: task.description,
+          scheduledAt,
+          state: Date.parse(scheduledAt) <= now ? 'OVERDUE' : 'SCHEDULED',
+          taskId: task.id,
+          priority: task.priority,
+        };
+      });
+    const leadItems: DashboardFollowUpItem[] = (leadActivitiesOrganizationId === currentOrganizationId ? leadActivities : [])
+      .filter((entry) => entry.entryType === 'ACTIVITY' && entry.activityStatus === 'SCHEDULED' && Number.isFinite(Date.parse(entry.occurredAt)))
+      .map((entry) => ({
+        id: `lead-activity:${entry.leadId}:${entry.id}`,
+        source: 'LEAD',
+        relatedName: leads.find((lead) => lead.id === entry.leadId)?.name || 'Lead',
+        title: entry.activityType || 'Activity',
+        description: entry.content,
+        scheduledAt: entry.occurredAt,
+        state: Date.parse(entry.occurredAt) <= now ? 'OVERDUE' : 'SCHEDULED',
+        leadId: entry.leadId,
+        activityId: entry.id,
+      }));
+    return [...taskItems, ...leadItems].sort((left, right) => {
+      const leftTime = Date.parse(left.scheduledAt);
+      const rightTime = Date.parse(right.scheduledAt);
+      if (left.state !== right.state) return left.state === 'OVERDUE' ? -1 : 1;
+      return left.state === 'OVERDUE' ? leftTime - rightTime : leftTime - rightTime;
+    });
+  }, [clients, currentOrganizationId, currentTime, deals, leadActivities, leadActivitiesOrganizationId, leads, tasks]);
+
+  const openLeadActivity = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
+  const openLead = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
+  const openFollowUp = (item: DashboardFollowUpItem) => {
+    if ('activityId' in item) {
+      openLeadActivity(item.leadId);
+      return;
+    }
+    const task = tasks.find((candidate) => candidate.id === item.taskId);
+    if (!task) return;
+    const related = task.relatedTo;
+    if (related?.type === 'Client') {
+      router.push(`/clients?clientId=${encodeURIComponent(related.id)}&tab=tasks`);
+    } else if (related?.type === 'Deal') {
+      router.push(`/pipeline?dealId=${encodeURIComponent(related.id)}`);
+    } else if (related?.type === 'Lead') {
+      openLead(related.id);
+    } else {
+      router.push(`/tasks?taskId=${encodeURIComponent(task.id)}`);
+    }
+  };
+
+  const completeLeadActivity = async (item: Extract<DashboardFollowUpItem, { source: 'LEAD'; activityId: string }>) => {
+    if (!user || !currentOrganizationId || completingLeadActivityId) return;
+    setCompletingLeadActivityId(item.id);
+    try {
+      await completeLeadTimelineActivity(user, currentOrganizationId, item.leadId, item.activityId);
+      setLeadActivities((current) => current.filter((entry) => !(entry.leadId === item.leadId && entry.id === item.activityId)));
+    } catch (error) {
+      console.error('Unable to complete dashboard lead activity', error);
+      setLeadActivitiesError('Unable to mark the lead activity complete. Please try again.');
+    } finally {
+      setCompletingLeadActivityId(null);
+    }
+  };
+
+  const followUpsDue = followUpItems.length;
+  const sourceBadgeVariant = (source: DashboardFollowUpItem['source']) => source === 'LEAD' ? 'blue' : source === 'CLIENT' ? 'green' : source === 'DEAL' ? 'purple' : 'gray';
 
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,153 +303,144 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="space-y-8 pb-12">
-      {/* Welcome & Quick Actions Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Dashboard & Sales Overview</h2>
-          <p className="text-sm text-slate-500">Real-time performance metrics and pipeline execution.</p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2">
-            <Plus size={16} /> Add Lead
-          </Button>}
-          <Button variant="outline" onClick={() => setActiveModal('client')} className="gap-2">
-            <Plus size={16} /> Add Client
-          </Button>
-          <Button variant="outline" onClick={() => setActiveModal('task')} className="gap-2">
-            <Plus size={16} /> Add Task
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-6 pb-8">
+      <PageHeader
+        title="Dashboard & Sales Overview"
+        subtitle="Overview of your sales, follow-ups, and activity."
+        actions={<>
+          {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
+          <Button variant="outline" onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
+          <Button variant="outline" onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
+        </>}
+      />
 
       {/* KPI Cards Grid (6 cards required) */}
-      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Total Leads</p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Leads</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{totalLeads}</span>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Users size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{totalLeads}</span>
+            <div className="rounded-md bg-blue-50 p-1 text-blue-600"><Users size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Potential customers</p>
         </Card>
+        </MovableDashboardCard>
 
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Active Opportunities</p>
+        <MovableDashboardCard cardId="openDealsKpi" order={kpiCardOrder.indexOf('openDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('openDealsKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Open Deals</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{activeOpportunities}</span>
-            <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg"><TrendingUp size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{activeOpportunities}</span>
+            <div className="rounded-md bg-indigo-50 p-1 text-indigo-600"><TrendingUp size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Deals currently in progress</p>
         </Card>
+        </MovableDashboardCard>
 
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Follow-ups Due</p>
+        <MovableDashboardCard cardId="followupsKpi" order={kpiCardOrder.indexOf('followupsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followupsKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Follow-ups Due</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{followUpsDue}</span>
-            <div className="p-2 bg-orange-50 text-orange-600 rounded-lg"><Clock size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{followUpsDue}</span>
+            <div className="rounded-md bg-orange-50 p-1 text-orange-600"><Clock size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Tasks needing your attention</p>
         </Card>
+        </MovableDashboardCard>
 
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Won Deals</p>
+        <MovableDashboardCard cardId="wonDealsKpi" order={kpiCardOrder.indexOf('wonDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('wonDealsKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Deals</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{wonDealsCount}</span>
-            <div className="p-2 bg-green-50 text-green-600 rounded-lg"><CheckCircle2 size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{wonDealsCount}</span>
+            <div className="rounded-md bg-green-50 p-1 text-green-600"><CheckCircle2 size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Successfully closed deals</p>
         </Card>
+        </MovableDashboardCard>
 
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Pipeline Value</p>
+        <MovableDashboardCard cardId="potentialSalesKpi" order={kpiCardOrder.indexOf('potentialSalesKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('potentialSalesKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Potential Sales</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{formatCurrency(pipelineValue, settings.currency)}</span>
-            <div className="p-2 bg-purple-50 text-purple-600 rounded-lg"><DollarSign size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{formatCurrency(pipelineValue, settings.currency)}</span>
+            <div className="rounded-md bg-purple-50 p-1 text-purple-600"><DollarSign size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Total value of open deals</p>
         </Card>
+        </MovableDashboardCard>
 
-        <Card className="flex flex-col justify-between">
-          <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">Sales This Month</p>
+        <MovableDashboardCard cardId="salesMonthKpi" order={kpiCardOrder.indexOf('salesMonthKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('salesMonthKpi', 'kpis')}>
+        <Card className="flex min-h-24 flex-col justify-between p-3.5">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Sales This Month</p>
           <div className="flex items-end justify-between">
-            <span className="text-2xl font-bold text-slate-900">{formatCurrency(salesThisMonth, settings.currency)}</span>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Briefcase size={18} /></div>
+            <span className="text-xl font-semibold text-slate-900">{formatCurrency(salesThisMonth, settings.currency)}</span>
+            <div className="rounded-md bg-blue-50 p-1 text-blue-600"><Briefcase size={14} /></div>
           </div>
+          <p className="mt-1 text-xs text-slate-500">Sales closed this month</p>
         </Card>
+        </MovableDashboardCard>
       </div>
 
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid items-stretch gap-4 lg:grid-cols-2">
+        <MovableDashboardCard cardId="pipeline" order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
+          <PipelineFunnel deals={deals} currency={settings.currency} />
+        </MovableDashboardCard>
+
         {/* Follow-ups Due */}
-        <Card className="space-y-4 flex flex-col">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <MovableDashboardCard cardId="followups" order={primaryCardOrder.indexOf('followups')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followups', 'primary')}>
+        <Card className="flex h-full flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
-              <h3 className="font-bold text-slate-800">Follow-ups Due</h3>
-              <p className="text-xs text-slate-500">Pending tasks and required actions</p>
+              <h3 className="text-sm font-semibold text-slate-800">Follow-ups &amp; Tasks</h3>
+              <p className="text-xs text-slate-500">Upcoming and overdue actions</p>
             </div>
-            <Badge variant="orange">{followUpsDue} Pending</Badge>
+            <Badge variant="gray">{followUpItems.length} open</Badge>
           </div>
 
-          <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
-            {tasks.filter(t => t.status === 'Pending').map((task) => (
-              <div key={task.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl hover:bg-slate-100/50 transition-colors">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm text-slate-900">{task.title}</span>
-                    <Badge variant={task.priority === 'High' ? 'red' : task.priority === 'Medium' ? 'orange' : 'blue'}>
-                      {task.priority}
-                    </Badge>
+          <div className="max-h-[350px] flex-1 divide-y divide-slate-100 overflow-y-auto">
+            {followUpItems.map((item) => (
+              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="cursor-pointer py-2.5 transition-colors first:pt-0 last:pb-0 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant={sourceBadgeVariant(item.source)}>{item.source}</Badge>
+                    <span className="truncate text-xs font-medium text-slate-700">{item.relatedName}</span>
                   </div>
-                  <div className="flex items-center gap-3 text-xs text-slate-500">
-                    <span className="flex items-center gap-1"><Calendar size={12} /> {new Date(task.dueDate).toISOString().replace('T', ' ').substring(0, 16)}</span>
-                    {task.relatedTo && <span>• {task.relatedTo.type} ID: {task.relatedTo.id}</span>}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="min-w-0 truncate text-sm font-medium text-slate-900">{item.title}</p>
+                    {'activityId' in item ? <Button size="sm" variant="outline" disabled={completingLeadActivityId === item.id} onClick={(event) => { event.stopPropagation(); void completeLeadActivity(item); }} className="shrink-0">{completingLeadActivityId === item.id ? 'Completing…' : 'Complete'}</Button> : <Button size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); void completeTask(item.taskId); }} className="shrink-0">Complete</Button>}
                   </div>
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                    <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'Overdue' : 'Scheduled'}</Badge>
+                    <span className="flex items-center gap-1"><Calendar size={12} /> {formatCompactDateTime(item.scheduledAt, settings.timezone)}</span>
+                    {'priority' in item && <span>· {item.priority} Priority</span>}
+                  </div>
+                  {item.description && <p className="max-w-[420px] truncate text-xs text-slate-500">{item.description}</p>}
                 </div>
-                <Button size="sm" variant="outline" onClick={() => completeTask(task.id)} className="text-xs">
-                  Complete
-                </Button>
               </div>
             ))}
 
-            {tasks.filter(t => t.status === 'Pending').length === 0 && (
+            {leadActivitiesError && <p className="text-xs text-red-600">{leadActivitiesError}</p>}
+            {leadActivitiesLoading && <p className="py-2 text-center text-xs text-slate-400">Loading scheduled lead activities…</p>}
+            {followUpItems.length === 0 && !leadActivitiesLoading && (
               <div className="py-12 text-center text-slate-400 text-sm">
                 No pending follow-ups. Great job!
               </div>
             )}
           </div>
         </Card>
+        </MovableDashboardCard>
 
-        {/* Pipeline Overview */}
-        <Card className="space-y-4 flex flex-col">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-            <div>
-              <h3 className="font-bold text-slate-800">Pipeline Overview</h3>
-              <p className="text-xs text-slate-500">Opportunity count and value per stage</p>
-            </div>
-            <Badge variant="blue">{settings.pipelineStages.length} Stages</Badge>
-          </div>
-
-          <div className="space-y-3 flex-1">
-            {settings.pipelineStages.map((stage) => {
-              const stageDeals = deals.filter(d => d.stage === stage.name);
-              const stageValue = stageDeals.reduce((sum, d) => sum + d.value, 0);
-              return (
-                <div key={stage.name} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                  <div>
-                    <span className="font-semibold text-sm text-slate-900">{stage.name}</span>
-                    <p className="text-xs text-slate-500">{stageDeals.length} deals in stage</p>
-                  </div>
-                  <div className="text-right">
-                    <span className="font-bold text-sm text-slate-900">{formatCurrency(stageValue, settings.currency)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
       </div>
 
       {/* Second Grid: Recent Leads & Recent Activity */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         {/* Recent Leads */}
-        <Card className="space-y-4 flex flex-col">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <MovableDashboardCard cardId="leads" order={secondaryCardOrder.indexOf('leads')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leads', 'secondary')}>
+        <Card className="flex flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
               <h3 className="font-bold text-slate-800">Recent Leads</h3>
               <p className="text-xs text-slate-500">Latest prospects registered in the system</p>
@@ -271,7 +450,7 @@ export default function DashboardPage() {
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
             {leads.slice(0, 5).map((lead) => (
-              <div key={lead.id} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl">
+              <div key={lead.id} role="button" tabIndex={0} onClick={() => openLead(lead.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openLead(lead.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
                 <div>
                   <p className="font-semibold text-sm text-slate-900">{lead.name}</p>
                   <p className="text-xs text-slate-500">{lead.company || 'Independent'} • Source: {lead.source}</p>
@@ -286,10 +465,12 @@ export default function DashboardPage() {
             ))}
           </div>
         </Card>
+        </MovableDashboardCard>
 
         {/* Recent Activity */}
-        <Card className="space-y-4 flex flex-col">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+        <MovableDashboardCard cardId="activity" order={secondaryCardOrder.indexOf('activity')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('activity', 'secondary')}>
+        <Card className="flex flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div>
               <h3 className="font-bold text-slate-800">Recent Activity</h3>
               <p className="text-xs text-slate-500">System audit log of sales operations</p>
@@ -312,6 +493,7 @@ export default function DashboardPage() {
             ))}
           </div>
         </Card>
+        </MovableDashboardCard>
       </div>
 
       {/* Modals for Quick Actions */}
@@ -322,7 +504,7 @@ export default function DashboardPage() {
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-6 relative"
+              className="relative w-full max-w-lg space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.14)]"
             >
               <button 
                 onClick={() => setActiveModal(null)}
@@ -502,4 +684,23 @@ export default function DashboardPage() {
       </AnimatePresence>
     </div>
   );
+}
+
+function reorderCards<T extends string>(cards: T[], source: T, target: T) {
+  const next = [...cards];
+  const sourceIndex = next.indexOf(source);
+  const targetIndex = next.indexOf(target);
+  if (sourceIndex < 0 || targetIndex < 0) return cards;
+  next.splice(sourceIndex, 1);
+  next.splice(targetIndex, 0, source);
+  return next;
+}
+
+function MovableDashboardCard({ cardId, order, onDragStart, onDragEnd, onDrop, children }: { cardId: string; order: number; onDragStart: (cardId: string) => void; onDragEnd: () => void; onDrop: () => void; children: React.ReactNode }) {
+  return <div style={{ order }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} className="relative min-w-0">
+    <button type="button" draggable aria-label={`Move ${cardId} dashboard card`} title="Drag to move card" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="absolute right-3 top-3 z-20 rounded-md p-1 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 group-hover:opacity-100 sm:opacity-60">
+      <GripVertical size={16} />
+    </button>
+    {children}
+  </div>;
 }

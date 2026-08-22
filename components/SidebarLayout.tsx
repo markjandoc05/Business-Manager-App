@@ -10,8 +10,7 @@ import {
   Kanban, 
   CheckSquare, 
   BarChart3, 
-  Settings, 
-  Menu, 
+  Settings,
   ChevronLeft,
   Briefcase,
   LogOut
@@ -56,8 +55,20 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMobileOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, []);
+
+  const sidebarCollapsed = isDesktop && isCollapsed;
+
   return (
-    <div className="flex h-screen bg-[#F8FAFC] text-slate-800 antialiased">
+    <div className="flex h-screen bg-[#f7f7f8] text-slate-800 antialiased">
       {/* Mobile Backdrop */}
       <AnimatePresence>
         {isMobileOpen && (
@@ -74,42 +85,42 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       {/* Sidebar */}
       <motion.aside
         animate={{ 
-          width: isCollapsed ? '80px' : '260px',
-          x: isMobileOpen || isDesktop ? 0 : -260
+          width: sidebarCollapsed ? '64px' : '224px',
+          x: isMobileOpen || isDesktop ? 0 : -224
         }}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#0F172A] text-slate-300 transition-all duration-300 ease-in-out lg:relative border-r border-slate-800",
-          isCollapsed ? "items-center" : "items-stretch"
+          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#f7f7f8] text-slate-700 transition-all duration-300 ease-in-out lg:relative border-r border-slate-200",
+          sidebarCollapsed ? "items-center" : "items-stretch"
         )}
       >
         {/* Logo Section */}
         <div className={cn(
-          "flex items-center h-16 px-6 border-b border-slate-800",
-          isCollapsed ? "justify-center" : "justify-between"
+          "flex items-center h-14 px-5 border-b border-slate-200",
+          sidebarCollapsed ? "h-auto flex-col gap-1 px-2 py-2" : "justify-between"
         )}>
           <div className="flex items-center gap-3">
             <div
-              className="flex items-center justify-center w-8 h-8 rounded-lg shadow-lg bg-cover bg-center"
+              className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-cover bg-center shadow-sm"
               style={{ backgroundColor: settings.accentColor || '#3b82f6', ...(settings.logoUrl ? { backgroundImage: `url(${settings.logoUrl})` } : {}) }}
             >
               {!settings.logoUrl && <Briefcase size={18} className="text-white" />}
             </div>
-            {!isCollapsed && (
-              <span className="text-lg font-bold tracking-tight text-white">{settings.businessName}</span>
-            )}
+            {!sidebarCollapsed && <span className="max-w-[135px] truncate text-sm font-semibold tracking-tight text-slate-900">{settings.businessName}</span>}
           </div>
-          {!isCollapsed && (
+          {!sidebarCollapsed ? (
             <button 
               onClick={() => setIsCollapsed(true)}
-              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-800 lg:flex hidden"
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
+              className="hidden rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 lg:flex"
             >
               <ChevronLeft size={18} />
             </button>
-          )}
+          ) : <button onClick={() => setIsCollapsed(false)} aria-label="Expand sidebar" title="Expand sidebar" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"><ChevronLeft size={18} className="rotate-180" /></button>}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-5 space-y-0.5 overflow-y-auto">
           {sidebarItems.map((item) => {
             const isActive = pathname === item.href;
             return (
@@ -117,19 +128,21 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
                 key={item.name}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 group",
+                  "flex h-9 items-center gap-3 rounded-md px-3 text-[13px] transition-colors duration-150 group",
+                  sidebarCollapsed ? "justify-center" : "",
                   isActive 
-                    ? "bg-blue-600/10 text-blue-400 font-medium" 
-                    : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                    ? "bg-slate-200 text-slate-900 font-medium"
+                    : "text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
                 )}
+                title={sidebarCollapsed ? item.name : undefined}
                 style={isActive ? { color: settings.accentColor || '#3b82f6' } : undefined}
                 onClick={() => setIsMobileOpen(false)}
               >
                 <item.icon size={20} className={cn(
                   "shrink-0",
-                  isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300"
+                  isActive ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700"
                 )} />
-                {!isCollapsed && <span className="text-sm">{item.name}</span>}
+                {!sidebarCollapsed && <span>{item.name}</span>}
               </Link>
             );
           })}
@@ -137,61 +150,28 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
         {/* Footer Profile Section */}
         <div className={cn(
-          "p-4 border-t border-slate-800",
-          isCollapsed ? "flex justify-center" : ""
+          "p-4 border-t border-slate-200",
+          sidebarCollapsed ? "flex justify-center" : ""
         )}>
-          {isCollapsed ? (
-             <button title="Sign out" onClick={() => signOut()} className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">{user?.name.slice(0, 2).toUpperCase()}</button>
+          {sidebarCollapsed ? (
+             <button title="Sign out" onClick={() => signOut()} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</button>
           ) : (
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-white truncate">{user?.name}</p>
-                <p className="text-xs text-slate-500 truncate">{user?.email}</p>
-                <p className="text-[10px] text-blue-400 truncate">{membership?.role || 'Loading role…'}</p>
+                <p className="truncate text-sm font-medium text-slate-900">{user?.name}</p>
+                <p className="truncate text-xs text-slate-500">{user?.email}</p>
+                <p className="truncate text-[10px] text-slate-500">{membership?.role || 'Loading role…'}</p>
               </div>
-              <button title="Sign out" onClick={() => signOut()} className="p-1.5 text-slate-500 hover:text-white" aria-label="Sign out"><LogOut size={16} /></button>
+              <button title="Sign out" onClick={() => signOut()} className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-800" aria-label="Sign out"><LogOut size={16} /></button>
             </div>
           )}
         </div>
       </motion.aside>
 
       {/* Main Content */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Header */}
-        <header className="flex items-center justify-between h-16 px-8 bg-white border-b border-slate-200">
-          <div className="flex items-center">
-            <div className="flex items-center gap-2">
-              <button 
-                onClick={() => setIsMobileOpen(true)}
-                className="p-2 -ml-2 rounded-lg text-slate-500 hover:bg-slate-100 lg:hidden"
-              >
-                <Menu size={24} />
-              </button>
-              <h2 className="text-xl font-bold text-slate-900">
-                {sidebarItems.find(i => i.href === pathname)?.name || 'Dashboard'}
-              </h2>
-              <span className="mx-4 text-slate-300 hidden sm:inline">|</span>
-              {settings.license?.appVersion && <span className="text-xs text-slate-500 hidden sm:inline">v{settings.license.appVersion}</span>}
-            </div>
-          </div>
-          <div className="flex items-center space-x-4">
-             <div className="relative hidden md:block">
-                <input 
-                  type="text" 
-                  placeholder="Quick search..." 
-                  className="w-64 pl-10 pr-4 py-2 text-sm border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" 
-                />
-                <div className="absolute left-3 top-2.5 w-4 h-4 border-2 border-slate-400 rounded-full"></div>
-             </div>
-             <button style={{ backgroundColor: settings.accentColor || '#3b82f6' }} className="px-4 py-2 text-white text-sm font-semibold rounded-lg shadow-sm hover:opacity-90 active:scale-95 transition-all">
-               + New Lead
-             </button>
-          </div>
-        </header>
-
-        {/* Page Body */}
-        <main className="flex-1 p-8 overflow-y-auto">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-5">
           <div className="max-w-7xl mx-auto">
             {children}
           </div>

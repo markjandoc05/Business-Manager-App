@@ -5,7 +5,8 @@ import type { Activity } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
 
-export type ActivityInput = Pick<Activity, 'type' | 'description' | 'entityType' | 'entityId' | 'metadata'>;
+export type ActivityInput = Pick<Activity, 'type' | 'description' | 'entityType' | 'entityId' | 'metadata'> & {
+};
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
   if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') return value.toDate().toISOString();

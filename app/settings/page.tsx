@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
+import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -151,17 +152,17 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-2xl font-bold">Settings</h2>
+    <div className="space-y-5">
+      <PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." />
       
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col gap-4 md:flex-row">
         <aside className="w-full md:w-64 space-y-1">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id as typeof activeTab)}
-              className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-semibold transition-colors ${
-                activeTab === tab.id ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === tab.id ? 'bg-slate-100 text-slate-900' : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
               <tab.icon size={18} />
@@ -171,10 +172,10 @@ export default function SettingsPage() {
         </aside>
         
         <main className="flex-1">
-          <Card className="p-6">
-            <div className="flex items-center gap-3 mb-6">
+          <Card className="p-4">
+            <div className="mb-5 flex items-center gap-3">
                 <Icon className="text-blue-600" size={24}/>
-                <h3 className="text-xl font-bold">{tabs.find(t => t.id === activeTab)?.label}</h3>
+                <h3 className="text-base font-semibold text-slate-900">{tabs.find(t => t.id === activeTab)?.label}</h3>
             </div>
             
             {activeTab === 'profile' && (

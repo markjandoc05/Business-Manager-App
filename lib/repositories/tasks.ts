@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Task } from '@/types';
@@ -32,6 +32,8 @@ function mapTask(id: string, data: Record<string, unknown>): Task {
     updatedAt: toIsoDate(data.updatedAt),
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+    archivedAt: toIsoDate(data.archivedAt, ''),
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
   };
 }
 
@@ -146,9 +148,32 @@ export async function archiveTask(user: AppUser | null, organizationId: string, 
   await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to archive a task.');
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
   } catch (error) {
     reportFirestoreFailure('archive', error);
     throw new Error('Unable to archive the task. Please try again.');
   }
+}
+
+export async function listArchivedTasks(user: AppUser | null, organizationId: string) {
+  await requireActiveUser(user, organizationId);
+  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
+  return snapshot.docs.map((taskDoc) => mapTask(taskDoc.id, taskDoc.data())).filter((task) => task.archived);
+}
+
+export async function restoreTask(user: AppUser | null, organizationId: string, taskId: string) {
+  const existingTask = await getOrganizationTask(organizationId, taskId);
+  await requireTaskManager(user, organizationId, existingTask);
+  if (!user) throw new Error('You must be signed in to restore a task.');
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function permanentlyDeleteTask(user: AppUser | null, organizationId: string, taskId: string) {
+  const existingTask = await getOrganizationTask(organizationId, taskId);
+  await requireTaskManager(user, organizationId, existingTask);
+  if (!user) throw new Error('You must be signed in to delete a task.');
+  const taskRef = organizationDocumentInCollection(db, organizationId, 'tasks', taskId);
+  const snapshot = await getDoc(taskRef);
+  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived tasks can be permanently deleted.');
+  await deleteDoc(taskRef);
 }

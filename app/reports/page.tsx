@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Card, Button } from '@/components/ui/core';
+import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { startOfMonth, subMonths, startOfQuarter, startOfYear, isWithinInterval, parseISO } from 'date-fns';
@@ -59,10 +60,8 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Reports</h2>
-        <div className="flex gap-2">
+    <div className="space-y-5">
+      <PageHeader title="Reports & Analytics" subtitle="Review sales performance and business activity." actions={<>
             <select className="border rounded-lg px-3 py-2 text-sm" value={dateRange} onChange={(e) => setDateRange(e.target.value as any)}>
                 <option value="ThisMonth">This Month</option>
                 <option value="LastMonth">Last Month</option>
@@ -70,19 +69,18 @@ export default function ReportsPage() {
                 <option value="ThisYear">This Year</option>
             </select>
             <Button variant="outline" className="gap-2" onClick={exportCSV}><Download size={16}/> Export CSV</Button>
-        </div>
+      </>} />
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Total Leads</p><p className="mt-1 text-xl font-semibold text-slate-900">{KPIs.totalLeads}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Sales</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(KPIs.totalWonSales, settings.currency)}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Pipeline Value</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(KPIs.pipelineValue, settings.currency)}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Conversion Rate</p><p className="mt-1 text-xl font-semibold text-slate-900">{(KPIs.totalLeads > 0 ? (KPIs.wonDeals / KPIs.totalLeads * 100).toFixed(1) : 0)}%</p></Card>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4"><p className="text-xs text-slate-500">Total Leads</p><p className="text-2xl font-bold">{KPIs.totalLeads}</p></Card>
-        <Card className="p-4"><p className="text-xs text-slate-500">Won Sales</p><p className="text-2xl font-bold">{formatCurrency(KPIs.totalWonSales, settings.currency)}</p></Card>
-        <Card className="p-4"><p className="text-xs text-slate-500">Pipeline Value</p><p className="text-2xl font-bold">{formatCurrency(KPIs.pipelineValue, settings.currency)}</p></Card>
-        <Card className="p-4"><p className="text-xs text-slate-500">Conversion Rate</p><p className="text-2xl font-bold">{(KPIs.totalLeads > 0 ? (KPIs.wonDeals / KPIs.totalLeads * 100).toFixed(1) : 0)}%</p></Card>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="p-6">
-            <h3 className="font-bold mb-4">Pipeline Performance (Value)</h3>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <Card className="p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-900">Pipeline Performance (Value)</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={settings.pipelineStages.map(stage => ({stage: stage.name, value: filteredData.deals.filter(d => d.stage === stage.name).reduce((sum, d) => sum + d.value, 0)}))}>
@@ -95,8 +93,8 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
             </div>
         </Card>
-        <Card className="p-6">
-            <h3 className="font-bold mb-4">Won vs Lost Deals</h3>
+        <Card className="p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-900">Won vs Lost Deals</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
@@ -110,8 +108,8 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
             </div>
         </Card>
-        <Card className="p-6">
-            <h3 className="font-bold mb-4">Leads by Source</h3>
+        <Card className="p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-900">Leads by Source</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={settings.leadSources.map(s => ({source: s.name, count: filteredData.leads.filter(l => l.source === s.name).length}))}>

@@ -206,10 +206,11 @@ service cloud.firestore {
     match /organizations/{organizationId}/clients/{clientId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManage(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'assignedTo', 'assignedToUid', 'assignedToName', 'status', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'sourceLeadId'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'assignedTo', 'assignedToUid', 'assignedToName', 'status', 'archived', 'archivedAt', 'archivedBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'sourceLeadId'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.archived == false
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && request.resource.data.assignedToName is string;
@@ -217,11 +218,12 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
+        && (!request.resource.data.keys().hasAny(['archived']) || request.resource.data.archived is bool)
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && ((!resource.data.keys().hasAny(['sourceLeadId']) && !request.resource.data.keys().hasAny(['sourceLeadId']))
           || request.resource.data.sourceLeadId == resource.data.sourceLeadId);
-      allow delete: if false;
+      allow delete: if organizationCanManage(organizationId) && (resource.data.archived == true || resource.data.status == 'ARCHIVED');
     }
 
     match /organizations/{organizationId}/clients/{clientId}/notes/{noteId} {
@@ -257,7 +259,7 @@ service cloud.firestore {
       allow read: if organizationCanManage(organizationId)
         || (organizationCanView(organizationId) && resource.data.assignedToUid == request.auth.uid);
       allow create: if organizationCanManage(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy', 'convertedClientId'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status == 'New'
@@ -280,7 +282,7 @@ service cloud.firestore {
             && request.resource.data.source == resource.data.source
           : request.resource.data.status != 'Client'
             || (request.resource.data.keys().hasAll(['convertedClientId']) && request.resource.data.convertedClientId is string));
-      allow delete: if false;
+      allow delete: if organizationCanManage(organizationId) && resource.data.archived == true;
     }
 
     match /organizations/{organizationId}/leads/{leadId}/timeline/{entryId} {
@@ -289,15 +291,24 @@ service cloud.firestore {
       allow create: if organizationCanView(organizationId)
         && (exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId))
           || getAfter(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId)).data.keys().hasAny(['name']))
-        && request.resource.data.keys().hasOnly(['entryType', 'activityType', 'content', 'occurredAt', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.keys().hasOnly(['entryType', 'activityType', 'activityStatus', 'content', 'occurredAt', 'createdAt', 'createdByUid', 'createdByName'])
         && request.resource.data.entryType in ['ACTIVITY', 'NOTE', 'SYSTEM']
         && request.resource.data.content is string
         && request.resource.data.content != ''
         && request.resource.data.occurredAt is timestamp
         && request.resource.data.createdAt is timestamp
         && request.resource.data.createdByUid == request.auth.uid
-        && request.resource.data.createdByName is string;
-      allow update, delete: if false;
+        && request.resource.data.createdByName is string
+        && (request.resource.data.entryType == 'ACTIVITY'
+          ? request.resource.data.activityType in ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other']
+            && request.resource.data.activityStatus in ['SCHEDULED', 'COMPLETED']
+          : !request.resource.data.keys().hasAny(['activityStatus']));
+      allow update: if organizationCanView(organizationId)
+        && resource.data.entryType == 'ACTIVITY'
+        && resource.data.activityStatus == 'SCHEDULED'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activityStatus'])
+        && request.resource.data.activityStatus == 'COMPLETED';
+      allow delete: if false;
     }
 
     match /clients/{clientId} {
@@ -412,7 +423,7 @@ service cloud.firestore {
     match /organizations/{organizationId}/deals/{dealId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManage(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.clientId is string
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId)).data.status != 'ARCHIVED'
@@ -423,10 +434,11 @@ service cloud.firestore {
         && request.resource.data.assignedToName is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && request.resource.data.status == 'Active'
+        && request.resource.data.stage in ['Opportunity', 'Proposal', 'Negotiation']
         && request.resource.data.stage != 'Won'
         && request.resource.data.stage != 'Lost';
       allow update: if organizationCanUpdateDeal(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.clientId == resource.data.clientId
         && request.resource.data.leadId == resource.data.leadId
         && request.resource.data.createdBy == resource.data.createdBy
@@ -435,11 +447,11 @@ service cloud.firestore {
         && request.resource.data.assignedToUid is string
         && request.resource.data.assignedToName is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
-        && ((request.resource.data.status == 'Active' && request.resource.data.stage != 'Won' && request.resource.data.stage != 'Lost')
+        && ((request.resource.data.status == 'Active' && request.resource.data.stage in ['Opportunity', 'Proposal', 'Negotiation'])
           || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won'
             && (!request.resource.data.keys().hasAny(['lossReason']) || request.resource.data.lossReason == null))
           || (request.resource.data.status == 'Lost' && request.resource.data.stage == 'Lost' && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
-      allow delete: if false;
+      allow delete: if organizationCanUpdateDeal(organizationId) && resource.data.archived == true;
     }
 
     match /organizations/{organizationId}/deals/{dealId}/timeline/{entryId} {
@@ -462,7 +474,7 @@ service cloud.firestore {
     match /organizations/{organizationId}/tasks/{taskId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManage(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.title is string
         && request.resource.data.status == 'Pending'
         && request.resource.data.priority in ['Low', 'Medium', 'High']
@@ -474,7 +486,7 @@ service cloud.firestore {
         && request.resource.data.archived == false
         && (!request.resource.data.keys().hasAny(['relatedTo']) || organizationRelatedRecordExists(organizationId, request.resource.data.relatedTo));
       allow update: if organizationTaskCanManage(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived'])
+        && request.resource.data.keys().hasOnly(['title', 'description', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
@@ -484,7 +496,7 @@ service cloud.firestore {
         && request.resource.data.assignedToName is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && (!request.resource.data.keys().hasAny(['relatedTo']) || organizationRelatedRecordExists(organizationId, request.resource.data.relatedTo));
-      allow delete: if false;
+      allow delete: if organizationTaskCanManage(organizationId) && resource.data.archived == true;
     }
 
     match /organizations/{organizationId}/settings/{settingsId} {

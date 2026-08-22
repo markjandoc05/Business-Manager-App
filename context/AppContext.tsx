@@ -3,10 +3,10 @@
 import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
 import { Lead, Client, Deal, Task, Activity, Settings, DocumentItem, Note } from '../types';
 import { useAuth } from '@/context/AuthContext';
-import { addClientNote, archiveClient as archiveClientRepository, createClient as createClientRepository, listClientDocuments, listClientNotes, listClients, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
-import { convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listLeads } from '@/lib/repositories/leads';
-import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listDeals, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
-import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listTasks, updateTask as updateTaskRepository } from '@/lib/repositories/tasks';
+import { addClientNote, archiveClient as archiveClientRepository, createClient as createClientRepository, listArchivedClients, listClientDocuments, listClientNotes, listClients, permanentlyDeleteClient as permanentlyDeleteClientRepository, restoreClient as restoreClientRepository, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
+import { convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeads, listLeads, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository } from '@/lib/repositories/leads';
+import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDeals, listDeals, permanentlyDeleteDeal as permanentlyDeleteDealRepository, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
+import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasks, listTasks, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository } from '@/lib/repositories/tasks';
 import { defaultSettings, loadSettings, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
 import { createActivity, listActivities, type ActivityInput } from '@/lib/repositories/activities';
 import { formatCurrency } from '@/lib/formatting';
@@ -22,6 +22,11 @@ interface AppContextType {
   clients: Client[];
   clientsLoading: boolean;
   clientsError: string | null;
+  archivedClients: Client[];
+  archivedLeads: Lead[];
+  archivedDeals: Deal[];
+  archivedTasks: Task[];
+  loadArchivedRecords: () => Promise<void>;
   clientNotes: Note[];
   clientNotesLoading: boolean;
   clientNotesError: string | null;
@@ -42,18 +47,26 @@ interface AppContextType {
   addClient: (client: ClientInput) => Promise<void>;
   updateClient: (clientId: string, client: ClientInput) => Promise<void>;
   archiveClient: (clientId: string) => Promise<void>;
+  restoreClient: (clientId: string) => Promise<void>;
+  permanentlyDeleteClient: (clientId: string) => Promise<void>;
   refreshClients: () => Promise<void>;
   loadClientNotes: (clientId: string) => Promise<void>;
   loadClientDocuments: (clientId: string) => Promise<void>;
   addDeal: (deal: Omit<Deal, 'id' | 'createdAt' | 'status'>) => Promise<void>;
-  updateDeal: (dealId: string, input: { title: string; value: number; stage: string; expectedCloseDate: string; assignedToUid: string; assignedToName: string; lossReason: string }) => Promise<void>;
+  updateDeal: (dealId: string, input: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => Promise<void>;
   addTask: (task: Omit<Task, 'id' | 'status'>) => Promise<void>;
   updateTask: (taskId: string, task: Omit<Task, 'id' | 'status'>) => Promise<void>;
   completeTask: (taskId: string) => Promise<void>;
   archiveTask: (taskId: string) => Promise<void>;
+  restoreTask: (taskId: string) => Promise<void>;
+  permanentlyDeleteTask: (taskId: string) => Promise<void>;
   refreshTasks: () => Promise<void>;
   updateDealStage: (dealId: string, stage: string, status?: Deal['status'], lossReason?: string) => Promise<void>;
   archiveDeal: (dealId: string) => Promise<void>;
+  restoreDeal: (dealId: string) => Promise<void>;
+  permanentlyDeleteDeal: (dealId: string) => Promise<void>;
+  restoreLead: (leadId: string) => Promise<void>;
+  permanentlyDeleteLead: (leadId: string) => Promise<void>;
   convertLeadToClient: (leadId: string) => Promise<void>;
   addNote: (clientId: string, content: string) => Promise<void>;
   uploadDocument: (clientId: string, file: File) => Promise<void>;
@@ -91,6 +104,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [clientsOrganizationId, setClientsOrganizationId] = useState<string | null>(null);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [clientsError, setClientsError] = useState<string | null>(null);
+  const [archivedClients, setArchivedClients] = useState<Client[]>([]);
+  const [archivedLeads, setArchivedLeads] = useState<Lead[]>([]);
+  const [archivedDeals, setArchivedDeals] = useState<Deal[]>([]);
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
+  const [archivedOrganizationId, setArchivedOrganizationId] = useState<string | null>(null);
   const [clientNotes, setClientNotes] = useState<Note[]>([]);
   const [clientNotesOrganizationId, setClientNotesOrganizationId] = useState<string | null>(null);
   const [clientNotesLoading, setClientNotesLoading] = useState(false);
@@ -266,6 +284,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentOrganizationId, user]);
 
+  const refreshDeals = useCallback(async () => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    setDealsLoading(true);
+    try {
+      const loadedDeals = await listDeals(user, organizationId);
+      if (organizationId === currentOrganizationRef.current) {
+        setDeals(loadedDeals);
+        setDealsOrganizationId(organizationId);
+      }
+    } catch (error) {
+      console.error('Unable to refresh shared deals', error);
+    } finally {
+      if (organizationId === currentOrganizationRef.current) setDealsLoading(false);
+    }
+  }, [currentOrganizationId, user]);
+
+  const loadArchivedRecords = useCallback(async () => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    const [loadedClients, loadedLeads, loadedDeals, loadedTasks] = await Promise.all([
+      listArchivedClients(user, organizationId),
+      listArchivedLeads(user, organizationId),
+      listArchivedDeals(user, organizationId),
+      listArchivedTasks(user, organizationId),
+    ]);
+    if (organizationId !== currentOrganizationRef.current) return;
+    setArchivedClients(loadedClients);
+    setArchivedLeads(loadedLeads);
+    setArchivedDeals(loadedDeals);
+    setArchivedTasks(loadedTasks);
+    setArchivedOrganizationId(organizationId);
+  }, [currentOrganizationId, user]);
+
   useEffect(() => {
     if (!canLoadTenantData || !user || !currentOrganizationId) return;
     let cancelled = false;
@@ -408,6 +460,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     void logActivity('client_archive', `Client archived: ${clientId}`, 'Client', clientId);
   };
 
+  const restoreClient = async (clientId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await restoreClientRepository(user, currentOrganizationId, clientId);
+    setArchivedClients((prev) => prev.filter((client) => client.id !== clientId));
+    await refreshClients();
+  };
+
+  const permanentlyDeleteClient = async (clientId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await permanentlyDeleteClientRepository(user, currentOrganizationId, clientId);
+    setArchivedClients((prev) => prev.filter((client) => client.id !== clientId));
+  };
+
   const addDeal = async (dealData: Omit<Deal, 'id' | 'createdAt' | 'status'>) => {
     if (!user) return;
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
@@ -417,7 +482,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     void logActivity('deal_creation', `New deal created: ${newDeal.title} (${formatCurrency(newDeal.value, settings.currency)})`, 'Deal', newDeal.id);
   };
 
-  const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; assignedToUid: string; assignedToName: string; lossReason: string }) => {
+  const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => {
     if (!user) return;
     const deal = deals.find((item) => item.id === dealId);
     if (!deal) throw new Error('Deal not found. Please refresh and try again.');
@@ -462,6 +527,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTasks(prev => prev.filter(task => task.id !== taskId));
   };
 
+  const restoreTask = async (taskId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await restoreTaskRepository(user, currentOrganizationId, taskId);
+    setArchivedTasks((prev) => prev.filter((task) => task.id !== taskId));
+    await refreshTasks();
+  };
+
+  const permanentlyDeleteTask = async (taskId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await permanentlyDeleteTaskRepository(user, currentOrganizationId, taskId);
+    setArchivedTasks((prev) => prev.filter((task) => task.id !== taskId));
+  };
+
   const updateDealStage = async (dealId: string, stage: string, status: Deal['status'] = 'Active', lossReason?: string) => {
     if (!user) return;
     const deal = deals.find((item) => item.id === dealId);
@@ -481,6 +559,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await archiveDealRepository(user, currentOrganizationId, dealId);
     setDeals(prev => prev.filter((deal) => deal.id !== dealId));
+  };
+
+  const restoreDeal = async (dealId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await restoreDealRepository(user, currentOrganizationId, dealId);
+    setArchivedDeals((prev) => prev.filter((deal) => deal.id !== dealId));
+    await refreshDeals();
+  };
+
+  const permanentlyDeleteDeal = async (dealId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await permanentlyDeleteDealRepository(user, currentOrganizationId, dealId);
+    setArchivedDeals((prev) => prev.filter((deal) => deal.id !== dealId));
+  };
+
+  const restoreLead = async (leadId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await restoreLeadRepository(user, currentOrganizationId, leadId);
+    setArchivedLeads((prev) => prev.filter((lead) => lead.id !== leadId));
+    await refreshLeads();
+  };
+
+  const permanentlyDeleteLead = async (leadId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    await permanentlyDeleteLeadRepository(user, currentOrganizationId, leadId);
+    setArchivedLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   };
 
 
@@ -521,6 +625,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       clients: canLoadTenantData && clientsOrganizationId === currentOrganizationId ? clients : [],
       clientsLoading: canLoadTenantData ? (clientsOrganizationId !== currentOrganizationId || clientsLoading) : false,
       clientsError,
+      archivedClients: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedClients : [],
+      archivedLeads: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedLeads : [],
+      archivedDeals: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedDeals : [],
+      archivedTasks: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedTasks : [],
+      loadArchivedRecords,
       clientNotes: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotes : [],
       clientNotesLoading: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotesLoading : false,
       clientNotesError,
@@ -541,6 +650,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       addClient,
       updateClient,
       archiveClient,
+      restoreClient,
+      permanentlyDeleteClient,
       refreshClients,
       loadClientNotes,
       loadClientDocuments,
@@ -550,13 +661,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       updateTask,
       completeTask,
       archiveTask,
+      restoreTask,
+      permanentlyDeleteTask,
       refreshTasks,
       updateDealStage,
       archiveDeal,
+      restoreDeal,
+      permanentlyDeleteDeal,
+      restoreLead,
+      permanentlyDeleteLead,
       convertLeadToClient,
       addNote,
       uploadDocument,
-      updateSettings
+      updateSettings,
     }}>
       {children}
     </AppContext.Provider>
