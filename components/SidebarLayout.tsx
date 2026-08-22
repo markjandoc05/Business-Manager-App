@@ -12,6 +12,7 @@ import {
   BarChart3, 
   Settings,
   ChevronLeft,
+  Menu,
   Briefcase,
   LogOut
 } from 'lucide-react';
@@ -172,7 +173,12 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       {/* Main Content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="max-w-7xl mx-auto">
+          <div className="mb-3 lg:hidden">
+            <button type="button" onClick={() => setIsMobileOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50" aria-label="Open navigation">
+              <Menu size={18} /> Menu
+            </button>
+          </div>
+          <div className="mx-auto max-w-7xl min-w-0">
             {children}
           </div>
         </main>

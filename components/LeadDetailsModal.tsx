@@ -124,7 +124,7 @@ export function LeadDetailsModal({ lead, user, organizationId, onClose }: { lead
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label={`Lead details for ${lead.name}`}>
     <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto p-0">
-      <div className="flex items-start justify-between border-b border-slate-200 p-5">
+      <div className="flex flex-col gap-2 border-b border-slate-200 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
         <div><h3 className="text-xl font-bold text-slate-900">{lead.name}</h3><p className="text-sm text-slate-500">Lead Details</p></div>
         <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close lead details"><X size={18} /></Button>
       </div>

@@ -72,6 +72,32 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+@media (max-width: 639px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  main {
+    padding: 0.75rem;
+  }
+
+  .grid-cols-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  div.fixed.inset-0.z-50 {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding: 0.75rem;
+  }
+
+  div.fixed.inset-0.z-50 > form {
+    max-height: calc(100dvh - 1.5rem);
+    overflow-y: auto;
+  }
+}
+
 /* Lead ownership remains in Firestore but is intentionally omitted from the compact table view. */
 table.min-w-\[900px\] tbody td:first-child > div > span:nth-child(3) {
   display: none;
