@@ -3,6 +3,32 @@ export type OrganizationRole = UserRole;
 export type OrganizationStatus = 'trial' | 'active' | 'expired' | 'suspended';
 export type MembershipStatus = 'pending' | 'active' | 'inactive' | 'suspended' | 'archived';
 export type PlatformRole = 'PLATFORM_ADMIN';
+export type LicensePlan = 'TRIAL' | 'STARTER' | 'TEAM' | 'LEGACY';
+export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED';
+
+export interface License {
+  plan: LicensePlan;
+  status: LicenseStatus;
+  trialStartedAt?: import('firebase/firestore').Timestamp;
+  trialEndsAt?: import('firebase/firestore').Timestamp;
+  subscriptionStartedAt?: import('firebase/firestore').Timestamp;
+  subscriptionEndsAt?: import('firebase/firestore').Timestamp;
+  maxUsers: number;
+  features: Record<string, boolean>;
+  createdAt?: import('firebase/firestore').Timestamp;
+  updatedAt?: import('firebase/firestore').Timestamp;
+  updatedBy?: string;
+}
+
+export interface ResolvedLicenseState {
+  license: License | null;
+  plan: LicensePlan;
+  status: LicenseStatus;
+  canWrite: boolean;
+  isReadOnly: boolean;
+  daysRemaining: number | null;
+  reason: 'trial' | 'active' | 'expired' | 'suspended' | 'legacy' | 'unavailable';
+}
 
 export interface GlobalUserProfile {
   uid: string;

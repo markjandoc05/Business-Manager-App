@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "clean": "next clean"
+    "test:auth": "node --experimental-strip-types --test tests/auth/sign-in-controller.test.mjs",
+    "test:followups": "node --experimental-strip-types --test tests/follow-up-utils.test.mjs",
+    "clean": "next clean",
+    "test:rules": "firebase emulators:exec --only firestore \"node --test tests/firestore/lead-conversion.rules.test.mjs && node --test tests/firestore/workspace-onboarding.rules.test.mjs && node --test tests/firestore/licensing.rules.test.mjs && node --test tests/firestore/deal-task-authorization.rules.test.mjs && node --test tests/firestore/deal-closure.rules.test.mjs && node --test tests/firestore/beta-gate-a.rules.test.mjs && node --test tests/firestore/platform-console-read.rules.test.mjs\"",
+    "test:storage-rules": "firebase emulators:exec --only firestore,storage \"node --test tests/storage/client-documents.rules.test.mjs\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -31,6 +35,7 @@
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/postcss": "4.1.11",
     "@tailwindcss/typography": "^0.5.19",
     "@types/node": "^20",

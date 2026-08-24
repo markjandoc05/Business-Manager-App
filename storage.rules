@@ -6,22 +6,11 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function activeUser() {
-      return signedIn()
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.active == true;
-    }
-
-    function canManageClients() {
-      return activeUser()
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
-    }
-
     function organizationMember(organizationId) {
       return signedIn()
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.status in ['trial', 'active'];
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active';
     }
 
     function organizationCanManageClients(organizationId) {
@@ -29,26 +18,31 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
     }
 
+    function licenseAllowsWrites(organizationId) {
+      return firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseWriteEnabled == true
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseStatus in ['TRIAL', 'ACTIVE']
+        && (!firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.keys().hasAny(['licenseExpiresAt'])
+          || firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseExpiresAt == null
+          || request.time <= firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseExpiresAt);
+    }
+
     match /organizations/{organizationId}/clients/{clientId}/documents/{documentId}/{fileName} {
       allow read: if organizationMember(organizationId)
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId));
       allow write: if organizationCanManageClients(organizationId)
+        && licenseAllowsWrites(organizationId)
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId))
+        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status != 'ARCHIVED'
         && request.resource.size > 0
         && request.resource.size <= 10 * 1024 * 1024
-        && request.resource.contentType != null;
+        && request.resource.contentType in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'image/jpeg', 'image/png'];
       allow delete: if false;
     }
 
+    // Historical unscoped files are retained for administrative migration only.
+    // Browser clients may access documents solely through the organization path above.
     match /clients/{clientId}/documents/{documentId}/{fileName} {
-      allow read: if activeUser();
-
-      allow write: if canManageClients()
-        && request.resource.size > 0
-        && request.resource.size <= 10 * 1024 * 1024
-        && request.resource.contentType != null;
-
-      allow delete: if false;
+      allow read, write: if false;
     }
 
     match /{path=**} {

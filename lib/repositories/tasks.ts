@@ -1,12 +1,18 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, updateDoc, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Task } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
+import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
+import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
+import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 
-export type TaskInput = Pick<Task, 'title' | 'description' | 'dueDate' | 'priority' | 'relatedTo' | 'assignedToUid' | 'assignedToName'>;
+export const TASK_PAGE_SIZE = 25;
+export type TaskListFilters = { status?: Task['status'] | 'All'; priority?: Task['priority'] | 'All'; due?: 'Today' | 'Upcoming' | 'Overdue' | 'All'; type?: Task['type'] | 'All' };
+
+export type TaskInput = Pick<Task, 'title' | 'description' | 'type' | 'dueDate' | 'priority' | 'relatedTo' | 'assignedToUid' | 'assignedToName'>;
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
   if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
@@ -20,6 +26,7 @@ function mapTask(id: string, data: Record<string, unknown>): Task {
     id,
     title: typeof data.title === 'string' ? data.title : '',
     description: typeof data.description === 'string' ? data.description : '',
+    type: data.type === 'Task' ? 'Task' : 'Follow-up',
     dueDate: toIsoDate(data.dueDate),
     status: data.status === 'Completed' ? 'Completed' : 'Pending',
     priority: data.priority === 'High' || data.priority === 'Medium' ? data.priority : 'Low',
@@ -57,6 +64,7 @@ function taskPayload(input: TaskInput) {
   return {
     title: input.title.trim(),
     description: input.description?.trim() || '',
+    type: input.type === 'Task' ? 'Task' : 'Follow-up',
     dueDate: input.dueDate,
     priority: input.priority,
     ...(input.relatedTo ? { relatedTo: input.relatedTo } : {}),
@@ -78,18 +86,43 @@ async function getOrganizationTask(organizationId: string, taskId: string) {
   return mapTask(snapshot.id, snapshot.data());
 }
 
-export async function listTasks(user: AppUser | null, organizationId: string) {
-  await requireActiveUser(user, organizationId);
+function taskFilterConstraints(filters: TaskListFilters = {}): QueryConstraint[] {
+  const constraints: QueryConstraint[] = [];
+  if (filters.status && filters.status !== 'All') constraints.push(where('status', '==', filters.status));
+  if (filters.type && filters.type !== 'All') constraints.push(where('type', '==', filters.type));
+  if (filters.priority && filters.priority !== 'All') constraints.push(where('priority', '==', filters.priority));
+  const now = new Date();
+  if (filters.due === 'Today') {
+    const start = new Date(now); start.setHours(0, 0, 0, 0);
+    const end = new Date(start); end.setDate(end.getDate() + 1);
+    constraints.push(where('dueDate', '>=', start.toISOString()), where('dueDate', '<', end.toISOString()));
+  } else if (filters.due === 'Upcoming') {
+    constraints.push(where('dueDate', '>', now.toISOString()));
+  } else if (filters.due === 'Overdue') {
+    constraints.push(where('dueDate', '<', now.toISOString()));
+  }
+  return constraints;
+}
+
+export async function listTasksPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = TASK_PAGE_SIZE, filters: TaskListFilters = {}): Promise<PageResult<Task>> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
   try {
-    const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
-    return snapshot.docs
+    const tasksCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks');
+    const constraints: QueryConstraint[] = [where('archived', '==', false), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []), ...taskFilterConstraints(filters), orderBy(filters.due && filters.due !== 'All' ? 'dueDate' : 'createdAt', filters.due && filters.due !== 'All' ? 'asc' : 'desc')];
+    const tasksQuery = cursor ? query(tasksCollection, ...constraints, startAfter(cursor), limit(pageSize)) : query(tasksCollection, ...constraints, limit(pageSize));
+    const snapshot = await getDocs(tasksQuery);
+    const items = snapshot.docs
       .map((taskDoc) => mapTask(taskDoc.id, taskDoc.data()))
-      .filter((task) => !task.archived)
-      .sort((left, right) => left.dueDate.localeCompare(right.dueDate));
+      .filter((task) => !task.archived);
+    return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
   } catch (error) {
     reportFirestoreFailure('list', error);
-    throw new Error('Unable to load tasks. Please try again.');
+    throw new Error(firestoreQueryErrorMessage(error, 'Unable to load tasks. Please try again.'));
   }
+}
+
+export async function listTasks(user: AppUser | null, organizationId: string) {
+  return (await listTasksPage(user, organizationId)).items;
 }
 
 export async function createTask(user: AppUser | null, organizationId: string, input: TaskInput) {
@@ -136,7 +169,10 @@ export async function completeTask(user: AppUser | null, organizationId: string,
   await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    const batch = writeBatch(db);
+    batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    if (status === 'Completed') addActivityToBatch(batch, organizationId, user, { type: 'task_completion', description: `Task Completed: ${existingTask.title}`, entityType: 'Task', entityId: taskId });
+    await batch.commit();
   } catch (error) {
     reportFirestoreFailure('complete', error);
     throw new Error('Unable to update the task status. Please try again.');
@@ -155,10 +191,18 @@ export async function archiveTask(user: AppUser | null, organizationId: string, 
   }
 }
 
+export async function listArchivedTasksPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = TASK_PAGE_SIZE): Promise<PageResult<Task>> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const tasksCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks');
+  const constraints = [where('archived', '==', true), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []), orderBy('createdAt', 'desc'), limit(pageSize)] as const;
+  const tasksQuery = cursor ? query(tasksCollection, ...constraints, startAfter(cursor)) : query(tasksCollection, ...constraints);
+  const snapshot = await getDocs(tasksQuery);
+  const items = snapshot.docs.map((taskDoc) => mapTask(taskDoc.id, taskDoc.data())).filter((task) => task.archived);
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
 export async function listArchivedTasks(user: AppUser | null, organizationId: string) {
-  await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
-  return snapshot.docs.map((taskDoc) => mapTask(taskDoc.id, taskDoc.data())).filter((task) => task.archived);
+  return (await listArchivedTasksPage(user, organizationId)).items;
 }
 
 export async function restoreTask(user: AppUser | null, organizationId: string, taskId: string) {

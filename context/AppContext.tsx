@@ -1,24 +1,30 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useState, useEffect, useRef } from 'react';
+import { usePathname } from 'next/navigation';
 import { Lead, Client, Deal, Task, Activity, Settings, DocumentItem, Note } from '../types';
 import { useAuth } from '@/context/AuthContext';
-import { addClientNote, archiveClient as archiveClientRepository, createClient as createClientRepository, listArchivedClients, listClientDocuments, listClientNotes, listClients, permanentlyDeleteClient as permanentlyDeleteClientRepository, restoreClient as restoreClientRepository, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
-import { convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeads, listLeads, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository } from '@/lib/repositories/leads';
-import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDeals, listDeals, permanentlyDeleteDeal as permanentlyDeleteDealRepository, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
-import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasks, listTasks, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository } from '@/lib/repositories/tasks';
+import { addClientNote, archiveClient as archiveClientRepository, createClient as createClientRepository, listArchivedClientsPage, listClientDocumentsPage, listClientNotesPage, listClientsPage, permanentlyDeleteClient as permanentlyDeleteClientRepository, restoreClient as restoreClientRepository, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
+import { archiveLead as archiveLeadRepository, convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeadsPage, listLeadsPage, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository, updateLead as updateLeadRepository, updateLeadStatus as updateLeadStatusRepository, type LeadInput, type LeadListFilters } from '@/lib/repositories/leads';
+import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDealsPage, listDeals, permanentlyDeleteDeal as permanentlyDeleteDealRepository, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
+import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
 import { defaultSettings, loadSettings, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
-import { createActivity, listActivities, type ActivityInput } from '@/lib/repositories/activities';
-import { formatCurrency } from '@/lib/formatting';
+import { invalidateDashboardMetrics } from '@/lib/repositories/dashboard';
+import { listActivities } from '@/lib/repositories/activities';
 import { listAssignableOrganizationUsers, type AssignableUser } from '@/lib/repositories/users';
 import { getDealStatusForStage } from '@/lib/deal-workflow';
 import { useWorkspace } from '@/context/WorkspaceContext';
+import { firestoreQueryErrorMessage, type FirestoreCursor } from '@/lib/repositories/pagination';
+
+type LeadActionInput = Omit<LeadInput, 'assignedToUid' | 'assignedToName'> & Partial<Pick<LeadInput, 'assignedToUid' | 'assignedToName'>>;
 
 interface AppContextType {
   leads: Lead[];
   leadsLoading: boolean;
   leadsError: string | null;
-  refreshLeads: () => Promise<void>;
+  refreshLeads: (filters?: LeadListFilters) => Promise<void>;
+  loadMoreLeads: () => Promise<void>;
+  leadsHasMore: boolean;
   clients: Client[];
   clientsLoading: boolean;
   clientsError: string | null;
@@ -26,7 +32,15 @@ interface AppContextType {
   archivedLeads: Lead[];
   archivedDeals: Deal[];
   archivedTasks: Task[];
+  archivedClientsHasMore: boolean;
+  archivedLeadsHasMore: boolean;
+  archivedDealsHasMore: boolean;
+  archivedTasksHasMore: boolean;
   loadArchivedRecords: () => Promise<void>;
+  loadMoreArchivedLeads: () => Promise<void>;
+  loadMoreArchivedClients: () => Promise<void>;
+  loadMoreArchivedDeals: () => Promise<void>;
+  loadMoreArchivedTasks: () => Promise<void>;
   clientNotes: Note[];
   clientNotesLoading: boolean;
   clientNotesError: string | null;
@@ -35,6 +49,7 @@ interface AppContextType {
   clientDocumentsError: string | null;
   deals: Deal[];
   dealsLoading: boolean;
+  dealsError: string | null;
   tasks: Task[];
   tasksLoading: boolean;
   tasksError: string | null;
@@ -42,16 +57,26 @@ interface AppContextType {
   usersLoading: boolean;
   usersError: string | null;
   activities: Activity[];
+  refreshActivities: () => Promise<void>;
   settings: Settings;
-  addLead: (lead: Omit<Lead, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  addLead: (lead: LeadActionInput) => Promise<void>;
+  updateLead: (leadId: string, lead: LeadActionInput) => Promise<void>;
+  updateLeadStatus: (lead: Lead, status: Lead['status']) => Promise<void>;
+  archiveLead: (leadId: string) => Promise<void>;
   addClient: (client: ClientInput) => Promise<void>;
   updateClient: (clientId: string, client: ClientInput) => Promise<void>;
   archiveClient: (clientId: string) => Promise<void>;
   restoreClient: (clientId: string) => Promise<void>;
   permanentlyDeleteClient: (clientId: string) => Promise<void>;
   refreshClients: () => Promise<void>;
+  loadMoreClients: () => Promise<void>;
+  clientsHasMore: boolean;
   loadClientNotes: (clientId: string) => Promise<void>;
+  loadMoreClientNotes: () => Promise<void>;
+  clientNotesHasMore: boolean;
   loadClientDocuments: (clientId: string) => Promise<void>;
+  loadMoreClientDocuments: () => Promise<void>;
+  clientDocumentsHasMore: boolean;
   addDeal: (deal: Omit<Deal, 'id' | 'createdAt' | 'status'>) => Promise<void>;
   updateDeal: (dealId: string, input: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => Promise<void>;
   addTask: (task: Omit<Task, 'id' | 'status'>) => Promise<void>;
@@ -60,8 +85,11 @@ interface AppContextType {
   archiveTask: (taskId: string) => Promise<void>;
   restoreTask: (taskId: string) => Promise<void>;
   permanentlyDeleteTask: (taskId: string) => Promise<void>;
-  refreshTasks: () => Promise<void>;
+  refreshTasks: (filters?: TaskListFilters) => Promise<void>;
+  loadMoreTasks: () => Promise<void>;
+  tasksHasMore: boolean;
   updateDealStage: (dealId: string, stage: string, status?: Deal['status'], lossReason?: string) => Promise<void>;
+  refreshDeals: () => Promise<void>;
   archiveDeal: (dealId: string) => Promise<void>;
   restoreDeal: (dealId: string) => Promise<void>;
   permanentlyDeleteDeal: (dealId: string) => Promise<void>;
@@ -71,19 +99,37 @@ interface AppContextType {
   addNote: (clientId: string, content: string) => Promise<void>;
   uploadDocument: (clientId: string, file: File) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
+  canWrite: boolean;
+  isReadOnly: boolean;
+  licenseState: ReturnType<typeof import('@/lib/repositories/licenses').resolveLicenseState>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { user, status: authStatus } = useAuth();
-  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
+  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite, isReadOnly, licenseState } = useWorkspace();
+  const pathname = usePathname();
+  const isDashboardRoute = pathname === '/';
+  const isLeadsRoute = pathname.startsWith('/leads');
+  const isClientsRoute = pathname.startsWith('/clients');
+  const isPipelineRoute = pathname.startsWith('/pipeline');
+  const isTasksRoute = pathname.startsWith('/tasks');
+  const loadsAssignees = isLeadsRoute || isClientsRoute || isPipelineRoute || isTasksRoute;
+  const loadsClients = isDashboardRoute || isClientsRoute || isPipelineRoute || isTasksRoute;
+  // Leads and Tasks pages own their filtered queries; related-name views use the shared first page.
+  const loadsLeads = isDashboardRoute || isTasksRoute;
+  const loadsTasks = isDashboardRoute || isPipelineRoute;
+  const loadsDeals = isDashboardRoute || isPipelineRoute || isTasksRoute;
+  const loadsActivities = isDashboardRoute;
   const canLoadBusinessData = authStatus === 'active' && Boolean(user) && !workspaceLoading;
   const canLoadTenantData = canLoadBusinessData && workspaceReady && Boolean(currentOrganizationId);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [leadsOrganizationId, setLeadsOrganizationId] = useState<string | null>(null);
   const [leadsLoading, setLeadsLoading] = useState(true);
   const [leadsError, setLeadsError] = useState<string | null>(null);
+  const [leadsCursor, setLeadsCursor] = useState<FirestoreCursor>(null);
+  const [leadsHasMore, setLeadsHasMore] = useState(false);
   const currentOrganizationRef = useRef(currentOrganizationId);
   const clientNotesRequestRef = useRef(0);
   const clientDocumentsRequestRef = useRef(0);
@@ -93,10 +139,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [dealsOrganizationId, setDealsOrganizationId] = useState<string | null>(null);
   const [dealsLoading, setDealsLoading] = useState(true);
+  const [dealsError, setDealsError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksOrganizationId, setTasksOrganizationId] = useState<string | null>(null);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [tasksError, setTasksError] = useState<string | null>(null);
+  const [tasksCursor, setTasksCursor] = useState<FirestoreCursor>(null);
+  const [tasksHasMore, setTasksHasMore] = useState(false);
+  const leadFiltersRef = useRef<LeadListFilters>({});
+  const taskFiltersRef = useRef<TaskListFilters>({});
+  const leadsRequestRef = useRef(0);
+  const tasksRequestRef = useRef(0);
   const [users, setUsers] = useState<AssignableUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState<string | null>(null);
@@ -104,22 +157,48 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [clientsOrganizationId, setClientsOrganizationId] = useState<string | null>(null);
   const [clientsLoading, setClientsLoading] = useState(true);
   const [clientsError, setClientsError] = useState<string | null>(null);
+  const [clientsCursor, setClientsCursor] = useState<FirestoreCursor>(null);
+  const [clientsHasMore, setClientsHasMore] = useState(false);
   const [archivedClients, setArchivedClients] = useState<Client[]>([]);
   const [archivedLeads, setArchivedLeads] = useState<Lead[]>([]);
   const [archivedDeals, setArchivedDeals] = useState<Deal[]>([]);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [archivedOrganizationId, setArchivedOrganizationId] = useState<string | null>(null);
+  const [archivedLeadsCursor, setArchivedLeadsCursor] = useState<FirestoreCursor>(null);
+  const [archivedClientsCursor, setArchivedClientsCursor] = useState<FirestoreCursor>(null);
+  const [archivedDealsCursor, setArchivedDealsCursor] = useState<FirestoreCursor>(null);
+  const [archivedTasksCursor, setArchivedTasksCursor] = useState<FirestoreCursor>(null);
+  const [archivedLeadsHasMore, setArchivedLeadsHasMore] = useState(false);
+  const [archivedClientsHasMore, setArchivedClientsHasMore] = useState(false);
+  const [archivedDealsHasMore, setArchivedDealsHasMore] = useState(false);
+  const [archivedTasksHasMore, setArchivedTasksHasMore] = useState(false);
   const [clientNotes, setClientNotes] = useState<Note[]>([]);
   const [clientNotesOrganizationId, setClientNotesOrganizationId] = useState<string | null>(null);
   const [clientNotesLoading, setClientNotesLoading] = useState(false);
   const [clientNotesError, setClientNotesError] = useState<string | null>(null);
+  const [clientNotesCursor, setClientNotesCursor] = useState<FirestoreCursor>(null);
+  const [clientNotesHasMore, setClientNotesHasMore] = useState(false);
   const [clientDocuments, setClientDocuments] = useState<DocumentItem[]>([]);
   const [clientDocumentsOrganizationId, setClientDocumentsOrganizationId] = useState<string | null>(null);
   const [clientDocumentsLoading, setClientDocumentsLoading] = useState(false);
   const [clientDocumentsError, setClientDocumentsError] = useState<string | null>(null);
+  const [clientDocumentsCursor, setClientDocumentsCursor] = useState<FirestoreCursor>(null);
+  const [clientDocumentsHasMore, setClientDocumentsHasMore] = useState(false);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activitiesOrganizationId, setActivitiesOrganizationId] = useState<string | null>(null);
+
+  const requireWritableLicense = () => {
+    if (!canWrite) {
+      throw new Error(licenseState.reason === 'suspended'
+        ? 'This workspace is suspended and read-only.'
+        : isReadOnly
+          ? 'This workspace is read-only because the subscription has expired.'
+          : 'Subscription status is still loading. Please try again.');
+    }
+  };
 
   useEffect(() => {
-    if (!canLoadBusinessData || !user) return;
+    if (!canLoadBusinessData || !user || !loadsAssignees) return;
     let cancelled = false;
     const loadUsers = async () => {
       setUsersLoading(true);
@@ -138,7 +217,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     void loadUsers();
     return () => { cancelled = true; };
-  }, [canLoadBusinessData, currentOrganizationId, membership, user]);
+  }, [canLoadBusinessData, currentOrganizationId, loadsAssignees, membership, user]);
 
   const loadClientNotes = useCallback(async (clientId: string) => {
     if (!user) return;
@@ -149,9 +228,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setClientNotes([]);
     try {
       if (!organizationId) return;
-      const loadedNotes = await listClientNotes(user, organizationId, clientId);
+      const loadedNotes = await listClientNotesPage(user, organizationId, clientId);
       if (requestId !== clientNotesRequestRef.current || organizationId !== currentOrganizationRef.current) return;
-      setClientNotes(loadedNotes);
+      setClientNotes(loadedNotes.items);
+      setClientNotesCursor(loadedNotes.nextCursor);
+      setClientNotesHasMore(loadedNotes.hasMore);
       setClientNotesOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load client notes', error);
@@ -170,9 +251,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setClientDocuments([]);
     try {
       if (!organizationId) return;
-      const loadedDocuments = await listClientDocuments(user, organizationId, clientId);
+      const loadedDocuments = await listClientDocumentsPage(user, organizationId, clientId);
       if (requestId !== clientDocumentsRequestRef.current || organizationId !== currentOrganizationRef.current) return;
-      setClientDocuments(loadedDocuments);
+      setClientDocuments(loadedDocuments.items);
+      setClientDocumentsCursor(loadedDocuments.nextCursor);
+      setClientDocumentsHasMore(loadedDocuments.hasMore);
       setClientDocumentsOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load client documents', error);
@@ -182,112 +265,207 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentOrganizationId, user]);
 
+  const loadMoreClientNotes = useCallback(async () => {
+    if (!user || !currentOrganizationId || !clientNotesCursor || clientNotesLoading) return;
+    const clientId = clientNotes[0]?.clientId;
+    if (!clientId) return;
+    const organizationId = currentOrganizationId;
+    setClientNotesLoading(true);
+    try {
+      const page = await listClientNotesPage(user, organizationId, clientId, clientNotesCursor);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setClientNotes((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setClientNotesCursor(page.nextCursor); setClientNotesHasMore(page.hasMore);
+    } finally { if (organizationId === currentOrganizationRef.current) setClientNotesLoading(false); }
+  }, [clientNotes, clientNotesCursor, clientNotesLoading, currentOrganizationId, user]);
+
+  const loadMoreClientDocuments = useCallback(async () => {
+    if (!user || !currentOrganizationId || !clientDocumentsCursor || clientDocumentsLoading) return;
+    const clientId = clientDocuments[0]?.clientId;
+    if (!clientId) return;
+    const organizationId = currentOrganizationId;
+    setClientDocumentsLoading(true);
+    try {
+      const page = await listClientDocumentsPage(user, organizationId, clientId, clientDocumentsCursor);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setClientDocuments((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setClientDocumentsCursor(page.nextCursor); setClientDocumentsHasMore(page.hasMore);
+    } finally { if (organizationId === currentOrganizationRef.current) setClientDocumentsLoading(false); }
+  }, [clientDocuments, clientDocumentsCursor, clientDocumentsLoading, currentOrganizationId, user]);
+
   const refreshClients = useCallback(async () => {
     if (!user || !currentOrganizationId) return;
     const organizationId = currentOrganizationId;
     setClientsLoading(true);
     setClientsError(null);
     try {
-      const loadedClients = await listClients(user, organizationId);
+      const loadedClients = await listClientsPage(user, organizationId);
       if (organizationId !== currentOrganizationRef.current) return;
-      setClients(loadedClients);
+      setClients(loadedClients.items);
+      setClientsCursor(loadedClients.nextCursor);
+      setClientsHasMore(loadedClients.hasMore);
       setClientsOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load shared clients', error);
-      if (organizationId === currentOrganizationRef.current) setClientsError('Unable to load clients. Please check your connection and try again.');
+      if (organizationId === currentOrganizationRef.current) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
     } finally {
       if (organizationId === currentOrganizationRef.current) setClientsLoading(false);
     }
   }, [currentOrganizationId, user]);
 
+
+  const loadMoreClients = useCallback(async () => {
+    if (!user || !currentOrganizationId || !clientsCursor || clientsLoading) return;
+    const organizationId = currentOrganizationId;
+    setClientsLoading(true);
+    try {
+      const page = await listClientsPage(user, organizationId, clientsCursor);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setClients((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setClientsCursor(page.nextCursor);
+      setClientsHasMore(page.hasMore);
+    } finally {
+      if (organizationId === currentOrganizationRef.current) setClientsLoading(false);
+    }
+  }, [clientsCursor, clientsLoading, currentOrganizationId, user]);
+
   useEffect(() => {
-    if (!canLoadTenantData || !user || !currentOrganizationId) return;
+    if (!canLoadTenantData || !user || !currentOrganizationId || !loadsClients) return;
     let cancelled = false;
     const loadClients = async () => {
       setClientsLoading(true);
       setClientsError(null);
       try {
-        const loadedClients = await listClients(user, currentOrganizationId);
+        const loadedClients = await listClientsPage(user, currentOrganizationId, null, isDashboardRoute ? 10 : undefined);
         if (!cancelled) {
-          setClients(loadedClients);
+          setClients(loadedClients.items);
+          setClientsCursor(loadedClients.nextCursor);
+          setClientsHasMore(loadedClients.hasMore);
           setClientsOrganizationId(currentOrganizationId);
         }
       } catch (error) {
         console.error('Unable to load shared clients', error);
-        if (!cancelled) setClientsError('Unable to load clients. Please check your connection and try again.');
+        if (!cancelled) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
       } finally {
         if (!cancelled) setClientsLoading(false);
       }
     };
     void loadClients();
     return () => { cancelled = true; };
-  }, [canLoadTenantData, currentOrganizationId, user]);
+  }, [canLoadTenantData, currentOrganizationId, isDashboardRoute, loadsClients, user]);
 
   useEffect(() => {
-    if (!canLoadBusinessData || !user || !currentOrganizationId) {
+    if (!canLoadBusinessData || !user || !currentOrganizationId || !loadsLeads) {
       return;
     }
     let cancelled = false;
+    const requestId = ++leadsRequestRef.current;
     const loadLeads = async () => {
       setLeads([]);
       setLeadsOrganizationId(null);
       setLeadsLoading(true);
       setLeadsError(null);
       try {
-        const loadedLeads = await listLeads(user, currentOrganizationId);
-        if (!cancelled) {
-          setLeads(loadedLeads);
+        const loadedLeads = await listLeadsPage(user, currentOrganizationId, null, isDashboardRoute ? 5 : undefined);
+        if (!cancelled && requestId === leadsRequestRef.current) {
+          setLeads(loadedLeads.items);
+          setLeadsCursor(loadedLeads.nextCursor);
+          setLeadsHasMore(loadedLeads.hasMore);
           setLeadsOrganizationId(currentOrganizationId);
         }
       } catch (error) {
         console.error('Unable to load shared leads', error);
-        if (!cancelled) setLeadsError('Unable to load leads. Please check your connection and try again.');
+        if (!cancelled && requestId === leadsRequestRef.current) setLeadsError(firestoreQueryErrorMessage(error, 'Unable to load leads. Please check your connection and try again.'));
       } finally {
-        if (!cancelled) setLeadsLoading(false);
+        if (!cancelled && requestId === leadsRequestRef.current) setLeadsLoading(false);
       }
     };
     void loadLeads();
     return () => { cancelled = true; };
-  }, [canLoadBusinessData, currentOrganizationId, user]);
+  }, [canLoadBusinessData, currentOrganizationId, isDashboardRoute, loadsLeads, user]);
 
-  const refreshLeads = useCallback(async () => {
+  const refreshLeads = useCallback(async (filters: LeadListFilters = {}) => {
     if (!user || !currentOrganizationId) return;
+    leadFiltersRef.current = filters;
+    const requestId = ++leadsRequestRef.current;
     const organizationId = currentOrganizationId;
     setLeadsLoading(true);
     setLeadsError(null);
     try {
-      const loadedLeads = await listLeads(user, organizationId);
-      if (organizationId === currentOrganizationRef.current) {
-        setLeads(loadedLeads);
+      const loadedLeads = await listLeadsPage(user, organizationId, null, undefined, filters);
+      if (requestId === leadsRequestRef.current && organizationId === currentOrganizationRef.current) {
+        setLeads(loadedLeads.items);
+        setLeadsCursor(loadedLeads.nextCursor);
+        setLeadsHasMore(loadedLeads.hasMore);
         setLeadsOrganizationId(organizationId);
       }
     } catch (error) {
       console.error('Unable to refresh shared leads', error);
-      if (organizationId === currentOrganizationRef.current) setLeadsError('Unable to load leads. Please check your connection and try again.');
+      if (requestId === leadsRequestRef.current && organizationId === currentOrganizationRef.current) setLeadsError(firestoreQueryErrorMessage(error, 'Unable to load leads. Please check your connection and try again.'));
     } finally {
-      if (organizationId === currentOrganizationRef.current) setLeadsLoading(false);
+      if (requestId === leadsRequestRef.current && organizationId === currentOrganizationRef.current) setLeadsLoading(false);
     }
   }, [currentOrganizationId, user]);
 
-  const refreshTasks = useCallback(async () => {
+
+  const loadMoreLeads = useCallback(async () => {
+    if (!user || !currentOrganizationId || !leadsCursor || leadsLoading) return;
+    const organizationId = currentOrganizationId;
+    setLeadsLoading(true);
+    try {
+      const page = await listLeadsPage(user, organizationId, leadsCursor, undefined, leadFiltersRef.current);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setLeads((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setLeadsCursor(page.nextCursor);
+      setLeadsHasMore(page.hasMore);
+    } finally {
+      if (organizationId === currentOrganizationRef.current) setLeadsLoading(false);
+    }
+  }, [currentOrganizationId, leadsCursor, leadsLoading, user]);
+
+  const refreshTasks = useCallback(async (filters: TaskListFilters = {}) => {
     if (!user || !currentOrganizationId) return;
+    taskFiltersRef.current = filters;
+    const requestId = ++tasksRequestRef.current;
     setTasksLoading(true);
     setTasksError(null);
     try {
-      setTasks(await listTasks(user, currentOrganizationId));
-      setTasksOrganizationId(currentOrganizationId);
+      const loadedTasks = await listTasksPage(user, currentOrganizationId, null, undefined, filters);
+      if (requestId === tasksRequestRef.current) {
+        setTasks(loadedTasks.items);
+        setTasksCursor(loadedTasks.nextCursor);
+        setTasksHasMore(loadedTasks.hasMore);
+        setTasksOrganizationId(currentOrganizationId);
+      }
     } catch (error) {
       console.error('Unable to load shared tasks', error);
-      setTasksError('Unable to load tasks. Please check your connection and try again.');
+      if (requestId === tasksRequestRef.current) setTasksError(firestoreQueryErrorMessage(error, 'Unable to load tasks. Please check your connection and try again.'));
     } finally {
-      setTasksLoading(false);
+      if (requestId === tasksRequestRef.current) setTasksLoading(false);
     }
   }, [currentOrganizationId, user]);
+
+
+  const loadMoreTasks = useCallback(async () => {
+    if (!user || !currentOrganizationId || !tasksCursor || tasksLoading) return;
+    const organizationId = currentOrganizationId;
+    setTasksLoading(true);
+    try {
+      const page = await listTasksPage(user, organizationId, tasksCursor, undefined, taskFiltersRef.current);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setTasks((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setTasksCursor(page.nextCursor);
+      setTasksHasMore(page.hasMore);
+    } finally {
+      if (organizationId === currentOrganizationRef.current) setTasksLoading(false);
+    }
+  }, [currentOrganizationId, tasksCursor, tasksLoading, user]);
 
   const refreshDeals = useCallback(async () => {
     if (!user || !currentOrganizationId) return;
     const organizationId = currentOrganizationId;
     setDealsLoading(true);
+    setDealsError(null);
     try {
       const loadedDeals = await listDeals(user, organizationId);
       if (organizationId === currentOrganizationRef.current) {
@@ -296,8 +474,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (error) {
       console.error('Unable to refresh shared deals', error);
+      if (organizationId === currentOrganizationRef.current) setDealsError(firestoreQueryErrorMessage(error, 'Unable to load deals. Please check your connection and try again.'));
     } finally {
       if (organizationId === currentOrganizationRef.current) setDealsLoading(false);
+    }
+  }, [currentOrganizationId, user]);
+
+  const refreshActivities = useCallback(async () => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    try {
+      const loadedActivities = await listActivities(user, organizationId);
+      if (organizationId === currentOrganizationRef.current) {
+        setActivities(loadedActivities);
+        setActivitiesOrganizationId(organizationId);
+      }
+    } catch (error) {
+      console.error('Unable to refresh activities', error);
     }
   }, [currentOrganizationId, user]);
 
@@ -305,49 +498,93 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!user || !currentOrganizationId) return;
     const organizationId = currentOrganizationId;
     const [loadedClients, loadedLeads, loadedDeals, loadedTasks] = await Promise.all([
-      listArchivedClients(user, organizationId),
-      listArchivedLeads(user, organizationId),
-      listArchivedDeals(user, organizationId),
-      listArchivedTasks(user, organizationId),
+      listArchivedClientsPage(user, organizationId),
+      listArchivedLeadsPage(user, organizationId),
+      listArchivedDealsPage(user, organizationId),
+      listArchivedTasksPage(user, organizationId),
     ]);
     if (organizationId !== currentOrganizationRef.current) return;
-    setArchivedClients(loadedClients);
-    setArchivedLeads(loadedLeads);
-    setArchivedDeals(loadedDeals);
-    setArchivedTasks(loadedTasks);
+    setArchivedClients(loadedClients.items);
+    setArchivedLeads(loadedLeads.items);
+    setArchivedDeals(loadedDeals.items);
+    setArchivedTasks(loadedTasks.items);
+    setArchivedClientsCursor(loadedClients.nextCursor); setArchivedClientsHasMore(loadedClients.hasMore);
+    setArchivedLeadsCursor(loadedLeads.nextCursor); setArchivedLeadsHasMore(loadedLeads.hasMore);
+    setArchivedDealsCursor(loadedDeals.nextCursor); setArchivedDealsHasMore(loadedDeals.hasMore);
+    setArchivedTasksCursor(loadedTasks.nextCursor); setArchivedTasksHasMore(loadedTasks.hasMore);
     setArchivedOrganizationId(organizationId);
   }, [currentOrganizationId, user]);
 
+  const loadMoreArchivedLeads = useCallback(async () => {
+    if (!user || !currentOrganizationId || !archivedLeadsCursor) return;
+    const organizationId = currentOrganizationId;
+    const page = await listArchivedLeadsPage(user, organizationId, archivedLeadsCursor);
+    if (organizationId !== currentOrganizationRef.current) return;
+    setArchivedLeads((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    setArchivedLeadsCursor(page.nextCursor); setArchivedLeadsHasMore(page.hasMore);
+  }, [archivedLeadsCursor, currentOrganizationId, user]);
+
+  const loadMoreArchivedClients = useCallback(async () => {
+    if (!user || !currentOrganizationId || !archivedClientsCursor) return;
+    const organizationId = currentOrganizationId;
+    const page = await listArchivedClientsPage(user, organizationId, archivedClientsCursor);
+    if (organizationId !== currentOrganizationRef.current) return;
+    setArchivedClients((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    setArchivedClientsCursor(page.nextCursor); setArchivedClientsHasMore(page.hasMore);
+  }, [archivedClientsCursor, currentOrganizationId, user]);
+
+  const loadMoreArchivedDeals = useCallback(async () => {
+    if (!user || !currentOrganizationId || !archivedDealsCursor) return;
+    const organizationId = currentOrganizationId;
+    const page = await listArchivedDealsPage(user, organizationId, archivedDealsCursor);
+    if (organizationId !== currentOrganizationRef.current) return;
+    setArchivedDeals((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    setArchivedDealsCursor(page.nextCursor); setArchivedDealsHasMore(page.hasMore);
+  }, [archivedDealsCursor, currentOrganizationId, user]);
+
+  const loadMoreArchivedTasks = useCallback(async () => {
+    if (!user || !currentOrganizationId || !archivedTasksCursor) return;
+    const organizationId = currentOrganizationId;
+    const page = await listArchivedTasksPage(user, organizationId, archivedTasksCursor);
+    if (organizationId !== currentOrganizationRef.current) return;
+    setArchivedTasks((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+    setArchivedTasksCursor(page.nextCursor); setArchivedTasksHasMore(page.hasMore);
+  }, [archivedTasksCursor, currentOrganizationId, user]);
+
   useEffect(() => {
-    if (!canLoadTenantData || !user || !currentOrganizationId) return;
+    if (!canLoadTenantData || !user || !currentOrganizationId || !loadsTasks) return;
     let cancelled = false;
+    const requestId = ++tasksRequestRef.current;
     const loadTasks = async () => {
       setTasksLoading(true);
       setTasksError(null);
       try {
-        const loadedTasks = await listTasks(user, currentOrganizationId);
-        if (!cancelled) {
-          setTasks(loadedTasks);
+        const loadedTasks = await listTasksPage(user, currentOrganizationId, null, isDashboardRoute ? 10 : undefined);
+        if (!cancelled && requestId === tasksRequestRef.current) {
+          setTasks(loadedTasks.items);
+          setTasksCursor(loadedTasks.nextCursor);
+          setTasksHasMore(loadedTasks.hasMore);
           setTasksOrganizationId(currentOrganizationId);
         }
       } catch (error) {
         console.error('Unable to load shared tasks', error);
-        if (!cancelled) setTasksError('Unable to load tasks. Please check your connection and try again.');
+        if (!cancelled && requestId === tasksRequestRef.current) setTasksError(firestoreQueryErrorMessage(error, 'Unable to load tasks. Please check your connection and try again.'));
       } finally {
-        if (!cancelled) setTasksLoading(false);
+        if (!cancelled && requestId === tasksRequestRef.current) setTasksLoading(false);
       }
     };
     void loadTasks();
     return () => { cancelled = true; };
-  }, [canLoadTenantData, currentOrganizationId, user]);
+  }, [canLoadTenantData, currentOrganizationId, isDashboardRoute, loadsTasks, user]);
 
   useEffect(() => {
-    if (!canLoadTenantData || !user || !currentOrganizationId) return;
+    if (!canLoadTenantData || !user || !currentOrganizationId || !loadsDeals) return;
     let cancelled = false;
     const loadDeals = async () => {
       setDealsLoading(true);
+      setDealsError(null);
       try {
-        const loadedDeals = await listDeals(user, currentOrganizationId);
+        const loadedDeals = await listDeals(user, currentOrganizationId, isDashboardRoute ? 10 : undefined);
         if (!cancelled) {
           setDeals(loadedDeals);
           setDealsOrganizationId(currentOrganizationId);
@@ -355,23 +592,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const firebaseError = error as { code?: string; message?: string };
         console.error(`Unable to load shared deals code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`);
+        if (!cancelled) setDealsError(firestoreQueryErrorMessage(error, 'Unable to load deals. Please check your connection and try again.'));
       } finally {
         if (!cancelled) setDealsLoading(false);
       }
     };
     void loadDeals();
     return () => { cancelled = true; };
-  }, [canLoadTenantData, currentOrganizationId, user]);
-
-  const [activities, setActivities] = useState<Activity[]>([]);
-  const [activitiesOrganizationId, setActivitiesOrganizationId] = useState<string | null>(null);
+  }, [canLoadTenantData, currentOrganizationId, isDashboardRoute, loadsDeals, user]);
 
   useEffect(() => {
-    if (!canLoadTenantData || !user || !currentOrganizationId) return;
+    if (!canLoadTenantData || !user || !currentOrganizationId || !loadsActivities) return;
     let cancelled = false;
     const loadActivities = async () => {
       try {
-        const loadedActivities = await listActivities(user, currentOrganizationId);
+        const loadedActivities = await listActivities(user, currentOrganizationId, isDashboardRoute ? 10 : undefined);
         if (!cancelled) {
           setActivities(loadedActivities);
           setActivitiesOrganizationId(currentOrganizationId);
@@ -382,7 +617,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
     void loadActivities();
     return () => { cancelled = true; };
-  }, [canLoadTenantData, currentOrganizationId, user]);
+  }, [canLoadTenantData, currentOrganizationId, loadsActivities, isDashboardRoute, user]);
 
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [settingsOrganizationId, setSettingsOrganizationId] = useState<string | null>(null);
@@ -407,182 +642,232 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const updateSettings = async (newSettings: Partial<Settings>) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await updateSettingsRepository(user, currentOrganizationId, newSettings);
     setSettings(prev => ({ ...prev, ...newSettings }));
     setSettingsOrganizationId(currentOrganizationId);
-    void logActivity('settings_update', 'Business settings updated', 'Settings');
   };
 
-  const logActivity = async (type: Activity['type'], description: string, entityType?: ActivityInput['entityType'], entityId?: string, metadata?: Record<string, unknown>) => {
-    if (!user || !currentOrganizationId) return;
-    try {
-      const newActivity = await createActivity(user, currentOrganizationId, { type, description, entityType, entityId, metadata });
-      setActivities(prev => [newActivity, ...prev]);
-      setActivitiesOrganizationId(currentOrganizationId);
-    } catch (error) {
-      console.error('Unable to persist activity', error);
-    }
-  };
-
-  const addLead = async (leadData: Omit<Lead, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const addLead = async (leadData: LeadActionInput) => {
     if (!user) return;
+    requireWritableLicense();
     if (workspaceLoading) throw new Error('Workspace is still loading. Please wait a moment and try again.');
     if (!workspaceReady || !currentOrganizationId) throw new Error('No active organization is available. Please contact an administrator.');
-    const newLead = await createLeadRepository(user, currentOrganizationId, leadData);
+    const newLead = await createLeadRepository(user, currentOrganizationId, { ...leadData, assignedToUid: leadData.assignedToUid || '', assignedToName: leadData.assignedToName || '' });
+    invalidateDashboardMetrics(currentOrganizationId);
     setLeads(prev => [newLead, ...prev]);
     setLeadsOrganizationId(currentOrganizationId);
-    void logActivity('lead_creation', `Lead added: ${newLead.name} (${newLead.company || 'Independent'})`, 'Lead', newLead.id);
+  };
+
+  const updateLead = async (leadId: string, leadData: LeadActionInput) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await updateLeadRepository(user, currentOrganizationId, leadId, { ...leadData, assignedToUid: leadData.assignedToUid || '', assignedToName: leadData.assignedToName || '' });
+    invalidateDashboardMetrics(currentOrganizationId);
+    setLeads((current) => current.map((lead) => lead.id === leadId ? { ...lead, ...leadData, updatedAt: new Date().toISOString(), updatedBy: user.uid } : lead));
+  };
+
+  const updateLeadStatus = async (lead: Lead, status: Lead['status']) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    if (status === 'Client') {
+      await convertLeadToClient(lead.id);
+      return;
+    }
+    await updateLeadStatusRepository(user, currentOrganizationId, lead, status);
+    invalidateDashboardMetrics(currentOrganizationId);
+    setLeads((current) => current.map((item) => item.id === lead.id ? { ...item, status, updatedAt: new Date().toISOString(), updatedBy: user.uid } : item));
+  };
+
+  const archiveLead = async (leadId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await archiveLeadRepository(user, currentOrganizationId, leadId);
+    invalidateDashboardMetrics(currentOrganizationId);
+    setLeads((current) => current.filter((lead) => lead.id !== leadId));
   };
 
   const addClient = async (clientData: ClientInput) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const newClient = await createClientRepository(user, currentOrganizationId, clientData);
+    invalidateDashboardMetrics(currentOrganizationId);
     setClients(prev => [newClient, ...prev]);
     setClientsOrganizationId(currentOrganizationId);
-    void logActivity('client_creation', `Client added: ${newClient.name}`, 'Client', newClient.id);
   };
 
   const updateClient = async (clientId: string, clientData: ClientInput) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await updateClientRepository(user, currentOrganizationId, clientId, clientData);
+    invalidateDashboardMetrics(currentOrganizationId);
     setClients(prev => prev.map(client => client.id === clientId ? { ...client, ...clientData, updatedAt: new Date().toISOString(), updatedBy: user.uid } : client));
-    void logActivity('client_update', `Client updated: ${clientData.name}`, 'Client', clientId);
   };
 
   const archiveClient = async (clientId: string) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await archiveClientRepository(user, currentOrganizationId, clientId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setClients(prev => prev.map(client => client.id === clientId ? { ...client, status: 'ARCHIVED', updatedAt: new Date().toISOString(), updatedBy: user.uid } : client));
-    void logActivity('client_archive', `Client archived: ${clientId}`, 'Client', clientId);
   };
 
   const restoreClient = async (clientId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await restoreClientRepository(user, currentOrganizationId, clientId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setArchivedClients((prev) => prev.filter((client) => client.id !== clientId));
     await refreshClients();
   };
 
   const permanentlyDeleteClient = async (clientId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await permanentlyDeleteClientRepository(user, currentOrganizationId, clientId);
     setArchivedClients((prev) => prev.filter((client) => client.id !== clientId));
   };
 
   const addDeal = async (dealData: Omit<Deal, 'id' | 'createdAt' | 'status'>) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const newDeal = await createDealRepository(user, currentOrganizationId, dealData);
+    invalidateDashboardMetrics(currentOrganizationId);
     setDeals(prev => [newDeal, ...prev]);
     setDealsOrganizationId(currentOrganizationId);
-    void logActivity('deal_creation', `New deal created: ${newDeal.title} (${formatCurrency(newDeal.value, settings.currency)})`, 'Deal', newDeal.id);
   };
 
   const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => {
     if (!user) return;
+    requireWritableLicense();
     const deal = deals.find((item) => item.id === dealId);
     if (!deal) throw new Error('Deal not found. Please refresh and try again.');
     const nextStatus = getDealStatusForStage(dealData.stage);
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await updateDealRepository(user, currentOrganizationId, deal, { ...dealData, clientId: deal.clientId, leadId: deal.leadId });
+    invalidateDashboardMetrics(currentOrganizationId);
     setDeals(prev => prev.map(item => item.id === dealId ? { ...item, ...dealData, status: nextStatus, lossReason: nextStatus === 'Lost' ? dealData.lossReason : undefined, updatedAt: new Date().toISOString(), updatedBy: user.uid } : item));
-    const activityType = nextStatus === 'Won' ? 'deal_won' : nextStatus === 'Lost' ? 'deal_lost' : deal.stage !== dealData.stage ? 'stage_change' : 'deal_update';
-    void logActivity(activityType, nextStatus === 'Won' ? `Deal "${deal.title}" marked Won` : nextStatus === 'Lost' ? `Deal "${deal.title}" marked Lost` : deal.stage !== dealData.stage ? `Deal "${deal.title}" moved from ${deal.stage} to ${dealData.stage}` : `Deal "${deal.title}" updated`, 'Deal', deal.id, nextStatus === 'Lost' ? { reason: dealData.lossReason } : undefined);
   };
 
   const addTask = async (taskData: Omit<Task, 'id' | 'status'>) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const newTask = await createTaskRepository(user, currentOrganizationId, taskData);
+    invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => [newTask, ...prev]);
     setTasksOrganizationId(currentOrganizationId);
   };
 
   const updateTask = async (taskId: string, taskData: Omit<Task, 'id' | 'status'>) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await updateTaskRepository(user, currentOrganizationId, taskId, taskData);
+    invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...taskData, updatedAt: new Date().toISOString() } : task));
   };
 
   const completeTask = async (taskId: string) => {
     if (!user) return;
+    requireWritableLicense();
     const task = tasks.find(item => item.id === taskId);
     if (!task) return;
     const nextStatus = task.status === 'Pending' ? 'Completed' : 'Pending';
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await completeTaskRepository(user, currentOrganizationId, taskId, nextStatus);
+    invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => prev.map(item => item.id === taskId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
-    if (nextStatus === 'Completed') void logActivity('task_completion', `Task Completed: ${task.title}`, 'Task', task.id);
   };
 
   const archiveTask = async (taskId: string) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await archiveTaskRepository(user, currentOrganizationId, taskId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => prev.filter(task => task.id !== taskId));
   };
 
   const restoreTask = async (taskId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await restoreTaskRepository(user, currentOrganizationId, taskId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setArchivedTasks((prev) => prev.filter((task) => task.id !== taskId));
     await refreshTasks();
   };
 
   const permanentlyDeleteTask = async (taskId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await permanentlyDeleteTaskRepository(user, currentOrganizationId, taskId);
     setArchivedTasks((prev) => prev.filter((task) => task.id !== taskId));
   };
 
   const updateDealStage = async (dealId: string, stage: string, status: Deal['status'] = 'Active', lossReason?: string) => {
     if (!user) return;
+    requireWritableLicense();
     const deal = deals.find((item) => item.id === dealId);
     if (!deal) return;
     const nextStatus = getDealStatusForStage(stage);
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await updateDealStageRepository(user, currentOrganizationId, deal, stage, nextStatus, lossReason);
-    setDeals(prev => prev.map(item => item.id === dealId ? { ...item, stage, status: nextStatus, lossReason: nextStatus === 'Lost' ? lossReason : undefined } : item));
+    invalidateDashboardMetrics(currentOrganizationId);
+    setDeals(prev => prev.map(item => item.id === dealId ? {
+      ...item,
+      stage,
+      status: nextStatus,
+      wonAt: nextStatus === 'Won' ? item.status === 'Won' ? item.wonAt : new Date().toISOString() : undefined,
+      lostAt: nextStatus === 'Lost' ? item.status === 'Lost' ? item.lostAt : new Date().toISOString() : undefined,
+      lossReason: nextStatus === 'Lost' ? lossReason : undefined,
+    } : item));
     if (deal.stage !== stage) {
-      const activityType = nextStatus === 'Won' ? 'deal_won' : nextStatus === 'Lost' ? 'deal_lost' : 'stage_change';
-      void logActivity(activityType, nextStatus === 'Won' ? `Deal "${deal.title}" marked Won` : nextStatus === 'Lost' ? `Deal "${deal.title}" marked Lost` : `Deal "${deal.title}" moved from ${deal.stage} to ${stage}`, 'Deal', deal.id, nextStatus === 'Lost' ? { reason: lossReason } : nextStatus === 'Won' ? { value: deal.value } : undefined);
     }
   };
 
   const archiveDeal = async (dealId: string) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     await archiveDealRepository(user, currentOrganizationId, dealId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setDeals(prev => prev.filter((deal) => deal.id !== dealId));
   };
 
   const restoreDeal = async (dealId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await restoreDealRepository(user, currentOrganizationId, dealId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setArchivedDeals((prev) => prev.filter((deal) => deal.id !== dealId));
     await refreshDeals();
   };
 
   const permanentlyDeleteDeal = async (dealId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await permanentlyDeleteDealRepository(user, currentOrganizationId, dealId);
     setArchivedDeals((prev) => prev.filter((deal) => deal.id !== dealId));
   };
 
   const restoreLead = async (leadId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await restoreLeadRepository(user, currentOrganizationId, leadId);
+    invalidateDashboardMetrics(currentOrganizationId);
     setArchivedLeads((prev) => prev.filter((lead) => lead.id !== leadId));
     await refreshLeads();
   };
 
   const permanentlyDeleteLead = async (leadId: string) => {
     if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
     await permanentlyDeleteLeadRepository(user, currentOrganizationId, leadId);
     setArchivedLeads((prev) => prev.filter((lead) => lead.id !== leadId));
   };
@@ -590,6 +875,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const addNote = async (clientId: string, content: string) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const newNote = await addClientNote(user, currentOrganizationId, clientId, content);
     setClientNotes(prev => [newNote, ...prev]);
@@ -597,22 +883,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const uploadDocument = async (clientId: string, file: File) => {
     if (!user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const newDoc = await uploadClientDocument(user, currentOrganizationId, clientId, file);
     setClientDocuments(prev => [newDoc, ...prev]);
     setClientDocumentsOrganizationId(currentOrganizationId);
-    void logActivity('task_completion', `Document uploaded for client: ${file.name}`, 'Client', clientId);
   };
 
   const convertLeadToClient = async (leadId: string) => {
     const lead = leads.find(l => l.id === leadId);
     if (!lead || !user) return;
+    requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
     const result = await convertLeadRepository(user, currentOrganizationId, lead);
+    invalidateDashboardMetrics(currentOrganizationId);
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'Client', convertedClientId: result.clientId } : l));
     await refreshClients();
-    void logActivity('client_creation', `Client created from lead: ${lead.name}`, 'Client', result.clientId, { sourceLeadId: lead.id });
-    void logActivity('client_conversion', `Converted lead ${lead.name} to Client`, 'Lead', lead.id, { clientId: result.clientId });
   };
 
 
@@ -622,22 +908,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       leadsLoading: canLoadTenantData ? (leadsOrganizationId !== currentOrganizationId || leadsLoading) : false,
       leadsError,
       refreshLeads,
+      loadMoreLeads,
+      leadsHasMore,
       clients: canLoadTenantData && clientsOrganizationId === currentOrganizationId ? clients : [],
       clientsLoading: canLoadTenantData ? (clientsOrganizationId !== currentOrganizationId || clientsLoading) : false,
       clientsError,
+      loadMoreClients,
+      clientsHasMore,
       archivedClients: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedClients : [],
       archivedLeads: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedLeads : [],
       archivedDeals: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedDeals : [],
       archivedTasks: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedTasks : [],
+      archivedClientsHasMore: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedClientsHasMore : false,
+      archivedLeadsHasMore: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedLeadsHasMore : false,
+      archivedDealsHasMore: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedDealsHasMore : false,
+      archivedTasksHasMore: canLoadTenantData && archivedOrganizationId === currentOrganizationId ? archivedTasksHasMore : false,
       loadArchivedRecords,
+      loadMoreArchivedLeads,
+      loadMoreArchivedClients,
+      loadMoreArchivedDeals,
+      loadMoreArchivedTasks,
       clientNotes: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotes : [],
       clientNotesLoading: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotesLoading : false,
       clientNotesError,
+      loadMoreClientNotes,
+      clientNotesHasMore,
       clientDocuments: canLoadTenantData && clientDocumentsOrganizationId === currentOrganizationId ? clientDocuments : [],
       clientDocumentsLoading: canLoadTenantData && clientDocumentsOrganizationId === currentOrganizationId ? clientDocumentsLoading : false,
       clientDocumentsError,
+      loadMoreClientDocuments,
+      clientDocumentsHasMore,
       deals: canLoadTenantData && dealsOrganizationId === currentOrganizationId ? deals : [],
       dealsLoading: canLoadTenantData ? (dealsOrganizationId !== currentOrganizationId || dealsLoading) : false,
+      dealsError,
       tasks: canLoadTenantData && tasksOrganizationId === currentOrganizationId ? tasks : [],
       tasksLoading: canLoadTenantData ? (tasksOrganizationId !== currentOrganizationId || tasksLoading) : false,
       tasksError,
@@ -645,8 +948,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       usersLoading,
       usersError,
       activities: canLoadTenantData && activitiesOrganizationId === currentOrganizationId ? activities : [],
+      refreshActivities,
       settings: canLoadTenantData && settingsOrganizationId === currentOrganizationId ? settings : defaultSettings,
       addLead,
+      updateLead,
+      updateLeadStatus,
+      archiveLead,
       addClient,
       updateClient,
       archiveClient,
@@ -664,7 +971,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       restoreTask,
       permanentlyDeleteTask,
       refreshTasks,
+      loadMoreTasks,
+      tasksHasMore,
       updateDealStage,
+      refreshDeals,
       archiveDeal,
       restoreDeal,
       permanentlyDeleteDeal,
@@ -674,6 +984,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       addNote,
       uploadDocument,
       updateSettings,
+      canWrite,
+      isReadOnly,
+      licenseState,
     }}>
       {children}
     </AppContext.Provider>

@@ -4,16 +4,17 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
-import { Search, Filter, Plus, Mail, Phone, Edit, Archive, RefreshCw, UserPlus, ExternalLink } from 'lucide-react';
+import { Search, Filter, Plus, Mail, Phone, Edit, Archive, RefreshCw, UserPlus, ExternalLink, RotateCcw, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { canManageLeads } from '@/lib/permissions';
-import { archiveLead, createLead, updateLead, updateLeadStatus } from '@/lib/repositories/leads';
+import { getLeadById } from '@/lib/repositories/leads';
 import type { Lead, LeadStatus } from '@/types';
 import { getDefaultAssignment } from '@/lib/ownership';
 import { LeadDetailsModal } from '@/components/LeadDetailsModal';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { useWorkspace } from '@/context/WorkspaceContext';
+import { IconActionButton } from '@/components/IconActionButton';
 
 const statuses: LeadStatus[] = ['New', 'Follow-up', 'Opportunity', 'Lost'];
 
@@ -22,12 +23,12 @@ const emptyForm: LeadForm = { name: '', email: '', phone: '', company: '', sourc
 
 export default function LeadsPage() {
   const { user } = useAuth();
-  const { leads, leadsLoading, leadsError, refreshLeads, convertLeadToClient, users, usersLoading, settings, archivedLeads, loadArchivedRecords, restoreLead, permanentlyDeleteLead } = useApp();
+  const { leads, leadsLoading, leadsError, refreshLeads, loadMoreLeads, leadsHasMore, convertLeadToClient, addLead, updateLead, updateLeadStatus, archiveLead, addTask, users, usersLoading, settings, archivedLeads, loadArchivedRecords, loadMoreArchivedLeads, archivedLeadsHasMore, restoreLead, permanentlyDeleteLead } = useApp();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
-  const canManage = canManageLeads(membership);
-  const canEditLead = (lead: Lead) => canManage || (membership?.role === 'USER' && lead.assignedToUid === user?.uid);
+  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
+  const canManage = canManageLeads(membership) && canWrite;
+  const canEditLead = (lead: Lead) => canWrite && (canManageLeads(membership) || (membership?.role === 'USER' && lead.assignedToUid === user?.uid));
   const loading = leadsLoading;
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
@@ -47,30 +48,50 @@ export default function LeadsPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const openedQueryLeadRef = useRef<string | null>(null);
+  const leadLookupRequestRef = useRef(0);
 
   useEffect(() => {
-    if (leadsLoading) return;
-    const timer = window.setTimeout(() => {
-      const leadId = searchParams.get('leadId');
-      if (!leadId) {
-        openedQueryLeadRef.current = null;
+    const leadId = searchParams.get('leadId');
+    if (!leadId) {
+      const timer = window.setTimeout(() => {
         setShowDetails(false);
-        return;
-      }
-      const lead = leads.find((item) => item.id === leadId);
-      if (!lead) {
-        openedQueryLeadRef.current = null;
-        setShowDetails(false);
-        return;
-      }
-      if (openedQueryLeadRef.current === leadId && showDetails) return;
-      openedQueryLeadRef.current = leadId;
-      setSelectedLead(lead);
-      setShowDetails(true);
+        setSelectedLead(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+    if (!user || !workspaceReady || !currentOrganizationId || leadsLoading) return;
+    const lead = leads.find((item) => item.id === leadId);
+    if (lead) {
+      const timer = window.setTimeout(() => {
+        setSelectedLead(lead);
+        setShowDetails(true);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+
+    let cancelled = false;
+    const requestId = ++leadLookupRequestRef.current;
+    const resetTimer = window.setTimeout(() => {
+      setShowDetails(false);
+      setSelectedLead(null);
     }, 0);
-    return () => window.clearTimeout(timer);
-  }, [leads, leadsLoading, searchParams, showDetails]);
+    void getLeadById(user, currentOrganizationId, leadId)
+      .then((loadedLead) => {
+        if (cancelled || requestId !== leadLookupRequestRef.current) return;
+        setSelectedLead(loadedLead);
+        setShowDetails(true);
+      })
+      .catch((loadError) => {
+        if (cancelled || requestId !== leadLookupRequestRef.current) return;
+        console.error('Unable to open lead', loadError);
+        setActionError('Unable to open this lead. Please try again.');
+        router.replace('/leads', { scroll: false });
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(resetTimer);
+    };
+  }, [currentOrganizationId, leads, leadsLoading, router, searchParams, user, workspaceReady]);
 
   const openCreate = () => {
     if (!user || !workspaceReady || !currentOrganizationId) {
@@ -93,6 +114,11 @@ export default function LeadsPage() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [currentOrganizationId, searchParams, user, workspaceLoading, workspaceReady]);
+
+  useEffect(() => {
+    if (showArchived || !workspaceReady || !currentOrganizationId) return;
+    void refreshLeads({ view: leadView, status: statusFilter, source: sourceFilter });
+  }, [currentOrganizationId, leadView, refreshLeads, showArchived, sourceFilter, statusFilter, workspaceReady]);
 
   const refresh = async () => {
     setActionError(null);
@@ -120,7 +146,7 @@ export default function LeadsPage() {
     if (workspaceLoading) { setActionError('Workspace is still loading. Please wait a moment and try again.'); return; }
     if (!workspaceReady || !currentOrganizationId) { setActionError('No active organization is available. Please contact an administrator.'); return; }
     setSaving(true); setActionError(null);
-    try { await createLead(user, currentOrganizationId, form); await refreshLeads(); setForm({ ...emptyForm, ...getDefaultAssignment(user) }); setShowAddModal(false); }
+    try { await addLead(form); await refreshLeads(); setForm({ ...emptyForm, ...getDefaultAssignment(user) }); setShowAddModal(false); }
     catch (saveError) { console.error('Unable to create lead', saveError); setActionError('Unable to save the lead. Please try again.'); }
     finally { setSaving(false); }
   };
@@ -130,7 +156,7 @@ export default function LeadsPage() {
     if (!user || !currentOrganizationId || !selectedLead || !canEditLead(selectedLead)) return;
     setSaving(true); setActionError(null);
     try {
-      await updateLead(user, currentOrganizationId, selectedLead.id, editForm);
+      await updateLead(selectedLead.id, editForm);
       await refreshLeads();
       setShowEditModal(false);
     } catch (saveError) { console.error('Unable to update lead', saveError); setActionError('Unable to update the lead. Please try again.'); }
@@ -144,10 +170,22 @@ export default function LeadsPage() {
       if (status === 'Client') {
         await convertLeadToClient(lead.id);
       } else {
-        await updateLeadStatus(user, currentOrganizationId, lead, status);
+        await updateLeadStatus(lead, status);
         await refreshLeads();
       }
-    } catch (statusError) { console.error('Unable to update lead status', statusError); setActionError(status === 'Client' ? 'Unable to convert the lead. It may already have been converted.' : 'Unable to update the lead status. Please try again.'); }
+    } catch (statusError) {
+      console.error('Unable to update lead status', statusError);
+      if (status === 'Client') {
+        const code = (statusError as { code?: string }).code;
+        setActionError(code === 'already-converted'
+          ? 'This lead has already been converted to a client.'
+          : code === 'permission-denied'
+            ? 'You do not have permission to convert this lead.'
+            : 'Unable to convert the lead. Please try again.');
+      } else {
+        setActionError('Unable to update the lead status. Please try again.');
+      }
+    }
     finally { setBusyLeadId(null); }
   };
 
@@ -162,7 +200,7 @@ export default function LeadsPage() {
     setActionError(null);
     try {
       if (confirmAction.kind === 'archive') {
-        await archiveLead(user, currentOrganizationId, confirmAction.id);
+        await archiveLead(confirmAction.id);
         await refreshLeads();
       } else if (confirmAction.kind === 'restore') {
         await restoreLead(confirmAction.id);
@@ -185,6 +223,7 @@ export default function LeadsPage() {
   const openDetails = (lead: Lead) => {
     setSelectedLead(lead);
     setShowDetails(true);
+    router.push(`/leads?leadId=${encodeURIComponent(lead.id)}`, { scroll: false });
   };
 
   const closeDetails = () => {
@@ -198,14 +237,15 @@ export default function LeadsPage() {
       <PageHeader title="Leads & Prospects" subtitle="Track potential customers and sales opportunities." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Leads' : 'Archived Leads'}</Button>}{canManage && <Button disabled={!workspaceReady} onClick={openCreate} className="gap-2"><Plus size={18} /> Add Lead</Button>}</>} />
       <Card className="flex flex-col gap-4 p-4 md:flex-row md:items-center"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} /><input type="text" placeholder="Search leads..." className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} /></div><div className="flex flex-wrap gap-2"><select aria-label="Lead view" className="rounded-lg border px-3 py-2 text-sm" value={leadView} onChange={(event) => setLeadView(event.target.value as typeof leadView)}><option>All</option><option>Active</option><option>Converted</option><option>Lost</option></select><Button variant="outline" onClick={() => setShowFilters((current) => !current)} className="gap-2"><Filter size={18} /> Filter</Button><Button variant="outline" onClick={() => void refresh()} disabled={loading} className="gap-2"><RefreshCw size={16} /> Refresh</Button></div>{showFilters && <div className="flex flex-wrap gap-2"><select className="rounded-lg border px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as LeadStatus | 'All')}><option value="All">All statuses</option>{[...statuses, 'Client' as const].map((status) => <option key={status} value={status}>{status}</option>)}</select><select className="rounded-lg border px-3 py-2 text-sm" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="All">All sources</option>{activeSources.map((source) => <option key={source} value={source}>{source}</option>)}</select></div>}</Card>
       <Card className="overflow-hidden p-0">
-        {(!workspaceReady || leadsLoading) ? <p className="p-10 text-center text-sm text-slate-500">{workspaceLoading ? 'Workspace is still loading…' : currentOrganizationId ? 'Loading leads…' : 'No active organization is available for Leads.'}</p> : filteredLeads.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{error ? 'Leads could not be loaded.' : searchTerm || leadView !== 'All' || statusFilter !== 'All' || sourceFilter !== 'All' ? 'No leads match your search or filters.' : 'No leads found.'}</p> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] border-collapse text-left"><thead><tr className="border-b border-slate-200 bg-slate-50"><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Lead Name</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Status</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Company</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Source</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Created</th><th className="px-6 py-4 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{filteredLeads.map((lead) => <tr key={lead.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) openDetails(lead); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-6 py-4"><p className="font-semibold text-slate-900">{lead.name}</p><div className="mt-1 flex items-center gap-3"><span className="flex items-center gap-1 text-xs text-slate-500"><Mail size={12} /> {lead.email}</span><span className="flex items-center gap-1 text-xs text-slate-500"><Phone size={12} /> {lead.phone}</span><span className="text-xs text-slate-400">Assigned: {lead.assignedToName || lead.assignedTo || "Unassigned"}</span></div></td><td className="px-6 py-4">{lead.status === 'Client' ? <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Converted</span> : <select aria-label={`Status for ${lead.name}`} value={lead.status} disabled={!canEditLead(lead) || busyLeadId === lead.id} onChange={(event) => void handleStatusChange(lead, event.target.value as LeadStatus)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select>}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.company || '-'}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.source}</td><td className="px-6 py-4 text-sm text-slate-600">{new Date(lead.createdAt).toLocaleDateString()}</td><td className="px-6 py-4 text-right"><div className="flex justify-end gap-2">{canEditLead(lead) && lead.status !== 'Client' && <Button size="sm" variant="outline" onClick={() => { setSelectedLead(lead); setEditForm({ name: lead.name, email: lead.email, phone: lead.phone, company: lead.company || '', source: lead.source, assignedToUid: lead.assignedToUid || lead.assignedTo || '', assignedToName: lead.assignedToName || lead.assignedTo || '' }); setShowEditModal(true); }} className="gap-1"><Edit size={14} /> Edit</Button>}{canEditLead(lead) && <Button size="sm" variant="outline" disabled={busyLeadId === lead.id} onClick={() => void handleArchive(lead)} className="gap-1 text-red-600"><Archive size={14} /> Archive</Button>}{lead.status === 'Client' && lead.convertedClientId && <Button size="sm" onClick={() => openConvertedClient(lead)} className="gap-1"><ExternalLink size={14} /> View Client</Button>}{lead.status !== 'Client' && canManage && <Button size="sm" onClick={() => void handleStatusChange(lead, 'Client')} className="gap-1"><UserPlus size={14} /> Convert</Button>}</div></td></tr>)}</tbody></table></div>}
+        {(!workspaceReady || leadsLoading) ? <p className="p-10 text-center text-sm text-slate-500">{workspaceLoading ? 'Workspace is still loading…' : currentOrganizationId ? 'Loading leads…' : 'No active organization is available for Leads.'}</p> : filteredLeads.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{error ? 'Leads could not be loaded.' : searchTerm || leadView !== 'All' || statusFilter !== 'All' || sourceFilter !== 'All' ? 'No leads match your search or filters.' : <>No leads yet.<span className="mt-1 block text-xs font-normal text-slate-400">Add your first lead to start tracking prospects.</span></>}</p> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] border-collapse text-left"><thead><tr className="border-b border-slate-200 bg-slate-50"><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Lead Name</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Status</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Company</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Source</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Created</th><th className="px-6 py-4 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{filteredLeads.map((lead) => <tr key={lead.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) openDetails(lead); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-6 py-4"><p className="font-semibold text-slate-900">{lead.name}</p><div className="mt-1 flex items-center gap-3"><span className="flex items-center gap-1 text-xs text-slate-500"><Mail size={12} /> {lead.email}</span><span className="flex items-center gap-1 text-xs text-slate-500"><Phone size={12} /> {lead.phone}</span><span className="text-xs text-slate-400">Assigned: {lead.assignedToName || lead.assignedTo || "Unassigned"}</span></div></td><td className="px-6 py-4">{lead.status === 'Client' ? <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Converted</span> : <select aria-label={`Status for ${lead.name}`} value={lead.status} disabled={!canEditLead(lead) || busyLeadId === lead.id} onChange={(event) => void handleStatusChange(lead, event.target.value as LeadStatus)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select>}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.company || '-'}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.source}</td><td className="px-6 py-4 text-sm text-slate-600">{new Date(lead.createdAt).toLocaleDateString()}</td><td className="px-6 py-4 text-right"><div className="flex justify-end gap-2">{canEditLead(lead) && lead.status !== 'Client' && <IconActionButton icon={<Edit size={15} />} label="Edit Lead" onClick={() => { setSelectedLead(lead); setEditForm({ name: lead.name, email: lead.email, phone: lead.phone, company: lead.company || "", source: lead.source, assignedToUid: lead.assignedToUid || lead.assignedTo || "", assignedToName: lead.assignedToName || "" }); setShowEditModal(true); }} />}{canEditLead(lead) && <IconActionButton icon={<Archive size={15} />} label="Archive Lead" variant="danger" disabled={busyLeadId === lead.id} onClick={() => void handleArchive(lead)} />}{lead.status === 'Client' && lead.convertedClientId && <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => openConvertedClient(lead)} />}{lead.status !== 'Client' && canManage && <IconActionButton icon={<UserPlus size={15} />} label="Convert to Client" variant="success" onClick={() => void handleStatusChange(lead, "Client")} />}</div></td></tr>)}</tbody></table></div>}
       </Card>
-      {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Leads</div>{archivedLeads.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived leads.</p> : <div className="divide-y divide-slate-100">{archivedLeads.map((lead) => <div key={lead.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-sm text-slate-500">{lead.company || lead.email}</p></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setConfirmAction({ kind: 'restore', id: lead.id, name: lead.name })}>Restore</Button>{canManage && <Button size="sm" variant="outline" className="text-red-600" onClick={() => setConfirmAction({ kind: 'delete', id: lead.id, name: lead.name })}>Delete permanently</Button>}</div></div>)}</div>}</Card>}
+      {!showArchived && leadsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreLeads()} disabled={leadsLoading}>{leadsLoading ? 'Loading…' : 'Load More Leads'}</Button></div>}
+      {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Leads</div>{archivedLeads.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived leads.</p> : <div className="divide-y divide-slate-100">{archivedLeads.map((lead) => <div key={lead.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-sm text-slate-500">{lead.company || lead.email}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Lead" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: lead.id, name: lead.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Delete Lead permanently" variant="danger" onClick={() => setConfirmAction({ kind: "delete", id: lead.id, name: lead.name })} />}</div></div>)}</div>}{archivedLeadsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedLeads()}>Load More</Button></div>}</Card>}
       {confirmAction && <ConfirmActionDialog open title={`${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.kind === 'archive' ? 'This lead will be moved to Archived and can be restored later.' : confirmAction.kind === 'restore' ? 'This lead will be restored to the active list.' : 'This action cannot be undone. This archived lead will be permanently deleted.'} confirmLabel={confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={confirmAction.kind === 'delete' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
-      {leadView !== 'Active' && filteredLeads.some((lead) => lead.status === 'Client') && <Card className="p-4"><div className="space-y-2">{filteredLeads.filter((lead) => lead.status === 'Client').map((lead) => <div key={lead.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-xs text-slate-500">{lead.convertedClientId ? 'Converted Client' : 'Converted — Client link unavailable'}</p></div><Button size="sm" onClick={() => openConvertedClient(lead)} disabled={!lead.convertedClientId}>View Client</Button></div>)}</div></Card>}
+      {leadView !== 'Active' && filteredLeads.some((lead) => lead.status === 'Client') && <Card className="p-4"><div className="space-y-2">{filteredLeads.filter((lead) => lead.status === 'Client').map((lead) => <div key={lead.id} className="flex items-center justify-between rounded-lg border border-slate-100 p-3"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-xs text-slate-500">{lead.convertedClientId ? 'Converted Client' : 'Converted — Client link unavailable'}</p></div><IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => openConvertedClient(lead)} disabled={!lead.convertedClientId} /></div>)}</div></Card>}
       {showAddModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><form onSubmit={handleSubmit} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl"><h3 className="text-lg font-bold text-slate-900">Add New Lead</h3><LeadFields form={form} setForm={setForm} users={users} usersLoading={usersLoading} /><div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Lead'}</Button></div></form></div>}
       {showEditModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><form onSubmit={handleEdit} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl"><h3 className="text-lg font-bold text-slate-900">Edit Lead</h3><LeadFields form={editForm} setForm={setEditForm} users={users} usersLoading={usersLoading} /><div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Update Lead'}</Button></div></form></div>}
-      {showDetails && selectedLead && user && currentOrganizationId && <LeadDetailsModal key={selectedLead.id} lead={selectedLead} user={user} organizationId={currentOrganizationId} onClose={closeDetails} />}
+      {showDetails && selectedLead && user && currentOrganizationId && <LeadDetailsModal key={selectedLead.id} lead={selectedLead} user={user} organizationId={currentOrganizationId} canWrite={canWrite} onAddTask={async (task) => { await addTask(task); }} onClose={closeDetails} />}
     </div>
   );
 }

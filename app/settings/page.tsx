@@ -10,6 +10,7 @@ import type { UserRole } from '@/types/auth';
 import { canManageSettings } from '@/lib/permissions';
 import { listOrganizationMembers, updateOrganizationMember, type ManagedOrganizationMember } from '@/lib/repositories/users';
 import { useWorkspace } from '@/context/WorkspaceContext';
+import { DEAL_STAGES } from '@/lib/deal-workflow';
 
 function formatLastLogin(value: unknown) {
   if (!value || typeof value !== 'object' || !('toDate' in value) || typeof value.toDate !== 'function') {
@@ -22,7 +23,7 @@ function formatLastLogin(value: unknown) {
 export default function SettingsPage() {
   const { settings, updateSettings } = useApp();
   const { user } = useAuth();
-  const { currentOrganizationId, membership } = useWorkspace();
+  const { currentOrganizationId, membership, license, licenseState, isReadOnly } = useWorkspace();
   const canManageSystemSettings = canManageSettings(membership);
   const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'users' | 'pipeline' | 'sources' | 'license'>('profile');
   const [managedUsers, setManagedUsers] = useState<ManagedOrganizationMember[]>([]);
@@ -42,7 +43,6 @@ export default function SettingsPage() {
     timezone: settings.timezone || 'UTC'
   });
 
-  const [newStageName, setNewStageName] = useState('');
   const [newSourceName, setNewSourceName] = useState('');
 
   useEffect(() => {
@@ -77,7 +77,12 @@ export default function SettingsPage() {
   };
 
   const updateManagedUser = async (uid: string, changes: Partial<Pick<ManagedOrganizationMember, 'role'>> & { active?: boolean }) => {
-    if (!user || !currentOrganizationId || !canManageSystemSettings || uid === user.uid || updatingUserId) return;
+    if (!user || !currentOrganizationId || !canManageSystemSettings || isReadOnly || uid === user.uid || updatingUserId) return;
+
+    if (changes.active === true && managedUsers.filter((managedUser) => managedUser.status === 'active').length >= (license?.maxUsers || 3)) {
+      setUsersError(`Your current plan supports up to ${license?.maxUsers || 3} active users.`);
+      return;
+    }
 
     setUpdatingUserId(uid);
     setUsersError(null);
@@ -105,27 +110,15 @@ export default function SettingsPage() {
     });
   };
 
-  const addPipelineStage = () => {
-    if (!newStageName.trim()) return;
-    const updated = [...settings.pipelineStages, { name: newStageName.trim(), isActive: true }];
-    updateSettings({ pipelineStages: updated });
-    setNewStageName('');
-  };
-
-  const togglePipelineStage = (index: number) => {
-    const updated = [...settings.pipelineStages];
-    updated[index].isActive = !updated[index].isActive;
-    updateSettings({ pipelineStages: updated });
-  };
-
   const addLeadSource = () => {
-    if (!newSourceName.trim()) return;
+    if (isReadOnly || !newSourceName.trim()) return;
     const updated = [...settings.leadSources, { name: newSourceName.trim(), isActive: true }];
     updateSettings({ leadSources: updated });
     setNewSourceName('');
   };
 
   const toggleLeadSource = (index: number) => {
+    if (isReadOnly) return;
     const updated = [...settings.leadSources];
     updated[index].isActive = !updated[index].isActive;
     updateSettings({ leadSources: updated });
@@ -218,7 +211,7 @@ export default function SettingsPage() {
                   <label className="text-xs font-bold text-slate-500 uppercase">Address</label>
                   <input className="w-full p-2 border rounded-lg" value={profile.address} onChange={e => setProfile({...profile, address: e.target.value})} />
                 </div>
-                <Button type="submit">Save Profile</Button>
+                <Button type="submit" disabled={isReadOnly}>Save Profile</Button>
               </form>
             )}
 
@@ -227,7 +220,7 @@ export default function SettingsPage() {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Accent Color</label>
                   <div className="flex gap-2 items-center">
-                    <input type="color" value={settings.accentColor || '#3b82f6'} onChange={e => updateSettings({ accentColor: e.target.value })} className="w-12 h-10 p-1 border rounded-lg cursor-pointer" />
+                    <input type="color" disabled={isReadOnly} value={settings.accentColor || '#3b82f6'} onChange={e => updateSettings({ accentColor: e.target.value })} className="w-12 h-10 p-1 border rounded-lg cursor-pointer" />
                     <span className="text-sm font-mono">{settings.accentColor || '#3b82f6'}</span>
                   </div>
                 </div>
@@ -239,7 +232,7 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-slate-500">Manage activation and roles for other users.</p></div>
-                  <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading}>Refresh</Button>
+                  <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading || isReadOnly}>Refresh</Button>
                 </div>
                 {usersError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{usersError}</p>}
                 {usersLoading && <p className="py-8 text-center text-sm text-slate-500">Loading users…</p>}
@@ -265,12 +258,12 @@ export default function SettingsPage() {
                               <td className="p-3 font-semibold text-slate-900">{managedUser.name}{isCurrentUser && <span className="ml-2 text-xs font-normal text-slate-400">(you)</span>}</td>
                               <td className="p-3 text-slate-600">{managedUser.email}</td>
                               <td className="p-3">
-                                <select aria-label={`Role for ${managedUser.email}`} value={managedUser.role} disabled={isCurrentUser || isUpdating} onChange={(event) => void updateManagedUser(managedUser.uid, { role: event.target.value as UserRole })} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">
+                                <select aria-label={`Role for ${managedUser.email}`} value={managedUser.role} disabled={isReadOnly || isCurrentUser || isUpdating} onChange={(event) => void updateManagedUser(managedUser.uid, { role: event.target.value as UserRole })} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">
                                   <option value="ADMIN">ADMIN</option><option value="MANAGER">MANAGER</option><option value="USER">USER</option>
                                 </select>
                               </td>
                               <td className="p-3">
-                                <Button size="sm" variant={managedUser.status === 'active' ? 'outline' : 'primary'} disabled={isCurrentUser || isUpdating} onClick={() => void updateManagedUser(managedUser.uid, { active: managedUser.status !== 'active' })}>
+                                <Button size="sm" variant={managedUser.status === 'active' ? 'outline' : 'primary'} disabled={isReadOnly || isCurrentUser || isUpdating} onClick={() => void updateManagedUser(managedUser.uid, { active: managedUser.status !== 'active' })}>
                                   {isUpdating ? 'Saving…' : managedUser.status === 'active' ? 'Deactivate' : 'Activate'}
                                 </Button>
                               </td>
@@ -287,20 +280,14 @@ export default function SettingsPage() {
 
             {activeTab === 'pipeline' && (
               <div className="space-y-4">
-                <div className="flex gap-2">
-                  <input placeholder="New stage name..." className="p-2 border rounded-lg flex-1" value={newStageName} onChange={e => setNewStageName(e.target.value)} />
-                  <Button onClick={addPipelineStage} className="gap-1"><Plus size={16}/> Add Stage</Button>
+                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-800">
+                  BSM uses one standard sales pipeline for every workspace. Pipeline stages are managed by the application and cannot be customized here.
                 </div>
                 <div className="space-y-2">
-                  {settings.pipelineStages.map((stage, idx) => (
-                    <div key={stage.name} className="flex items-center justify-between p-3 border rounded-xl bg-slate-50">
-                      <span className="font-medium">{stage.name}</span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={stage.isActive ? 'green' : 'gray'}>{stage.isActive ? 'Active' : 'Inactive'}</Badge>
-                        <Button size="sm" variant="outline" onClick={() => togglePipelineStage(idx)}>
-                          {stage.isActive ? 'Deactivate' : 'Activate'}
-                        </Button>
-                      </div>
+                  {DEAL_STAGES.map((stage) => (
+                    <div key={stage} className="flex items-center justify-between p-3 border rounded-xl bg-slate-50">
+                      <span className="font-medium">{stage}</span>
+                      <Badge variant="green">Standard</Badge>
                     </div>
                   ))}
                 </div>
@@ -310,8 +297,8 @@ export default function SettingsPage() {
             {activeTab === 'sources' && (
               <div className="space-y-4">
                 <div className="flex gap-2">
-                  <input placeholder="New lead source..." className="p-2 border rounded-lg flex-1" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} />
-                  <Button onClick={addLeadSource} className="gap-1"><Plus size={16}/> Add Source</Button>
+                  <input disabled={isReadOnly} placeholder="New lead source..." className="p-2 border rounded-lg flex-1" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} />
+                  <Button disabled={isReadOnly} onClick={addLeadSource} className="gap-1"><Plus size={16}/> Add Source</Button>
                 </div>
                 <div className="space-y-2">
                   {settings.leadSources.map((source, idx) => (
@@ -319,7 +306,7 @@ export default function SettingsPage() {
                       <span className="font-medium">{source.name}</span>
                       <div className="flex items-center gap-2">
                         <Badge variant={source.isActive ? 'green' : 'gray'}>{source.isActive ? 'Active' : 'Inactive'}</Badge>
-                        <Button size="sm" variant="outline" onClick={() => toggleLeadSource(idx)}>
+                        <Button size="sm" variant="outline" disabled={isReadOnly} onClick={() => toggleLeadSource(idx)}>
                           {source.isActive ? 'Deactivate' : 'Activate'}
                         </Button>
                       </div>
@@ -333,32 +320,32 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Installation ID</label>
-                    <p className="font-mono bg-slate-100 p-2 rounded text-sm">{settings.license?.installationId || 'Not configured'}</p>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Plan</label>
+                    <p className="font-medium bg-slate-100 p-2 rounded text-sm">{licenseState.plan}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">License Status</label>
-                    <div><Badge variant={settings.license?.status === 'Active' ? 'green' : 'red'}>{settings.license?.status || 'Not configured'}</Badge></div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Activation Date</label>
-                    <p className="text-sm">{settings.license?.activationDate ? new Date(settings.license.activationDate).toLocaleDateString() : 'Not configured'}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Expiration Date</label>
-                    <p className="text-sm">{settings.license?.expirationDate ? new Date(settings.license.expirationDate).toLocaleDateString() : 'Not configured'}</p>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Status</label>
+                    <div><Badge variant={licenseState.isReadOnly ? 'red' : 'green'}>{licenseState.status}</Badge></div>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Licensed Domain</label>
-                    <p className="text-sm">{settings.license?.licensedDomain || 'Not configured'}</p>
+                    <label className="text-xs font-bold text-slate-500 uppercase">Expiration</label>
+                    <p className="text-sm">{formatLicenseDate(licenseState.status === 'TRIAL' ? license?.trialEndsAt : license?.subscriptionEndsAt)}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">App Version</label>
-                    <p className="text-sm font-mono">{settings.license?.appVersion || 'Not configured'}</p>
+                    <label className="text-xs font-bold text-slate-500 uppercase">User limit</label>
+                    <p className="text-sm">{license?.maxUsers ?? 'Not configured'}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Days remaining</label>
+                    <p className="text-sm">{licenseState.daysRemaining === null ? 'No expiration set' : licenseState.daysRemaining}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase">Workspace access</label>
+                    <p className="text-sm">{isReadOnly ? 'Read-only' : 'Writable'}</p>
                   </div>
                 </div>
                 <p className="text-xs text-slate-400 pt-2 border-t">License management is restricted to server administration.</p>
@@ -369,4 +356,8 @@ export default function SettingsPage() {
       </div>
     </div>
   );
+}
+
+function formatLicenseDate(value: { toDate: () => Date } | undefined) {
+  return value ? value.toDate().toLocaleDateString() : 'No expiration set';
 }

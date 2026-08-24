@@ -17,6 +17,11 @@ export interface Lead {
   archivedAt?: string;
   archivedBy?: string;
   convertedClientId?: string;
+  nextScheduledActivityAt?: string;
+  nextScheduledActivityType?: LeadActivityType;
+  nextScheduledActivityId?: string;
+  lastActivityAt?: string;
+  lastActivityType?: LeadActivityType;
   createdBy?: string;
   updatedBy?: string;
 }
@@ -57,6 +62,9 @@ export interface DocumentItem {
   mimeType: string;
   size: number | string;
   uploadedAt: string;
+  uploadedByUid?: string;
+  uploadedByName?: string;
+  /** @deprecated Read legacy metadata during the transition only. */
   uploadedBy?: string;
 }
 
@@ -92,6 +100,8 @@ export interface Deal {
   productServiceName?: string;
   notes?: string;
   status: 'Active' | 'Won' | 'Lost';
+  wonAt?: string;
+  lostAt?: string;
   lossReason?: string;
   createdAt: string;
   leadId?: string;
@@ -125,6 +135,7 @@ export interface Task {
   id: string;
   title: string;
   description?: string;
+  type?: 'Task' | 'Follow-up';
   dueDate: string;
   status: 'Pending' | 'Completed';
   priority: 'Low' | 'Medium' | 'High';
@@ -157,7 +168,7 @@ export interface Activity {
   meta?: string;
 }
 
-export type BusinessType = 'Real Estate' | 'Insurance' | 'Agency' | 'Freelancer/Consultant' | 'Small Business' | 'Other';
+export type BusinessType = 'Real Estate' | 'Insurance' | 'Agency' | 'Freelancer/Consultant' | 'Small Business' | 'Solo Entrepreneur' | 'Professional Services' | 'Retail' | 'Other';
 
 export interface CustomField {
   id: string;

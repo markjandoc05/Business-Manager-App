@@ -1,18 +1,21 @@
 export const DEAL_TERMINAL_STAGES = ['Won', 'Lost'] as const;
-export const DEAL_ACTIVE_STAGES = ['Opportunity', 'Proposal', 'Negotiation'] as const;
+export const DEAL_ACTIVE_STAGES = ['New', 'Qualified', 'Proposal', 'Negotiation'] as const;
+export const DEAL_STAGES = [...DEAL_ACTIVE_STAGES, ...DEAL_TERMINAL_STAGES] as const;
+
+export type CanonicalDealStage = typeof DEAL_STAGES[number];
 
 type PipelineStage = { name: string; isActive: boolean };
 
-export function getActiveDealCreationStages(pipelineStages: PipelineStage[]) {
-  return pipelineStages.filter(
-    (stage) => stage.isActive
-      && DEAL_ACTIVE_STAGES.includes(stage.name as typeof DEAL_ACTIVE_STAGES[number])
-      && !DEAL_TERMINAL_STAGES.includes(stage.name as typeof DEAL_TERMINAL_STAGES[number]),
-  );
+export function isCanonicalDealStage(stage: string): stage is CanonicalDealStage {
+  return DEAL_STAGES.includes(stage as CanonicalDealStage);
 }
 
-export function getDefaultDealCreationStage(pipelineStages: PipelineStage[]) {
-  return getActiveDealCreationStages(pipelineStages)[0]?.name ?? '';
+export function getActiveDealCreationStages(_pipelineStages?: PipelineStage[]) {
+  return DEAL_ACTIVE_STAGES.map((name) => ({ name, isActive: true }));
+}
+
+export function getDefaultDealCreationStage(_pipelineStages?: PipelineStage[]) {
+  return 'New';
 }
 
 export function getDealStatusForStage(stage: string): 'Active' | 'Won' | 'Lost' {
@@ -23,7 +26,8 @@ export function getDealStatusForStage(stage: string): 'Active' | 'Won' | 'Lost' 
 
 export function getDealProbability(stage: string): number {
   switch (stage) {
-    case 'Opportunity': return 20;
+    case 'New': return 10;
+    case 'Qualified': return 25;
     case 'Proposal': return 40;
     case 'Negotiation': return 70;
     case 'Won': return 100;

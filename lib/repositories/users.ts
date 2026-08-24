@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, query, updateDoc, where } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, UserRole } from '@/types/auth';
 import { requireOrganizationAccess } from '@/lib/permissions';
@@ -12,7 +12,7 @@ export interface AssignableUser {
 
 export async function listAssignableOrganizationUsers(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId);
-  const snapshot = await getDocs(query(collection(db, 'organizations', organizationId, 'members'), where('status', '==', 'active')));
+  const snapshot = await getDocs(query(collection(db, 'organizations', organizationId, 'members'), where('status', '==', 'active'), limit(500)));
   const members = snapshot.docs.map((memberDoc) => {
     const membership = memberDoc.data();
     const uid = memberDoc.id;
@@ -37,7 +37,7 @@ export interface ManagedOrganizationMember extends AssignableUser {
 
 export async function listOrganizationMembers(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId, ['ADMIN']);
-  const snapshot = await getDocs(collection(db, 'organizations', organizationId, 'members'));
+  const snapshot = await getDocs(query(collection(db, 'organizations', organizationId, 'members'), limit(500)));
   return snapshot.docs.map((memberDoc) => {
     const data = memberDoc.data();
     const role = ['ADMIN', 'MANAGER', 'USER'].includes(data.role as string) ? data.role as UserRole : 'USER';

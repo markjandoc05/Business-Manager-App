@@ -39,7 +39,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const { settings } = useApp();
-  const { membership } = useWorkspace();
+  const { membership, licenseState, isReadOnly } = useWorkspace();
   const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(membership));
 
   const [isDesktop, setIsDesktop] = useState(true);
@@ -179,6 +179,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
             </button>
           </div>
           <div className="mx-auto max-w-7xl min-w-0">
+            {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
+            {isReadOnly && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
             {children}
           </div>
         </main>

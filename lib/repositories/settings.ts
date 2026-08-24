@@ -1,9 +1,11 @@
-import { getDoc, setDoc } from 'firebase/firestore';
+import { getDoc, setDoc, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { BusinessType, Settings } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationDocumentInCollection } from '@/lib/organizations/paths';
+import { DEAL_STAGES } from '@/lib/deal-workflow';
+import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 
 function settingsDocument(organizationId: string) {
   return organizationDocumentInCollection(db, organizationId, 'settings', 'settings');
@@ -21,11 +23,7 @@ export const defaultSettings: Settings = {
   logoUrl: '',
   accentColor: '#3b82f6',
   pipelineStages: [
-    { name: 'Opportunity', isActive: true },
-    { name: 'Proposal', isActive: true },
-    { name: 'Negotiation', isActive: true },
-    { name: 'Won', isActive: true },
-    { name: 'Lost', isActive: true },
+    ...DEAL_STAGES.map((name) => ({ name, isActive: true })),
   ],
   leadSources: [
     { name: 'Website', isActive: true },
@@ -52,7 +50,7 @@ async function requireSettingsManager(user: AppUser | null, organizationId: stri
 }
 
 function isBusinessType(value: unknown): value is BusinessType {
-  return ['Real Estate', 'Insurance', 'Agency', 'Freelancer/Consultant', 'Small Business', 'Other'].includes(value as string);
+  return ['Real Estate', 'Insurance', 'Agency', 'Freelancer/Consultant', 'Small Business', 'Solo Entrepreneur', 'Professional Services', 'Retail', 'Other'].includes(value as string);
 }
 
 function mapSettings(data: Record<string, unknown>): Settings {
@@ -93,7 +91,11 @@ export async function updateSettings(user: AppUser | null, organizationId: strin
   if (Object.keys(persistedChanges).length === 0) return;
 
   try {
-    await setDoc(settingsDocument(organizationId), persistedChanges, { merge: true });
+    if (!user) throw new Error('You must be signed in to update business settings.');
+    const batch = writeBatch(db);
+    batch.set(settingsDocument(organizationId), persistedChanges, { merge: true });
+    addActivityToBatch(batch, organizationId, user, { type: 'settings_update', description: 'Business settings updated', entityType: 'Settings' });
+    await batch.commit();
   } catch (error) {
     console.error('Unable to update Firestore business settings', error);
     throw new Error('Unable to save business settings. Please try again.');

@@ -19,7 +19,7 @@ import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { LeadActivityStatus, LeadActivityType, LeadTimelineEntry, LeadTimelineEntryType } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
-import { organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
+import { organizationDocumentInCollection, organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
 
 export const LEAD_TIMELINE_PAGE_SIZE = 20;
 
@@ -81,6 +81,7 @@ export async function listScheduledLeadActivities(user: AppUser | null, organiza
     const snapshot = await getDocs(query(
       timelineCollection(organizationId, leadId),
       where('activityStatus', '==', 'SCHEDULED'),
+      limit(20),
     ));
     return snapshot.docs
       .map((entryDoc) => mapEntry(leadId, entryDoc.id, entryDoc.data()))
@@ -118,7 +119,29 @@ export async function createLeadTimelineEntry(
       createdByUid: user.uid,
       createdByName: user.name,
     };
-    await writeBatch(db).set(entryRef, data).commit();
+    const leadRef = organizationDocumentInCollection(db, organizationId, 'leads', leadId);
+    const leadSnapshot = await getDoc(leadRef);
+    if (!leadSnapshot.exists()) throw new Error('The lead could not be found.');
+    const leadData = leadSnapshot.data() as Record<string, unknown>;
+    const batch = writeBatch(db);
+    batch.set(entryRef, data);
+    const leadUpdate: Record<string, unknown> = { updatedAt: serverTimestamp(), updatedBy: user.uid };
+    if (input.entryType === 'ACTIVITY' && activityStatus === 'SCHEDULED') {
+      const existingAt = leadData.nextScheduledActivityAt;
+      const existingTime = existingAt && typeof existingAt === 'object' && 'toDate' in existingAt && typeof existingAt.toDate === 'function'
+        ? existingAt.toDate().getTime()
+        : typeof existingAt === 'string' ? Date.parse(existingAt) : Number.NaN;
+      if (!Number.isFinite(existingTime) || input.occurredAt.getTime() < existingTime) {
+        leadUpdate.nextScheduledActivityAt = Timestamp.fromDate(input.occurredAt);
+        leadUpdate.nextScheduledActivityType = input.activityType || 'Other';
+        leadUpdate.nextScheduledActivityId = entryRef.id;
+      }
+    } else if (input.entryType === 'ACTIVITY') {
+      leadUpdate.lastActivityAt = Timestamp.fromDate(input.occurredAt);
+      leadUpdate.lastActivityType = input.activityType || 'Other';
+    }
+    batch.update(leadRef, leadUpdate);
+    await batch.commit();
     const now = new Date().toISOString();
     return mapEntry(leadId, entryRef.id, { ...data, createdAt: now, occurredAt: input.occurredAt.toISOString() });
   } catch (error) {
@@ -142,7 +165,31 @@ export async function completeLeadTimelineActivity(
     if (data.entryType !== 'ACTIVITY') throw new Error('Only activities can be marked complete.');
     if (data.activityStatus === 'COMPLETED') return mapEntry(leadId, entryId, data);
     if (data.activityStatus !== 'SCHEDULED') throw new Error('This activity is not scheduled.');
-    await updateDoc(entryRef, { activityStatus: 'COMPLETED' });
+    const scheduledSnapshot = await getDocs(query(
+      timelineCollection(organizationId, leadId),
+      where('activityStatus', '==', 'SCHEDULED'),
+      limit(20),
+    ));
+    const nextScheduled = scheduledSnapshot.docs
+      .filter((candidate) => candidate.id !== entryId && candidate.data().entryType === 'ACTIVITY')
+      .sort((left, right) => {
+        const leftDate = left.data().occurredAt?.toDate?.()?.getTime?.() || 0;
+        const rightDate = right.data().occurredAt?.toDate?.()?.getTime?.() || 0;
+        return leftDate - rightDate;
+      })[0];
+    const batch = writeBatch(db);
+    batch.update(entryRef, { activityStatus: 'COMPLETED' });
+    const leadRef = organizationDocumentInCollection(db, organizationId, 'leads', leadId);
+    batch.update(leadRef, {
+      nextScheduledActivityAt: nextScheduled ? nextScheduled.data().occurredAt : null,
+      nextScheduledActivityType: nextScheduled ? nextScheduled.data().activityType || 'Other' : null,
+      nextScheduledActivityId: nextScheduled ? nextScheduled.id : null,
+      lastActivityAt: data.occurredAt,
+      lastActivityType: data.activityType || 'Other',
+      updatedAt: serverTimestamp(),
+      updatedBy: user?.uid,
+    });
+    await batch.commit();
     return mapEntry(leadId, entryId, { ...data, activityStatus: 'COMPLETED' });
   } catch (error) {
     if (error instanceof Error && error.message !== 'The timeline activity could not be found.' && error.message !== 'Only activities can be marked complete.' && error.message !== 'This activity is not scheduled.') {

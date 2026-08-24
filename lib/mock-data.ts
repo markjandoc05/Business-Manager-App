@@ -11,8 +11,7 @@ export const mockSettings: Settings = {
   timezone: 'UTC',
   accentColor: '#3b82f6',
   pipelineStages: [
-    { name: 'Lead', isActive: true },
-    { name: 'Contacted', isActive: true },
+    { name: 'New', isActive: true },
     { name: 'Qualified', isActive: true },
     { name: 'Proposal', isActive: true },
     { name: 'Negotiation', isActive: true },
@@ -86,7 +85,7 @@ export const mockDeals: Deal[] = [
     title: 'System Implementation',
     clientId: 'c1',
     value: 10000,
-    stage: 'Opportunity',
+    stage: 'New',
     status: 'Active',
     expectedCloseDate: '2026-09-15',
     createdAt: '2026-08-05T12:00:00Z',

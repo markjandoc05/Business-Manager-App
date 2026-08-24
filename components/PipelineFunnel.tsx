@@ -1,12 +1,12 @@
 import React from 'react';
 import { Card, Badge } from '@/components/ui/core';
 import { formatCurrency } from '@/lib/formatting';
-import { getDealProbability } from '@/lib/deal-workflow';
+import { DEAL_STAGES, getDealProbability } from '@/lib/deal-workflow';
 import type { Deal } from '@/types';
 
-export const PIPELINE_STAGES = ['Opportunity', 'Proposal', 'Negotiation', 'Won', 'Lost'] as const;
+export const PIPELINE_STAGES = DEAL_STAGES;
 
-export function PipelineFunnel({ deals, currency }: { deals: Deal[]; currency: string }) {
+export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[]; currency: string; stageSummary?: Record<string, { count: number; value: number }> }) {
   const stageColors = ['#2563eb', '#3b82f6', '#0f766e', '#d97706', '#b45309'];
 
   return <Card className="h-full overflow-hidden border-slate-200 p-4 sm:p-5">
@@ -20,9 +20,11 @@ export function PipelineFunnel({ deals, currency }: { deals: Deal[]; currency: s
     <div className="mx-auto mt-5 flex w-full max-w-3xl flex-col items-center gap-1.5" aria-label="Pipeline funnel overview">
       {PIPELINE_STAGES.map((stage, index) => {
         const stageDeals = deals.filter((deal) => deal.stage === stage);
-        const totalValue = stageDeals.reduce((sum, deal) => sum + deal.value, 0);
+        const summary = stageSummary?.[stage];
+        const dealCount = summary?.count ?? stageDeals.length;
+        const totalValue = summary?.value ?? stageDeals.reduce((sum, deal) => sum + deal.value, 0);
         const width = `${100 - index * 10}%`;
-        const dealLabel = `${stageDeals.length} ${stageDeals.length === 1 ? 'deal' : 'deals'}`;
+        const dealLabel = `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`;
 
         return <div key={stage} className="flex min-h-[62px] items-center justify-between gap-3 px-4 py-2.5 text-white shadow-sm transition-[width,filter] duration-200 hover:brightness-105 sm:px-6" style={{ width, backgroundColor: stageColors[index], clipPath: 'polygon(3% 0, 97% 0, 94% 100%, 6% 100%)' }}>
           <div className="min-w-0 pl-1 sm:pl-2">

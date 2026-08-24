@@ -1,6 +1,10 @@
-import { collectionGroup, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, collectionGroup, doc, getDoc, getDocs, limit, query, runTransaction, serverTimestamp, Timestamp, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, MembershipStatus, Organization, OrganizationMembership, OrganizationRole, OrganizationStatus } from '@/types/auth';
+import type { BusinessType, Settings } from '@/types';
+import { defaultSettings } from '@/lib/repositories/settings';
+import { DEAL_STAGES } from '@/lib/deal-workflow';
+import { DEFAULT_LICENSE_FEATURES, DEFAULT_TRIAL_DAYS, DEFAULT_TRIAL_MAX_USERS } from '@/lib/licensing/config';
 
 const organizationStatuses: OrganizationStatus[] = ['trial', 'active', 'expired', 'suspended'];
 const membershipStatuses: MembershipStatus[] = ['pending', 'active', 'inactive', 'suspended', 'archived'];
@@ -28,13 +32,135 @@ export async function listUserMemberships(user: AppUser | null) {
   const snapshot = await getDocs(query(
     collectionGroup(db, 'members'),
     where('userId', '==', user.uid),
-    where('status', '==', 'active'),
     where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
+    where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
+    limit(100),
   ));
-  return snapshot.docs.map((membershipDoc) => mapMembership(membershipDoc.data(), membershipDoc.ref.parent.parent?.id || '')).filter((membership): membership is OrganizationMembership => membership !== null && membership.status === 'active');
+  return snapshot.docs.map((membershipDoc) => mapMembership(membershipDoc.data(), membershipDoc.ref.parent.parent?.id || '')).filter((membership): membership is OrganizationMembership => membership !== null);
 }
 
 export async function getOrganization(organizationId: string) {
   const snapshot = await getDoc(doc(db, 'organizations', organizationId));
   return snapshot.exists() ? mapOrganization(snapshot.id, snapshot.data()) : null;
+}
+
+export class WorkspaceSlugError extends Error {
+  code = 'workspace-slug-error' as const;
+  constructor() {
+    super('That workspace name is already in use. Please try another name.');
+    this.name = 'WorkspaceSlugError';
+  }
+}
+
+export class WorkspaceAlreadyExistsError extends Error {
+  code = 'workspace-already-exists' as const;
+  constructor() {
+    super('A workspace already exists for this account.');
+    this.name = 'WorkspaceAlreadyExistsError';
+  }
+}
+
+function normalizeSlug(name: string) {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!slug) throw new WorkspaceSlugError();
+  return slug.slice(0,  sixtyFour);
+}
+
+const sixtyFour = 64;
+const onboardingBusinessTypes: BusinessType[] = ['Solo Entrepreneur', 'Agency', 'Real Estate', 'Professional Services', 'Retail', 'Other'];
+const onboardingCurrencies = ['PHP', 'USD', 'AUD', 'SGD', 'EUR', 'GBP'];
+
+export interface WorkspaceOnboardingInput {
+  name: string;
+  businessType: BusinessType;
+  phone: string;
+  website: string;
+  currency: string;
+  timezone: string;
+}
+
+export async function createWorkspace(user: AppUser, input: WorkspaceOnboardingInput) {
+  const name = input.name.trim();
+  if (!name || !onboardingBusinessTypes.includes(input.businessType) || !onboardingCurrencies.includes(input.currency) || !input.timezone.trim()) {
+    throw new Error('Please complete the required workspace information.');
+  }
+
+  const organizationRef = doc(collection(db, 'organizations'));
+  const baseSlug = normalizeSlug(name);
+  const settingsRef = doc(db, 'organizations', organizationRef.id, 'settings', 'settings');
+  const licenseRef = doc(db, 'organizations', organizationRef.id, 'license', 'current');
+  const membershipRef = doc(db, 'organizations', organizationRef.id, 'members', user.uid);
+  const bootstrapGuardRef = doc(db, 'workspaceBootstrap', user.uid);
+  const timestamp = serverTimestamp();
+  const trialEndsAt = Timestamp.fromMillis(Date.now() + DEFAULT_TRIAL_DAYS * 86_400_000);
+  const pipelineStages: Settings['pipelineStages'] = DEAL_STAGES.map((name) => ({ name, isActive: true }));
+
+  await runTransaction(db, async (transaction) => {
+    const existingGuard = await transaction.get(bootstrapGuardRef);
+    if (existingGuard.exists()) throw new WorkspaceAlreadyExistsError();
+    let slug = baseSlug;
+    let slugRef = doc(db, 'organizationSlugs', slug);
+    for (let suffix = 1; suffix <= 100; suffix += 1) {
+      const snapshot = await transaction.get(slugRef);
+      if (!snapshot.exists()) break;
+      slug = `${baseSlug}-${suffix + 1}`.slice(0, sixtyFour);
+      slugRef = doc(db, 'organizationSlugs', slug);
+      if (suffix === 100) throw new WorkspaceSlugError();
+    }
+
+    transaction.set(organizationRef, {
+      name,
+      slug,
+      businessType: input.businessType,
+      status: 'trial',
+      plan: 'trial',
+      subscriptionStatus: 'trial',
+      maxUsers: DEFAULT_TRIAL_MAX_USERS,
+      licenseStatus: 'TRIAL',
+      licenseWriteEnabled: true,
+      licenseExpiresAt: trialEndsAt,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      createdByUid: user.uid,
+    });
+    transaction.set(slugRef, { organizationId: organizationRef.id, slug, createdAt: timestamp, createdByUid: user.uid });
+    transaction.set(membershipRef, {
+      userId: user.uid,
+      email: user.email,
+      displayName: user.name,
+      role: 'ADMIN',
+      status: 'active',
+      joinedAt: timestamp,
+      activatedAt: timestamp,
+      activatedBy: user.uid,
+    });
+    transaction.set(settingsRef, {
+      businessName: name,
+      businessType: input.businessType,
+      email: user.email,
+      phone: input.phone.trim(),
+      website: input.website.trim(),
+      address: '',
+      currency: input.currency,
+      timezone: input.timezone.trim(),
+      logoUrl: '',
+      accentColor: defaultSettings.accentColor,
+      pipelineStages,
+      leadSources: defaultSettings.leadSources,
+    });
+    transaction.set(licenseRef, {
+      plan: 'TRIAL',
+      status: 'TRIAL',
+      trialStartedAt: timestamp,
+      trialEndsAt,
+      maxUsers: DEFAULT_TRIAL_MAX_USERS,
+      features: DEFAULT_LICENSE_FEATURES,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updatedBy: user.uid,
+    });
+    transaction.set(bootstrapGuardRef, { organizationId: organizationRef.id, createdAt: timestamp, createdByUid: user.uid });
+  });
+
+  return organizationRef.id;
 }

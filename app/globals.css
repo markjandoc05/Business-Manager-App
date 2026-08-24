@@ -63,6 +63,28 @@ main table tbody tr {
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
+main table thead th {
+  height: 2.5rem;
+  padding: 0.625rem 0.75rem;
+  white-space: nowrap;
+}
+
+main table tbody td {
+  padding: 0.7rem 0.75rem;
+}
+
+main table th:last-child,
+main table td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+main table td:last-child > div {
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+}
+
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,

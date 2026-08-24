@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -16,6 +16,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/client';
+import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
 
 type AuthStatus = 'loading' | 'signed-out' | 'active' | 'disabled' | 'error';
@@ -25,6 +26,7 @@ interface AuthContextValue {
   user: AppUser | null;
   status: AuthStatus;
   error: string | null;
+  authenticating: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -96,6 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AppUser | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [error, setError] = useState<string | null>(null);
+  const [authenticating, setAuthenticating] = useState(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
@@ -122,21 +125,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const signInWithGoogle = async () => {
-    setError(null);
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (signInError) {
-      if ((signInError as { code?: string }).code === 'auth/popup-closed-by-user') return;
-      console.error('Google sign-in failed', signInError);
-      setError('Google sign-in failed. Please try again.');
-    }
-  };
+  const signInController = useMemo(() => createSignInController({
+      signInWithPopup: async () => { await signInWithPopup(auth, googleProvider); },
+      hasCurrentUser: () => Boolean(auth.currentUser),
+      setAuthenticating,
+      clearError: () => setError(null),
+      setError,
+      logError: (signInError) => console.error('Google sign-in failed', signInError),
+    }), []);
+
+  const signInWithGoogle = () => signInController.signIn();
 
   const signOut = () => firebaseSignOut(auth);
 
   return (
-    <AuthContext.Provider value={{ firebaseUser, user, status, error, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ firebaseUser, user, status, error, authenticating, signInWithGoogle, signOut }}>
       {children}
     </AuthContext.Provider>
   );

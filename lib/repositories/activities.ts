@@ -1,9 +1,12 @@
-import { addDoc, getDocs, serverTimestamp } from 'firebase/firestore';
+import { getDocs, limit, orderBy, query, startAfter } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Activity } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
+import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
+
+export const ACTIVITY_PAGE_SIZE = 25;
 
 export type ActivityInput = Pick<Activity, 'type' | 'description' | 'entityType' | 'entityId' | 'metadata'> & {
 };
@@ -39,34 +42,22 @@ async function requireActiveUser(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId);
 }
 
-export async function listActivities(user: AppUser | null, organizationId: string) {
+export async function listActivitiesPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = ACTIVITY_PAGE_SIZE): Promise<PageResult<Activity>> {
   await requireActiveUser(user, organizationId);
   try {
-    const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'));
-    return snapshot.docs.map((activityDoc) => mapActivity(activityDoc.id, activityDoc.data())).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const activitiesCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'activities');
+    const activitiesQuery = cursor
+      ? query(activitiesCollection, orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
+      : query(activitiesCollection, orderBy('createdAt', 'desc'), limit(pageSize));
+    const snapshot = await getDocs(activitiesQuery);
+    const items = snapshot.docs.map((activityDoc) => mapActivity(activityDoc.id, activityDoc.data()));
+    return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
   } catch (error) {
     console.error('Unable to load Firestore activities', error);
     throw new Error('Unable to load activity history. Please try again.');
   }
 }
 
-export async function createActivity(user: AppUser | null, organizationId: string, input: ActivityInput) {
-  await requireActiveUser(user, organizationId);
-  if (!user) throw new Error('You must be signed in to create an activity.');
-  try {
-    const activityRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'), {
-      type: input.type,
-      description: input.description,
-      ...(input.entityType ? { entityType: input.entityType } : {}),
-      ...(input.entityId ? { entityId: input.entityId } : {}),
-      ...(input.metadata ? { metadata: input.metadata } : {}),
-      createdAt: serverTimestamp(),
-      createdBy: user.uid,
-    });
-    const now = new Date().toISOString();
-    return mapActivity(activityRef.id, { ...input, createdAt: now, createdBy: user.uid });
-  } catch (error) {
-    console.error('Unable to create Firestore activity', error);
-    throw new Error('Unable to save activity history. Please try again.');
-  }
+export async function listActivities(user: AppUser | null, organizationId: string, pageSize = ACTIVITY_PAGE_SIZE) {
+  return (await listActivitiesPage(user, organizationId, null, pageSize)).items;
 }

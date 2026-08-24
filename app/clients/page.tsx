@@ -18,7 +18,8 @@ import {
   ArrowLeft, 
   UserCheck, 
   Edit,
-  Briefcase
+  Briefcase,
+  ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/context/AuthContext';
@@ -29,8 +30,11 @@ import { getActiveDealCreationStages, getDealProbability, getDefaultDealCreation
 import { DealDetailsModal } from '@/components/DealDetailsModal';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { TaskCard } from '@/components/TaskCard';
-import { getNextFollowUp, sortOpenTasks } from '@/lib/task-utils';
+import { formatCompactDateTime, getNextFollowUp, sortOpenTasks } from '@/lib/task-utils';
 import { getDefaultAssignment } from '@/lib/ownership';
+import { IconActionButton } from '@/components/IconActionButton';
+import { Download, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
+import type { ChangeEvent } from 'react';
 function currentDateTimeValue() {
   const date = new Date();
   const offset = date.getTimezoneOffset();
@@ -48,6 +52,14 @@ function isValidDate(value: string) {
   return Number.isFinite(Date.parse(value));
 }
 
+function formatDocumentSize(value: number | string) {
+  const size = Number(value);
+  if (!Number.isFinite(size) || size < 0) return 'Unknown size';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function ClientsPage() {
   const searchParams = useSearchParams();
   const { 
@@ -60,11 +72,26 @@ export default function ClientsPage() {
     clientNotesLoading,
     clientNotesError,
     loadClientNotes,
+    loadMoreClientNotes,
+    clientNotesHasMore,
+    clientDocuments,
+    clientDocumentsLoading,
+    clientDocumentsError,
+    loadClientDocuments,
+    loadMoreClientDocuments,
+    clientDocumentsHasMore,
+    uploadDocument,
     refreshClients,
+    loadMoreClients,
+    clientsHasMore,
     deals, 
     leads,
     tasks, 
     activities, 
+    refreshActivities,
+    refreshDeals,
+    refreshLeads,
+    refreshTasks,
     settings, 
     addDeal, 
     updateDeal,
@@ -76,24 +103,29 @@ export default function ClientsPage() {
     archiveClient: archiveClientInApp,
     archivedClients,
     loadArchivedRecords,
+    loadMoreArchivedClients,
+    archivedClientsHasMore,
     restoreClient,
     permanentlyDeleteClient,
   } = useApp();
   const { user } = useAuth();
-  const { currentOrganizationId, membership } = useWorkspace();
-  const canManage = canManageClients(membership);
-  const canManageDeal = canManageDeals(membership);
-  const canManageTask = canManageTasks(membership);
+  const { currentOrganizationId, membership, canWrite } = useWorkspace();
+  const canManage = canManageClients(membership) && canWrite;
+  const canManageDeal = canManageDeals(membership) && canWrite;
+  const canManageTask = canManageTasks(membership) && canWrite;
   const [actionError, setActionError] = useState<string | null>(null);
   const [savingClient, setSavingClient] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const notesLoadedForClientRef = useRef<string | null>(null);
+  const documentsLoadedForClientRef = useRef<string | null>(null);
+  const activitiesLoadedForOrganizationRef = useRef<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => searchParams.get('clientId'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes' | 'documents'>('overview');
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
@@ -102,6 +134,7 @@ export default function ClientsPage() {
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
+  const [documentSaving, setDocumentSaving] = useState(false);
 
   // Form states
   const [clientForm, setClientForm] = useState({ name: '', email: '', phone: '', company: '', assignedToUid: '', assignedToName: '' });
@@ -141,7 +174,7 @@ export default function ClientsPage() {
         setClientForm({ name: '', email: '', phone: '', company: '', ...getDefaultAssignment(user) });
         setShowAddModal(true);
       }
-      if (queryTab === 'tasks' || queryTab === 'deals' || queryTab === 'activity' || queryTab === 'notes' || queryTab === 'overview') {
+      if (queryTab === 'tasks' || queryTab === 'deals' || queryTab === 'activity' || queryTab === 'notes' || queryTab === 'documents' || queryTab === 'overview') {
         setActiveTab(queryTab);
       }
     }, 0);
@@ -149,27 +182,75 @@ export default function ClientsPage() {
   }, [searchParams, user]);
 
   useEffect(() => {
-    if (selectedClientId) {
+    if (!selectedClientId) {
+      notesLoadedForClientRef.current = null;
+      return;
+    }
+    if (activeTab === 'notes' && notesLoadedForClientRef.current !== selectedClientId) {
+      notesLoadedForClientRef.current = selectedClientId;
       void loadClientNotes(selectedClientId);
     }
-  }, [loadClientNotes, selectedClientId]);
+  }, [activeTab, loadClientNotes, selectedClientId]);
+
+  useEffect(() => {
+    if (clientNotesError) notesLoadedForClientRef.current = null;
+  }, [clientNotesError]);
+
+  useEffect(() => {
+    if (!selectedClientId) return;
+    void Promise.all([refreshDeals(), refreshTasks(), refreshLeads()]);
+  }, [refreshDeals, refreshLeads, refreshTasks, selectedClientId]);
+
+  useEffect(() => {
+    if (!selectedClientId || activeTab !== 'activity' || !currentOrganizationId) return;
+    if (activitiesLoadedForOrganizationRef.current === currentOrganizationId) return;
+    activitiesLoadedForOrganizationRef.current = currentOrganizationId;
+    void refreshActivities();
+  }, [activeTab, currentOrganizationId, refreshActivities, selectedClientId]);
+
+  useEffect(() => {
+    if (!selectedClientId) {
+      documentsLoadedForClientRef.current = null;
+      return;
+    }
+    if (activeTab === 'documents' && documentsLoadedForClientRef.current !== selectedClientId) {
+      documentsLoadedForClientRef.current = selectedClientId;
+      void loadClientDocuments(selectedClientId);
+    }
+  }, [activeTab, loadClientDocuments, selectedClientId]);
+
+  useEffect(() => {
+    if (clientDocumentsError) documentsLoadedForClientRef.current = null;
+  }, [clientDocumentsError]);
+
+  const handleDocumentUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedClientId || documentSaving) return;
+    setDocumentSaving(true);
+    setActionError(null);
+    try {
+      await uploadDocument(selectedClientId, file);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to upload the document. Please try again.');
+    } finally {
+      setDocumentSaving(false);
+    }
+  };
 
   const clientDeals = selectedClientId ? deals.filter(d => d.clientId === selectedClientId) : [];
   const selectedDeal = selectedDealId ? deals.find((deal) => deal.id === selectedDealId) : undefined;
   const activeDealsCount = clientDeals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length;
   const totalSalesValue = clientDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
-  const activePipelineDeals = clientDeals.filter((deal) => ['Opportunity', 'Proposal', 'Negotiation'].includes(deal.stage));
+  const activePipelineDeals = clientDeals.filter((deal) => ['New', 'Qualified', 'Proposal', 'Negotiation'].includes(deal.stage));
   const activePipelineValue = activePipelineDeals.reduce((sum, deal) => sum + deal.value, 0);
   const weightedForecast = activePipelineDeals.reduce((sum, deal) => sum + deal.value * getDealProbability(deal.stage) / 100, 0);
   const wonValue = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
 
   // Next follow up task
   const clientTasks = selectedClientId ? tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId && t.status === 'Pending') : [];
-  const validPendingTasks = [...clientTasks].filter((task) => isValidDate(task.dueDate));
-  const upcomingTasks = validPendingTasks.filter((task) => Date.parse(task.dueDate) > currentTime).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
-  const overdueTasks = validPendingTasks.filter((task) => Date.parse(task.dueDate) <= currentTime).sort((a, b) => Date.parse(b.dueDate) - Date.parse(a.dueDate));
-  const nextTask = upcomingTasks[0] || overdueTasks[0];
-  const nextFollowUp = nextTask ? `${upcomingTasks.length ? '' : 'Overdue: '}${new Date(nextTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
+  const nextTask = getNextFollowUp(clientTasks, currentTime);
+  const nextFollowUp = nextTask ? `${Date.parse(nextTask.dueDate) <= currentTime ? 'Overdue: ' : ''}${new Date(nextTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
 
   const visibleClients = clients.filter(client => client.status !== 'ARCHIVED');
   const filteredClients = visibleClients.filter(client => 
@@ -285,6 +366,7 @@ export default function ClientsPage() {
       await addTask({
         title: taskForm.title,
         description: taskForm.description,
+        type: 'Follow-up',
         dueDate: taskForm.dueDate,
         priority: taskForm.priority,
         relatedTo: { type: 'Client', id: selectedClientId }
@@ -388,6 +470,7 @@ export default function ClientsPage() {
               { id: 'tasks', label: `Tasks (${clientTasks.length})` },
               { id: 'activity', label: 'Activity Log' },
               { id: 'notes', label: `Notes (${clientNotes.length})` },
+              { id: 'documents', label: `Documents (${clientDocuments.length})` },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -520,7 +603,24 @@ export default function ClientsPage() {
                       </div>
                     </div>
                   ))}
+                  {!clientNotesLoading && clientNotesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientNotes()} disabled={clientNotesLoading}>Load More</Button></div>}
                 </div>
+              </Card>
+            )}
+
+            {activeTab === 'documents' && (
+              <Card className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900">Client Documents</h3>
+                    <p className="text-xs text-slate-500">Secure files stored for this client.</p>
+                  </div>
+                  {canManage && !selectedClient.archived && <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 ${documentSaving ? 'pointer-events-none opacity-60' : ''}`}>
+                    <Upload size={14} /> {documentSaving ? 'Uploading…' : 'Upload document'}
+                    <input type="file" className="sr-only" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png" disabled={documentSaving} onChange={(event) => void handleDocumentUpload(event)} />
+                  </label>}
+                </div>
+                {clientDocumentsLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading documents…</p> : clientDocumentsError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{clientDocumentsError}</p> : clientDocuments.length === 0 ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">No documents uploaded yet.</p> : <><div className="divide-y divide-slate-100 rounded-lg border border-slate-200">{clientDocuments.map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-slate-400" /><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{document.name}</p><p className="text-xs text-slate-500">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)} · {document.uploadedByName || document.uploadedBy || 'Unknown user'}</p></div></div>{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}</div>)}</div>{clientDocumentsHasMore && <div className="pt-2 text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientDocuments()} disabled={clientDocumentsLoading}>Load More</Button></div>}</>}
               </Card>
             )}
 
@@ -546,11 +646,11 @@ export default function ClientsPage() {
             <Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>
           </Card>
 
-          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setConfirmAction({ kind: 'restore', id: client.id, name: client.name })}>Restore</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => setConfirmAction({ kind: 'delete', id: client.id, name: client.name })}>Delete permanently</Button></div></div>)}</div>}</Card>}
+          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Client permanently" variant="danger" onClick={() => setConfirmAction({ kind: "delete", id: client.id, name: client.name })} /></div></div>)}</div>}{archivedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedClients()}>Load More</Button></div>}</Card>}
 
           {/* Client Table */}
           <Card className="p-0 overflow-hidden">
-            {clientsLoading ? <p className="p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClients.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : 'No active clients found.'}</p> : <div className="overflow-x-auto">
+            {clientsLoading ? <p className="p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClients.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-slate-400">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
@@ -571,10 +671,9 @@ export default function ClientsPage() {
                     const totalSales = cDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
 
                     // Next task
-                    const cTasks = tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === client.id && t.status === 'Pending' && isValidDate(t.dueDate));
-                    const upcoming = cTasks.filter((task) => Date.parse(task.dueDate) > currentTime).sort((a, b) => Date.parse(a.dueDate) - Date.parse(b.dueDate));
-                    const overdue = cTasks.filter((task) => Date.parse(task.dueDate) <= currentTime).sort((a, b) => Date.parse(b.dueDate) - Date.parse(a.dueDate));
-                    const nextFU = upcoming[0]?.dueDate ? `Scheduled for ${new Date(upcoming[0].dueDate).toLocaleString()}` : overdue[0]?.dueDate ? `Overdue: Due ${new Date(overdue[0].dueDate).toLocaleString()}` : 'No pending follow-ups';
+                    const cTasks = tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === client.id && t.status === 'Pending');
+                    const nextClientTask = getNextFollowUp(cTasks, currentTime);
+                    const nextFU = nextClientTask ? `${Date.parse(nextClientTask.dueDate) <= currentTime ? 'Overdue: Due ' : 'Scheduled for '}${new Date(nextClientTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
 
                     return (
                       <tr key={client.id} className="hover:bg-slate-50 transition-colors">
@@ -595,9 +694,7 @@ export default function ClientsPage() {
                         <td className="px-6 py-4 text-sm font-bold text-green-600">{formatCurrency(totalSales, settings.currency)}</td>
                         <td className="px-6 py-4 text-xs text-slate-500">{nextFU}</td>
                         <td className="px-6 py-4 text-right">
-                          <Button size="sm" variant="outline" onClick={() => setSelectedClientId(client.id)}>
-                            View
-                          </Button>
+                          <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => setSelectedClientId(client.id)} />
                         </td>
                       </tr>
                     );
@@ -606,6 +703,7 @@ export default function ClientsPage() {
               </table>
             </div>}
           </Card>
+          {!showArchived && clientsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreClients()} disabled={clientsLoading}>{clientsLoading ? 'Loading…' : 'Load More Clients'}</Button></div>}
         </div>
       )}
 
@@ -671,7 +769,7 @@ export default function ClientsPage() {
           </div>
         )}
 
-        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid)} canAssign={canManage} saving={savingClient} tasks={tasks} canAddTask={canManageTasks(membership)} onAddTask={addTask} onCompleteTask={completeTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingClient(true); try { await updateDeal(selectedDeal.id, input); } finally { setSavingClient(false); } }} />}
+        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingClient} tasks={tasks} canAddTask={canManageTask} onAddTask={addTask} onCompleteTask={completeTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingClient(true); try { await updateDeal(selectedDeal.id, input); } finally { setSavingClient(false); } }} />}
 
         {showEditModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

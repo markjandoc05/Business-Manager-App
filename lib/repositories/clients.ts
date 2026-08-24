@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { deleteObject, getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
@@ -6,6 +6,10 @@ import type { Client, DocumentItem, Note } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection, organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
+import { addActivityToBatch } from '@/lib/repositories/activityEvents';
+import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
+
+export const CLIENT_PAGE_SIZE = 25;
 
 export type ClientInput = Pick<Client, 'name' | 'company' | 'email' | 'phone' | 'assignedToUid' | 'assignedToName'>;
 
@@ -47,13 +51,21 @@ async function requireClientManager(user: AppUser | null, organizationId: string
   await requireOrganizationAccess(user, organizationId, ['ADMIN', 'MANAGER']);
 }
 
-export async function listClients(user: AppUser | null, organizationId: string) {
+export async function listClientsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = CLIENT_PAGE_SIZE): Promise<PageResult<Client>> {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
-  return snapshot.docs
+  const clientsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'clients');
+  const clientsQuery = cursor
+    ? query(clientsCollection, where('archived', '==', false), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
+    : query(clientsCollection, where('archived', '==', false), orderBy('createdAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(clientsQuery);
+  const items = snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
-    .filter((client) => !client.archived)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    .filter((client) => !client.archived);
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
+export async function listClients(user: AppUser | null, organizationId: string) {
+  return (await listClientsPage(user, organizationId)).items;
 }
 
 export async function createClient(user: AppUser | null, organizationId: string, input: ClientInput) {
@@ -61,7 +73,8 @@ export async function createClient(user: AppUser | null, organizationId: string,
   if (!user) throw new Error('You must be signed in to create a client.');
 
   const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
-  const clientRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'), {
+  const clientRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
+  const clientData = {
     ...input,
     company: input.company || '',
     ...assignment,
@@ -71,7 +84,11 @@ export async function createClient(user: AppUser | null, organizationId: string,
     createdBy: user.uid,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
-  });
+  };
+  const batch = writeBatch(db);
+  batch.set(clientRef, clientData);
+  addActivityToBatch(batch, organizationId, user, { type: 'client_creation', description: `Client added: ${input.name}`, entityType: 'Client', entityId: clientRef.id });
+  await batch.commit();
 
   return mapClient(clientRef.id, { ...input, ...assignment, status: 'ACTIVE', archived: false, createdAt: new Date().toISOString(), createdBy: user.uid, updatedAt: new Date().toISOString(), updatedBy: user.uid });
 }
@@ -80,7 +97,8 @@ export async function updateClient(user: AppUser | null, organizationId: string,
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to update a client.');
 
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
     ...input,
     company: input.company || '',
     assignedToUid: input.assignedToUid || '',
@@ -88,13 +106,16 @@ export async function updateClient(user: AppUser | null, organizationId: string,
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
   });
+  addActivityToBatch(batch, organizationId, user, { type: 'client_update', description: `Client updated: ${input.name}`, entityType: 'Client', entityId: clientId });
+  await batch.commit();
 }
 
 export async function archiveClient(user: AppUser | null, organizationId: string, clientId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a client.');
 
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
     status: 'ARCHIVED',
     archived: true,
     archivedAt: serverTimestamp(),
@@ -102,12 +123,23 @@ export async function archiveClient(user: AppUser | null, organizationId: string
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
   });
+  addActivityToBatch(batch, organizationId, user, { type: 'client_archive', description: `Client archived: ${clientId}`, entityType: 'Client', entityId: clientId });
+  await batch.commit();
+}
+
+export async function listArchivedClientsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = CLIENT_PAGE_SIZE): Promise<PageResult<Client>> {
+  await requireActiveUser(user, organizationId);
+  const clientsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'clients');
+  const clientsQuery = cursor
+    ? query(clientsCollection, where('archived', '==', true), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
+    : query(clientsCollection, where('archived', '==', true), orderBy('createdAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(clientsQuery);
+  const items = snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.archived);
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
 export async function listArchivedClients(user: AppUser | null, organizationId: string) {
-  await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'clients'));
-  return snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.archived);
+  return (await listArchivedClientsPage(user, organizationId)).items;
 }
 
 export async function restoreClient(user: AppUser | null, organizationId: string, clientId: string) {
@@ -123,10 +155,10 @@ export async function permanentlyDeleteClient(user: AppUser | null, organization
   const snapshot = await getDoc(clientRef);
   if (!snapshot.exists() || !(snapshot.data().archived === true || snapshot.data().status === 'ARCHIVED')) throw new Error('Only archived clients can be permanently deleted.');
   const [deals, tasks, notes, activities] = await Promise.all([
-    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals')),
-    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks')),
-    getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes')),
-    getDocs(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities')),
+    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'), where('clientId', '==', clientId), limit(1))),
+    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), where('relatedTo.id', '==', clientId), limit(1))),
+    getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'), limit(1))),
+    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'), where('entityType', '==', 'Client'), where('entityId', '==', clientId), limit(1))),
   ]);
   const hasRelated = deals.docs.some((item) => item.data().clientId === clientId)
     || tasks.docs.some((item) => { const related = item.data().relatedTo as { type?: string; id?: string } | undefined; return related?.type === 'Client' && related.id === clientId; })
@@ -158,10 +190,12 @@ export async function addClientNote(user: AppUser | null, organizationId: string
   } satisfies Note;
 }
 
-export async function listClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
+export async function listClientNotesPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, pageSize = 20): Promise<PageResult<Note>> {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'));
-  return snapshot.docs.map((noteDoc) => {
+  const notesCollection = organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes');
+  const notesQuery = cursor ? query(notesCollection, orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize)) : query(notesCollection, orderBy('createdAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(notesQuery);
+  const items = snapshot.docs.map((noteDoc) => {
     const data = noteDoc.data();
     return {
       id: noteDoc.id,
@@ -172,7 +206,12 @@ export async function listClientNotes(user: AppUser | null, organizationId: stri
       createdByName: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : undefined,
       createdAt: toIsoDate(data.createdAt),
     } satisfies Note;
-  }).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  });
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
+export async function listClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
+  return (await listClientNotesPage(user, organizationId, clientId)).items;
 }
 
 function safeStorageFilename(filename: string) {
@@ -180,10 +219,44 @@ function safeStorageFilename(filename: string) {
   return trimmed || 'document';
 }
 
-export async function listClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
+const MAX_CLIENT_DOCUMENT_SIZE = 10 * 1024 * 1024;
+const ALLOWED_CLIENT_DOCUMENT_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'image/jpeg',
+  'image/png',
+]);
+const ALLOWED_CLIENT_DOCUMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png']);
+
+function isSupportedClientDocument(file: File) {
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  return ALLOWED_CLIENT_DOCUMENT_TYPES.has(file.type) || ALLOWED_CLIENT_DOCUMENT_EXTENSIONS.has(extension);
+}
+
+function clientDocumentMimeType(file: File) {
+  if (ALLOWED_CLIENT_DOCUMENT_TYPES.has(file.type)) return file.type;
+  const extension = file.name.toLowerCase().split('.').pop() || '';
+  return ({
+    pdf: 'application/pdf',
+    doc: 'application/msword',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    xls: 'application/vnd.ms-excel',
+    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+  } as Record<string, string>)[extension] || 'application/octet-stream';
+}
+
+export async function listClientDocumentsPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, pageSize = 25): Promise<PageResult<DocumentItem>> {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'));
-  return snapshot.docs.map((documentDoc) => {
+  const documentsCollection = organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents');
+  const documentsQuery = cursor ? query(documentsCollection, orderBy('uploadedAt', 'desc'), startAfter(cursor), limit(pageSize)) : query(documentsCollection, orderBy('uploadedAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(documentsQuery);
+  const items = snapshot.docs.map((documentDoc) => {
     const data = documentDoc.data();
     return {
       id: documentDoc.id,
@@ -194,37 +267,48 @@ export async function listClientDocuments(user: AppUser | null, organizationId: 
       mimeType: typeof data.mimeType === 'string' ? data.mimeType : 'application/octet-stream',
       size: typeof data.size === 'number' || typeof data.size === 'string' ? data.size : 0,
       uploadedAt: toIsoDate(data.uploadedAt),
+      uploadedByUid: typeof data.uploadedByUid === 'string' ? data.uploadedByUid : typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
+      uploadedByName: typeof data.uploadedByName === 'string' ? data.uploadedByName : undefined,
       uploadedBy: typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
     } satisfies DocumentItem;
-  }).sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+  });
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
+export async function listClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
+  return (await listClientDocumentsPage(user, organizationId, clientId)).items;
 }
 
 export async function uploadClientDocument(user: AppUser | null, organizationId: string, clientId: string, file: File) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to upload a client document.');
   if (!file || file.size === 0) throw new Error('Please select a file to upload.');
-  if (file.size > 10 * 1024 * 1024) throw new Error('Files must be 10 MB or smaller.');
+  if (file.size > MAX_CLIENT_DOCUMENT_SIZE) throw new Error('Files must be 10 MB or smaller.');
+  if (!isSupportedClientDocument(file)) throw new Error('That file type is not supported. Use PDF, DOC, DOCX, XLS, XLSX, JPG, JPEG, or PNG.');
 
   const clientSnapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
   if (!clientSnapshot.exists()) throw new Error('The selected client was not found.');
+  if (clientSnapshot.data().archived === true || clientSnapshot.data().status === 'ARCHIVED') throw new Error('Documents cannot be uploaded to an archived client.');
 
   const documentRef = doc(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'));
   const storagePath = `organizations/${organizationId}/clients/${clientId}/documents/${documentRef.id}/${safeStorageFilename(file.name)}`;
   const storageRef = ref(storage, storagePath);
+  const mimeType = clientDocumentMimeType(file);
   let uploaded = false;
 
   try {
-    await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' });
+    await uploadBytes(storageRef, file, { contentType: mimeType });
     uploaded = true;
     const downloadURL = await getDownloadURL(storageRef);
     await setDoc(documentRef, {
       name: file.name,
       storagePath,
       downloadURL,
-      mimeType: file.type || 'application/octet-stream',
+      mimeType,
       size: file.size,
       uploadedAt: serverTimestamp(),
-      uploadedBy: user.uid,
+      uploadedByUid: user.uid,
+      uploadedByName: user.name,
     });
 
     return {
@@ -233,14 +317,18 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
       name: file.name,
       storagePath,
       downloadURL,
-      mimeType: file.type || 'application/octet-stream',
+      mimeType,
       size: file.size,
       uploadedAt: new Date().toISOString(),
-      uploadedBy: user.uid,
+      uploadedByUid: user.uid,
+      uploadedByName: user.name,
     } satisfies DocumentItem;
   } catch (error) {
     if (uploaded) await deleteObject(storageRef).catch(() => undefined);
     console.error('Unable to upload client document', error);
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'storage/unauthorized') {
+      throw new Error('Upload failed. You do not have permission to upload documents for this client.');
+    }
     throw new Error('Unable to upload the document. Please try again.');
   }
 }

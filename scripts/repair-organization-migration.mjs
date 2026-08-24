@@ -11,7 +11,7 @@ const pending = [];
 const conflicts = [];
 const unresolved = [];
 const canonicalPipelineStages = [
-  { name: 'Opportunity', isActive: true },
+  { name: 'New', isActive: true },
   { name: 'Qualified', isActive: true },
   { name: 'Proposal', isActive: true },
   { name: 'Negotiation', isActive: true },

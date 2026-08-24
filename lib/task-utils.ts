@@ -2,6 +2,11 @@ import type { Task } from '@/types';
 
 export type TaskDisplayState = 'Scheduled' | 'Overdue' | 'Completed' | 'Pending';
 
+export function isFollowUpTask(task: Task) {
+  // Missing type is treated as a Follow-up for legacy compatibility.
+  return task.type !== 'Task';
+}
+
 export function getTaskDisplayState(task: Task, now = Date.now()): TaskDisplayState {
   if (task.status === 'Completed') return 'Completed';
   const dueTime = Date.parse(task.dueDate);
@@ -36,7 +41,7 @@ export function sortOpenTasks(tasks: Task[], now = Date.now()) {
 }
 
 export function getNextFollowUp(tasks: Task[], now = Date.now()) {
-  const validPending = tasks.filter((task) => task.status === 'Pending' && Number.isFinite(Date.parse(task.dueDate)));
+  const validPending = tasks.filter((task) => isFollowUpTask(task) && task.status === 'Pending' && Number.isFinite(Date.parse(task.dueDate)));
   const upcoming = validPending.filter((task) => Date.parse(task.dueDate) > now).sort((left, right) => Date.parse(left.dueDate) - Date.parse(right.dueDate));
   const overdue = validPending.filter((task) => Date.parse(task.dueDate) <= now).sort((left, right) => Date.parse(right.dueDate) - Date.parse(left.dueDate));
   return upcoming[0] || overdue[0];

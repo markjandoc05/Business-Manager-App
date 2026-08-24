@@ -5,7 +5,7 @@ import type { AppUser, OrganizationMembership, OrganizationStatus, PlatformUserP
 export const isActiveMembership = (membership: OrganizationMembership | null) => membership?.status === 'active';
 export const hasOrganizationRole = (membership: OrganizationMembership | null, roles: UserRole[]) => isActiveMembership(membership) && !!membership && roles.includes(membership.role);
 export const canManageOrganizationMembers = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN']);
-export const canAccessOrganization = (membership: OrganizationMembership | null, status: OrganizationStatus | null) => isActiveMembership(membership) && (status === 'active' || status === 'trial');
+export const canAccessOrganization = (membership: OrganizationMembership | null, status: OrganizationStatus | null) => isActiveMembership(membership) && ['active', 'trial', 'expired', 'suspended'].includes(status || '');
 export const isPlatformAdmin = (platformUser: PlatformUserProfile | null) => platformUser?.role === 'PLATFORM_ADMIN' && platformUser.status === 'active';
 
 export const canManageUsers = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN']);
@@ -28,7 +28,7 @@ export async function requireOrganizationAccess(user: AppUser | null, organizati
     ? { organizationId, userId: user.uid, email: typeof data.email === 'string' ? data.email : user.email, displayName: typeof data.displayName === 'string' ? data.displayName : user.name, role: data.role as UserRole, status: 'active' as const }
     : null;
   const organizationStatus = organizationSnapshot.data()?.status as OrganizationStatus | undefined;
-  if (!membership || !organizationSnapshot.exists() || !['trial', 'active'].includes(organizationStatus || '')) {
+  if (!membership || !organizationSnapshot.exists() || !['trial', 'active', 'expired', 'suspended'].includes(organizationStatus || '')) {
     throw new Error('You do not have access to this organization.');
   }
   if (roles && !roles.includes(membership.role)) throw new Error('You do not have permission for this organization action.');

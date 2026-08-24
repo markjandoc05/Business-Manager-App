@@ -24,14 +24,12 @@ import { formatCurrency } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageLeads } from '@/lib/permissions';
-import { completeLeadTimelineActivity, listScheduledLeadActivities } from '@/lib/repositories/leadTimeline';
-import { formatCompactDateTime } from '@/lib/task-utils';
-import type { LeadTimelineEntry } from '@/types';
+import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
+import { loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
 
 type DashboardFollowUpItem =
-  | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' }
-  | { id: string; source: 'LEAD'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; leadId: string; activityId: string };
+  | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
 
 type PrimaryDashboardCard = 'pipeline' | 'followups';
 type SecondaryDashboardCard = 'leads' | 'activity';
@@ -57,22 +55,35 @@ export default function DashboardPage() {
   const { leads, clients, deals, tasks, activities, settings, completeTask, addLead, addClient, addTask } = useApp();
   const router = useRouter();
   const { user } = useAuth();
-  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership } = useWorkspace();
-  const canManage = canManageLeads(membership);
-  const [leadActivities, setLeadActivities] = useState<LeadTimelineEntry[]>([]);
-  const [leadActivitiesOrganizationId, setLeadActivitiesOrganizationId] = useState<string | null>(null);
-  const [leadActivitiesLoading, setLeadActivitiesLoading] = useState(false);
-  const [leadActivitiesError, setLeadActivitiesError] = useState<string | null>(null);
-  const [completingLeadActivityId, setCompletingLeadActivityId] = useState<string | null>(null);
+  const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
+  const canManage = canManageLeads(membership) && canWrite;
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
   const [kpiCardOrder, setKpiCardOrder] = useState<KpiDashboardCard[]>(() => getDashboardLayoutPreference().kpis);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
+  const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
   }, [kpiCardOrder, primaryCardOrder, secondaryCardOrder]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
+      setDashboardMetrics(null);
+      return () => { cancelled = true; };
+    }
+    void loadDashboardMetrics(user, currentOrganizationId).then((metrics) => {
+      if (!cancelled) setDashboardMetrics(metrics);
+    }).catch((error) => {
+      console.error('Unable to load dashboard metrics', error);
+      if (!cancelled) setDashboardMetrics(null);
+    });
+    return () => { cancelled = true; };
+  }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const moveDashboardCard = (target: string, group: 'kpis' | 'primary' | 'secondary') => {
     if (!draggingCard || draggingCard === target) return;
@@ -90,44 +101,6 @@ export default function DashboardPage() {
     return () => window.clearInterval(timer);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadLeadActivities = async () => {
-      await Promise.resolve();
-      if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading || leads.length === 0) {
-        if (!cancelled) {
-          setLeadActivities([]);
-          setLeadActivitiesOrganizationId(null);
-          setLeadActivitiesLoading(false);
-          setLeadActivitiesError(null);
-        }
-        return;
-      }
-      const organizationId = currentOrganizationId;
-      const visibleLeads = leads.filter((lead) => !lead.archived);
-      setLeadActivitiesLoading(true);
-      setLeadActivitiesError(null);
-      setLeadActivitiesOrganizationId(null);
-      try {
-        const results = await Promise.all(visibleLeads.map((lead) => listScheduledLeadActivities(user, organizationId, lead.id)));
-        if (!cancelled) {
-          setLeadActivities(results.flat());
-          setLeadActivitiesOrganizationId(organizationId);
-        }
-      } catch (error) {
-        console.error('Unable to load dashboard lead activities', error);
-        if (!cancelled) {
-          setLeadActivities([]);
-          setLeadActivitiesError('Scheduled lead activities could not be loaded.');
-        }
-      } finally {
-        if (!cancelled) setLeadActivitiesLoading(false);
-      }
-    };
-    void loadLeadActivities();
-    return () => { cancelled = true; };
-  }, [currentOrganizationId, leads, user, workspaceLoading, workspaceReady]);
-
   // Modals state
   const [activeModal, setActiveModal] = useState<'lead' | 'client' | 'task' | null>(null);
 
@@ -139,15 +112,15 @@ export default function DashboardPage() {
   const [leadError, setLeadError] = useState<string | null>(null);
 
   // KPI Calculations
-  const totalLeads = leads.length;
-  const openDealStages = new Set(['Opportunity', 'Proposal', 'Negotiation']);
+  const totalLeads = dashboardMetrics?.totalLeads ?? leads.length;
+  const openDealStages = new Set(['New', 'Qualified', 'Proposal', 'Negotiation']);
   const openDeals = deals.filter((deal) => openDealStages.has(deal.stage));
-  const activeOpportunities = openDeals.length;
-  const wonDealsCount = deals.filter(d => d.status === 'Won').length;
-  const pipelineValue = openDeals.reduce((sum, d) => sum + d.value, 0);
+  const activeOpportunities = dashboardMetrics?.activeDeals ?? openDeals.length;
+  const wonDealsCount = dashboardMetrics?.wonDeals ?? deals.filter(d => d.status === 'Won').length;
+  const pipelineValue = dashboardMetrics?.pipelineValue ?? openDeals.reduce((sum, d) => sum + d.value, 0);
 
   const currentDate = new Date();
-  const salesThisMonth = deals
+  const salesThisMonthFromLoadedDeals = deals
     .filter((deal) => {
       if (deal.status !== 'Won') return false;
       const createdAt = new Date(deal.createdAt);
@@ -156,11 +129,12 @@ export default function DashboardPage() {
         && createdAt.getMonth() === currentDate.getMonth();
     })
     .reduce((sum, deal) => sum + deal.value, 0);
+  const salesThisMonth = dashboardMetrics?.salesThisMonth ?? salesThisMonthFromLoadedDeals;
 
   const followUpItems = useMemo<DashboardFollowUpItem[]>(() => {
     const now = currentTime;
     const taskItems: DashboardFollowUpItem[] = tasks
-      .filter((task) => task.status === 'Pending' && !task.archived && Number.isFinite(Date.parse(task.dueDate)))
+      .filter((task) => isFollowUpTask(task) && task.status === 'Pending' && !task.archived && Number.isFinite(Date.parse(task.dueDate)))
       .map((task) => {
         const scheduledAt = task.dueDate;
         const source = task.relatedTo?.type === 'Client' || task.relatedTo?.type === 'Deal' || task.relatedTo?.type === 'Lead'
@@ -185,34 +159,16 @@ export default function DashboardPage() {
           priority: task.priority,
         };
       });
-    const leadItems: DashboardFollowUpItem[] = (leadActivitiesOrganizationId === currentOrganizationId ? leadActivities : [])
-      .filter((entry) => entry.entryType === 'ACTIVITY' && entry.activityStatus === 'SCHEDULED' && Number.isFinite(Date.parse(entry.occurredAt)))
-      .map((entry) => ({
-        id: `lead-activity:${entry.leadId}:${entry.id}`,
-        source: 'LEAD',
-        relatedName: leads.find((lead) => lead.id === entry.leadId)?.name || 'Lead',
-        title: entry.activityType || 'Activity',
-        description: entry.content,
-        scheduledAt: entry.occurredAt,
-        state: Date.parse(entry.occurredAt) <= now ? 'OVERDUE' : 'SCHEDULED',
-        leadId: entry.leadId,
-        activityId: entry.id,
-      }));
-    return [...taskItems, ...leadItems].sort((left, right) => {
+    return taskItems.sort((left, right) => {
       const leftTime = Date.parse(left.scheduledAt);
       const rightTime = Date.parse(right.scheduledAt);
       if (left.state !== right.state) return left.state === 'OVERDUE' ? -1 : 1;
       return left.state === 'OVERDUE' ? leftTime - rightTime : leftTime - rightTime;
     });
-  }, [clients, currentOrganizationId, currentTime, deals, leadActivities, leadActivitiesOrganizationId, leads, tasks]);
+  }, [clients, currentTime, deals, leads, tasks]);
 
-  const openLeadActivity = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
   const openLead = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
   const openFollowUp = (item: DashboardFollowUpItem) => {
-    if ('activityId' in item) {
-      openLeadActivity(item.leadId);
-      return;
-    }
     const task = tasks.find((candidate) => candidate.id === item.taskId);
     if (!task) return;
     const related = task.relatedTo;
@@ -224,20 +180,6 @@ export default function DashboardPage() {
       openLead(related.id);
     } else {
       router.push(`/tasks?taskId=${encodeURIComponent(task.id)}`);
-    }
-  };
-
-  const completeLeadActivity = async (item: Extract<DashboardFollowUpItem, { source: 'LEAD'; activityId: string }>) => {
-    if (!user || !currentOrganizationId || completingLeadActivityId) return;
-    setCompletingLeadActivityId(item.id);
-    try {
-      await completeLeadTimelineActivity(user, currentOrganizationId, item.leadId, item.activityId);
-      setLeadActivities((current) => current.filter((entry) => !(entry.leadId === item.leadId && entry.id === item.activityId)));
-    } catch (error) {
-      console.error('Unable to complete dashboard lead activity', error);
-      setLeadActivitiesError('Unable to mark the lead activity complete. Please try again.');
-    } finally {
-      setCompletingLeadActivityId(null);
     }
   };
 
@@ -263,7 +205,6 @@ export default function DashboardPage() {
         email: leadForm.email,
         phone: leadForm.phone,
         company: leadForm.company,
-        status: 'New',
         source: leadForm.source,
       });
       setLeadForm({ name: '', email: '', phone: '', company: '', source: settings.leadSources[0]?.name || 'Website' });
@@ -295,6 +236,7 @@ export default function DashboardPage() {
     addTask({
       title: taskForm.title,
       description: taskForm.description,
+      type: 'Follow-up',
       dueDate: taskForm.dueDate || new Date().toISOString().split('T')[0],
       priority: taskForm.priority,
     });
@@ -386,7 +328,7 @@ export default function DashboardPage() {
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}
       <div className="grid items-stretch gap-4 lg:grid-cols-2">
         <MovableDashboardCard cardId="pipeline" order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
-          <PipelineFunnel deals={deals} currency={settings.currency} />
+          <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={dashboardMetrics?.pipelineByStage} />
         </MovableDashboardCard>
 
         {/* Follow-ups Due */}
@@ -410,7 +352,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="min-w-0 truncate text-sm font-medium text-slate-900">{item.title}</p>
-                    {'activityId' in item ? <Button size="sm" variant="outline" disabled={completingLeadActivityId === item.id} onClick={(event) => { event.stopPropagation(); void completeLeadActivity(item); }} className="shrink-0">{completingLeadActivityId === item.id ? 'Completing…' : 'Complete'}</Button> : <Button size="sm" variant="outline" onClick={(event) => { event.stopPropagation(); void completeTask(item.taskId); }} className="shrink-0">Complete</Button>}
+                    <Button size="sm" variant="outline" disabled={!canWrite} onClick={(event) => { event.stopPropagation(); void completeTask(item.taskId); }} className="shrink-0">Complete</Button>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                     <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'Overdue' : 'Scheduled'}</Badge>
@@ -422,9 +364,7 @@ export default function DashboardPage() {
               </div>
             ))}
 
-            {leadActivitiesError && <p className="text-xs text-red-600">{leadActivitiesError}</p>}
-            {leadActivitiesLoading && <p className="py-2 text-center text-xs text-slate-400">Loading scheduled lead activities…</p>}
-            {followUpItems.length === 0 && !leadActivitiesLoading && (
+            {followUpItems.length === 0 && (
               <div className="py-12 text-center text-slate-400 text-sm">
                 No pending follow-ups. Great job!
               </div>
