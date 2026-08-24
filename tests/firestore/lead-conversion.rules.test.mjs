@@ -13,7 +13,7 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORGANIZATION_ID = 'rules-test-org';
 const OTHER_ORGANIZATION_ID = 'rules-test-other-org';
 const ADMIN_UID = 'rules-test-admin';

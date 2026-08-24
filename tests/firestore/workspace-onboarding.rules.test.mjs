@@ -4,7 +4,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { collectionGroup, doc, getDoc, getDocs, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const CREATOR_UID = 'onboarding-creator';
 const OTHER_UID = 'onboarding-other';
 const EXISTING_ORG_ID = 'onboarding-existing-org';

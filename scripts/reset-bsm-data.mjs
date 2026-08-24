@@ -6,14 +6,12 @@
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import { assertMutationSafety, logMutationSafety } from './lib/safety.mjs';
 
 const apply = process.argv.includes('--apply');
-const expectedProjectId = 'bsm-client-app-web';
-const configuredProjectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT;
-if (configuredProjectId && configuredProjectId !== expectedProjectId) {
-  throw new Error(`Refusing to run against project ${configuredProjectId}; expected ${expectedProjectId}.`);
-}
-const projectId = expectedProjectId;
+const safety = assertMutationSafety({ apply, destructive: true, scope: 'destructive BSM data reset' });
+const projectId = safety.projectId;
+logMutationSafety(safety);
 const canonicalSlug = 'aiph-internal';
 const app = initializeApp({ projectId, credential: applicationDefault() });
 const db = getFirestore(app);

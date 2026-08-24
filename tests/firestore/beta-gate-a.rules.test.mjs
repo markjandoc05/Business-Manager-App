@@ -4,7 +4,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { deleteDoc, doc, getDoc, setDoc, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORG_A = 'gate-a-org-a';
 const ORG_B = 'gate-a-org-b';
 const ADMIN = 'gate-a-admin';

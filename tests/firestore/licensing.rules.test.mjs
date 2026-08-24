@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { doc, getDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORG = 'license-test-org';
 const ADMIN = 'license-admin';
+const MANAGER = 'license-manager';
+const USER = 'license-assigned-user';
+const LEAD = 'license-lead';
 let testEnv;
 
 function seedLicense(status, expiresAt = null) {
@@ -18,6 +21,9 @@ async function seed(status = 'ACTIVE', expiresAt = null) {
     const db = context.firestore();
     await context.firestore().doc(`organizations/${ORG}`).set({ name: 'License Test', slug: ORG, status: 'trial', licenseStatus: status, licenseWriteEnabled: status === 'TRIAL' || status === 'ACTIVE', licenseExpiresAt: expiresAt });
     await context.firestore().doc(`organizations/${ORG}/members/${ADMIN}`).set({ userId: ADMIN, role: 'ADMIN', status: 'active' });
+    await context.firestore().doc(`organizations/${ORG}/members/${MANAGER}`).set({ userId: MANAGER, role: 'MANAGER', status: 'active' });
+    await context.firestore().doc(`organizations/${ORG}/members/${USER}`).set({ userId: USER, role: 'USER', status: 'active' });
+    await context.firestore().doc(`organizations/${ORG}/leads/${LEAD}`).set({ name: 'Lead', company: 'Company', email: '', phone: '', source: 'Other', status: 'New', assignedTo: USER, assignedToUid: USER, assignedToName: USER, createdAt: Timestamp.now(), createdBy: ADMIN, updatedAt: Timestamp.now(), updatedBy: ADMIN, archived: false });
     await context.firestore().doc(`organizations/${ORG}/settings/settings`).set({ businessName: 'License Test' });
     await context.firestore().doc(`organizations/${ORG}/license/current`).set(seedLicense(status, expiresAt));
     assert.ok(db);
@@ -58,6 +64,24 @@ test('tenant ADMIN cannot modify the organization license', async () => {
   const db = testEnv.authenticatedContext(ADMIN).firestore();
   await assertFails(updateDoc(doc(db, `organizations/${ORG}/license/current`), { status: 'ACTIVE' }));
 });
+
+test('tenant ADMIN cannot directly change an existing membership', async () => {
+  const db = testEnv.authenticatedContext(ADMIN).firestore();
+  await assertFails(updateDoc(doc(db, `organizations/${ORG}/members/${USER}`), { status: 'inactive' }));
+});
+
+for (const [role, uid] of [['ADMIN', ADMIN], ['MANAGER', MANAGER], ['assigned USER', USER]]) {
+  for (const status of ['SUSPENDED', 'EXPIRED']) {
+    test(`${role} cannot update a lead while the license is ${status}`, async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await context.firestore().doc(`organizations/${ORG}`).update({ status: status === 'SUSPENDED' ? 'suspended' : 'expired', licenseStatus: status, licenseWriteEnabled: false, licenseExpiresAt: null });
+      await context.firestore().doc(`organizations/${ORG}/license/current`).update({ status });
+    });
+      const db = testEnv.authenticatedContext(uid).firestore();
+      await assertFails(updateDoc(doc(db, `organizations/${ORG}/leads/${LEAD}`), { name: 'Blocked', updatedBy: uid }));
+    });
+  }
+}
 
 test('trial after its expiry is denied by the enforcement mirror', async () => {
   const expired = Timestamp.fromMillis(Date.now() - 1_000);

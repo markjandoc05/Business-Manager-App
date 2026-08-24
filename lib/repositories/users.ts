@@ -1,5 +1,6 @@
-import { collection, doc, getDocs, limit, query, updateDoc, where } from 'firebase/firestore';
+import { collection, getDocs, limit, query, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
+import { auth } from '@/lib/firebase/client';
 import type { AppUser, UserRole } from '@/types/auth';
 import { requireOrganizationAccess } from '@/lib/permissions';
 
@@ -56,5 +57,16 @@ export async function listOrganizationMembers(user: AppUser | null, organization
 export async function updateOrganizationMember(user: AppUser | null, organizationId: string, memberUid: string, changes: { role?: UserRole; status?: ManagedOrganizationMember['status'] }) {
   await requireOrganizationAccess(user, organizationId, ['ADMIN']);
   if (!user || memberUid === user.uid) throw new Error('You cannot change your own organization membership.');
-  await updateDoc(doc(db, 'organizations', organizationId, 'members', memberUid), changes);
+  const firebaseUser = auth.currentUser;
+  if (!firebaseUser) throw new Error('Authentication is required.');
+  const token = await firebaseUser.getIdToken();
+  const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/members/${encodeURIComponent(memberUid)}`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(changes),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(payload?.error || 'Unable to update organization membership.');
+  }
 }

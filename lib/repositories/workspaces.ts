@@ -1,4 +1,4 @@
-import { collection, collectionGroup, doc, getDoc, getDocs, limit, query, runTransaction, serverTimestamp, Timestamp, where } from 'firebase/firestore';
+import { collection, collectionGroup, doc, getDoc, getDocs, limit, onSnapshot, query, runTransaction, serverTimestamp, Timestamp, where, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, MembershipStatus, Organization, OrganizationMembership, OrganizationRole, OrganizationStatus } from '@/types/auth';
 import type { BusinessType, Settings } from '@/types';
@@ -24,7 +24,7 @@ function mapMembership(data: Record<string, unknown>, organizationId: string): O
 function mapOrganization(id: string, data: Record<string, unknown>): Organization | null {
   const status = organizationStatuses.includes(data.status as OrganizationStatus) ? data.status as OrganizationStatus : null;
   if (!status || typeof data.name !== 'string' || typeof data.slug !== 'string') return null;
-  return { id, name: data.name, slug: data.slug, businessType: typeof data.businessType === 'string' ? data.businessType : 'Small Business', status, plan: typeof data.plan === 'string' ? data.plan : 'trial', subscriptionStatus: typeof data.subscriptionStatus === 'string' ? data.subscriptionStatus : 'trial', subscriptionStart: toIsoDate(data.subscriptionStart), subscriptionEnd: toIsoDate(data.subscriptionEnd), maxUsers: typeof data.maxUsers === 'number' ? data.maxUsers : 1, gracePeriodEnd: toIsoDate(data.gracePeriodEnd), createdAt: toIsoDate(data.createdAt), updatedAt: toIsoDate(data.updatedAt) };
+  return { id, name: data.name, slug: data.slug, businessType: typeof data.businessType === 'string' ? data.businessType : 'Small Business', status, plan: typeof data.plan === 'string' ? data.plan : 'trial', subscriptionStatus: typeof data.subscriptionStatus === 'string' ? data.subscriptionStatus : 'trial', subscriptionStart: toIsoDate(data.subscriptionStart), subscriptionEnd: toIsoDate(data.subscriptionEnd), maxUsers: typeof data.maxUsers === 'number' ? data.maxUsers : 1, gracePeriodEnd: toIsoDate(data.gracePeriodEnd), createdAt: toIsoDate(data.createdAt), updatedAt: toIsoDate(data.updatedAt), licenseStatus: ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.licenseStatus as string) ? data.licenseStatus as Organization['licenseStatus'] : undefined, licenseWriteEnabled: typeof data.licenseWriteEnabled === 'boolean' ? data.licenseWriteEnabled : undefined, licenseExpiresAt: toIsoDate(data.licenseExpiresAt) };
 }
 
 export async function listUserMemberships(user: AppUser | null) {
@@ -42,6 +42,12 @@ export async function listUserMemberships(user: AppUser | null) {
 export async function getOrganization(organizationId: string) {
   const snapshot = await getDoc(doc(db, 'organizations', organizationId));
   return snapshot.exists() ? mapOrganization(snapshot.id, snapshot.data()) : null;
+}
+
+export function subscribeToOrganization(organizationId: string, onChange: (organization: Organization | null) => void, onError: (error: Error) => void): Unsubscribe {
+  return onSnapshot(doc(db, 'organizations', organizationId), (snapshot) => {
+    onChange(snapshot.exists() ? mapOrganization(snapshot.id, snapshot.data()) : null);
+  }, onError);
 }
 
 export class WorkspaceSlugError extends Error {

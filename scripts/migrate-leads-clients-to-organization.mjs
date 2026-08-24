@@ -1,9 +1,12 @@
 /* Phase 2A: copy Leads and Clients into the active organization without touching root data. */
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, GeoPoint } from 'firebase-admin/firestore';
+import { assertMutationSafety, logMutationSafety } from './lib/safety.mjs';
 
 const apply = process.argv.includes('--apply');
-const projectId = 'bsm-client-app-web';
+const safety = assertMutationSafety({ apply, scope: 'leads and clients organization migration' });
+const projectId = safety.projectId;
+logMutationSafety(safety);
 
 const app = initializeApp({ projectId, credential: applicationDefault() });
 const db = getFirestore();

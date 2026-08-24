@@ -240,7 +240,7 @@ service cloud.firestore {
       allow read: if isActivePlatformAdmin()
         || (signedIn() && userId == request.auth.uid && resource.data.status == 'active')
         || isOrganizationMember(organizationId);
-      allow create: if ((isOrganizationAdmin(organizationId) && licenseAllowsWrites(organizationId)) || isBootstrapOrganizationCreate(organizationId))
+      allow create: if isBootstrapOrganizationCreate(organizationId)
         && request.resource.data.keys().hasOnly(['userId', 'email', 'displayName', 'role', 'status', 'joinedAt', 'activatedAt', 'activatedBy'])
         && request.resource.data.userId == userId
         && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
@@ -248,13 +248,9 @@ service cloud.firestore {
         && (isBootstrapOrganizationCreate(organizationId)
           ? (userId == request.auth.uid && request.resource.data.role == 'ADMIN' && request.resource.data.status == 'active')
           : true);
-      allow update: if (isOrganizationAdmin(organizationId) && licenseAllowsWrites(organizationId))
-        && userId != request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'status', 'activatedAt', 'activatedBy'])
-        && request.resource.data.userId == resource.data.userId
-        && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
-        && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived'];
-      allow delete: if isOrganizationAdmin(organizationId) && licenseAllowsWrites(organizationId) && userId != request.auth.uid;
+      // Existing memberships are changed only through the authenticated server
+      // handler, which counts active members inside an Admin SDK transaction.
+      allow update, delete: if false;
     }
 
     match /organizations/{organizationId}/license/{licenseId} {
@@ -411,7 +407,8 @@ service cloud.firestore {
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && request.resource.data.assignedToName is string;
-      allow update: if (organizationCanManage(organizationId)
+      allow update: if licenseAllowsWrites(organizationId)
+        && (organizationCanManage(organizationId)
         || (organizationCanView(organizationId)
           && resource.data.assignedToUid == request.auth.uid
           && request.resource.data.assignedToUid == resource.data.assignedToUid))

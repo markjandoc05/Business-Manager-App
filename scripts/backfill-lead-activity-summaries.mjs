@@ -4,11 +4,14 @@
  */
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { assertMutationSafety, logMutationSafety } from './lib/safety.mjs';
 
-const PROJECT_ID = 'bsm-client-app-web';
 const ORGANIZATION_SLUG = 'aiph-internal';
 const BATCH_SIZE = 400;
 const apply = process.argv.includes('--apply');
+const safety = assertMutationSafety({ apply, scope: 'organization lead activity-summary backfill' });
+const PROJECT_ID = safety.projectId;
+logMutationSafety(safety);
 
 initializeApp({
   credential: applicationDefault(),

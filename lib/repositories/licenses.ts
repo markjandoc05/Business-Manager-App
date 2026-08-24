@@ -1,4 +1,4 @@
-import { doc, getDoc, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, Timestamp, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, License, LicensePlan, LicenseStatus, ResolvedLicenseState } from '@/types/auth';
 import { requireOrganizationAccess } from '@/lib/permissions';
@@ -13,14 +13,27 @@ function timestamp(value: unknown) {
   return value instanceof Timestamp ? value : undefined;
 }
 
+function hasTimestamp(value: unknown) {
+  return value instanceof Timestamp && Number.isFinite(value.toMillis());
+}
+
 function mapLicense(data: Record<string, unknown>): License | null {
   const plan = ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(data.plan as string) ? data.plan as LicensePlan : null;
   const status = ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.status as string) ? data.status as LicenseStatus : null;
-  if (!plan || !status || typeof data.maxUsers !== 'number') return null;
+  const maxUsers = data.maxUsers;
+  if (!plan || !status || typeof maxUsers !== 'number' || !Number.isInteger(maxUsers) || maxUsers < 1) return null;
+  const requiredTimestamps = status === 'TRIAL'
+    ? ['trialStartedAt', 'trialEndsAt']
+    : status === 'ACTIVE'
+      ? ['subscriptionStartedAt', 'subscriptionEndsAt']
+      : [];
+  const timestampFields = ['trialStartedAt', 'trialEndsAt', 'subscriptionStartedAt', 'subscriptionEndsAt', 'createdAt', 'updatedAt'];
+  if (timestampFields.some((field) => data[field] !== undefined && data[field] !== null && !hasTimestamp(data[field]))) return null;
+  if (requiredTimestamps.some((field) => !hasTimestamp(data[field]))) return null;
   return {
     plan,
     status,
-    maxUsers: data.maxUsers,
+    maxUsers,
     features: data.features && typeof data.features === 'object' ? data.features as Record<string, boolean> : { ...DEFAULT_LICENSE_FEATURES },
     trialStartedAt: timestamp(data.trialStartedAt),
     trialEndsAt: timestamp(data.trialEndsAt),
@@ -37,6 +50,12 @@ export async function getOrganizationLicense(organizationId: string) {
   return snapshot.exists() ? mapLicense(snapshot.data()) : null;
 }
 
+export function subscribeToOrganizationLicense(organizationId: string, onChange: (license: License | null) => void, onError: (error: Error) => void): Unsubscribe {
+  return onSnapshot(licenseDocument(organizationId), (snapshot) => {
+    onChange(snapshot.exists() ? mapLicense(snapshot.data()) : null);
+  }, onError);
+}
+
 export async function loadOrganizationLicense(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId);
   try {
@@ -49,7 +68,7 @@ export async function loadOrganizationLicense(user: AppUser | null, organization
 
 export function resolveLicenseState(license: License | null, now = Date.now()): ResolvedLicenseState {
   if (!license) {
-    return { license: null, plan: 'LEGACY', status: 'ACTIVE', canWrite: true, isReadOnly: false, daysRemaining: null, reason: 'legacy' };
+    return { license: null, plan: 'TRIAL', status: 'EXPIRED', canWrite: false, isReadOnly: true, daysRemaining: null, reason: 'missing' };
   }
 
   if (license.status === 'SUSPENDED') return { license, plan: license.plan, status: 'SUSPENDED', canWrite: false, isReadOnly: true, daysRemaining: null, reason: 'suspended' };

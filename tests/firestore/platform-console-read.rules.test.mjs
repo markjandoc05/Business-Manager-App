@@ -3,7 +3,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, query, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORG_A = 'console-org-a';
 const ORG_B = 'console-org-b';
 const SUPER_ADMIN = 'console-super-admin';

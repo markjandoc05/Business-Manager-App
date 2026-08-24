@@ -1,9 +1,12 @@
 /* Conflict-safe organization migration repair planner. Dry-run by default; --apply is required to write. */
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import { assertMutationSafety, logMutationSafety } from './lib/safety.mjs';
 
 const apply = process.argv.includes('--apply');
-const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || 'bsm-client-app-web';
+const safety = assertMutationSafety({ apply, scope: 'organization migration repair' });
+const projectId = safety.projectId;
+logMutationSafety(safety);
 const app = initializeApp({ projectId, credential: applicationDefault() });
 const db = getFirestore(app);
 const collections = ['leads', 'clients', 'deals', 'tasks', 'activities'];

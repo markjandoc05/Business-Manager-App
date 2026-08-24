@@ -3,7 +3,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { doc, getDoc, setDoc, Timestamp, updateDoc, serverTimestamp } from 'firebase/firestore';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORG_ID = 'closure-rules-org';
 const ADMIN_UID = 'closure-rules-admin';
 const DEAL_ID = 'closure-deal';

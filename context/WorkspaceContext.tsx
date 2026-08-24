@@ -2,8 +2,8 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { getOrganization, listUserMemberships } from '@/lib/repositories/workspaces';
-import { getOrganizationLicense, resolveLicenseState } from '@/lib/repositories/licenses';
+import { getOrganization, listUserMemberships, subscribeToOrganization } from '@/lib/repositories/workspaces';
+import { getOrganizationLicense, resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
 
 interface WorkspaceContextValue {
@@ -126,9 +126,31 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const ready = !loading && currentOrganization !== null && ['trial', 'active', 'expired', 'suspended'].includes(currentOrganization.status) && membership?.status === 'active';
   const resolvedLicenseState = resolveLicenseState(license);
-  const licenseState: ResolvedLicenseState = licenseError
+  const mirrorsMatch = Boolean(currentOrganization && license && currentOrganization.licenseStatus === license.status
+    && currentOrganization.licenseWriteEnabled === resolveLicenseState(license).canWrite
+    && (currentOrganization.licenseExpiresAt || null) === (license.status === 'TRIAL' ? license.trialEndsAt?.toDate().toISOString() : license.status === 'ACTIVE' ? license.subscriptionEndsAt?.toDate().toISOString() : null));
+  const licenseState: ResolvedLicenseState = licenseError || !mirrorsMatch
     ? { ...resolvedLicenseState, canWrite: false, isReadOnly: true, reason: 'unavailable' }
     : resolvedLicenseState;
+
+  useEffect(() => {
+    if (!currentOrganization?.id) return undefined;
+    const unsubscribeOrganization = subscribeToOrganization(currentOrganization.id, (nextOrganization) => {
+      setCurrentOrganization(nextOrganization);
+      setAvailableOrganizations((organizations) => organizations.map((organization) => organization.id === nextOrganization?.id ? nextOrganization : organization));
+    }, (snapshotError) => setLicenseError(snapshotError.message));
+    const unsubscribeLicense = subscribeToOrganizationLicense(currentOrganization.id, (nextLicense) => {
+      setLicense(nextLicense);
+      setLicenseLoading(false);
+    }, (snapshotError) => {
+      setLicenseError(snapshotError.message);
+      setLicenseLoading(false);
+    });
+    return () => {
+      unsubscribeOrganization();
+      unsubscribeLicense();
+    };
+  }, [currentOrganization?.id]);
   const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
   const selectOrganization = useCallback((organizationId: string) => {
     if (availableOrganizations.some((organization) => organization.id === organizationId)) setSelectedOrganizationId(organizationId);

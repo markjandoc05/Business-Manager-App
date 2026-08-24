@@ -27,7 +27,7 @@ export interface ResolvedLicenseState {
   canWrite: boolean;
   isReadOnly: boolean;
   daysRemaining: number | null;
-  reason: 'trial' | 'active' | 'expired' | 'suspended' | 'legacy' | 'unavailable';
+  reason: 'trial' | 'active' | 'expired' | 'suspended' | 'missing' | 'invalid' | 'unavailable';
 }
 
 export interface GlobalUserProfile {
@@ -57,6 +57,9 @@ export interface Organization {
   gracePeriodEnd?: string;
   createdAt?: string;
   updatedAt?: string;
+  licenseStatus?: LicenseStatus;
+  licenseWriteEnabled?: boolean;
+  licenseExpiresAt?: string;
 }
 
 export interface OrganizationMembership {

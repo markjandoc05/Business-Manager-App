@@ -9,9 +9,12 @@
     "lint": "eslint .",
     "test:auth": "node --experimental-strip-types --test tests/auth/sign-in-controller.test.mjs",
     "test:followups": "node --experimental-strip-types --test tests/follow-up-utils.test.mjs",
+    "test:project-identity": "node --experimental-strip-types --test tests/project-identity.test.mjs",
+    "test:script-safety": "node --test tests/scripts/privileged-script-safety.test.mjs",
     "clean": "next clean",
-    "test:rules": "firebase emulators:exec --only firestore \"node --test tests/firestore/lead-conversion.rules.test.mjs && node --test tests/firestore/workspace-onboarding.rules.test.mjs && node --test tests/firestore/licensing.rules.test.mjs && node --test tests/firestore/deal-task-authorization.rules.test.mjs && node --test tests/firestore/deal-closure.rules.test.mjs && node --test tests/firestore/beta-gate-a.rules.test.mjs && node --test tests/firestore/platform-console-read.rules.test.mjs\"",
-    "test:storage-rules": "firebase emulators:exec --only firestore,storage \"node --test tests/storage/client-documents.rules.test.mjs\""
+    "test:rules": "firebase emulators:exec --project demo-bsm-client-app --only firestore \"node --test tests/firestore/lead-conversion.rules.test.mjs && node --test tests/firestore/workspace-onboarding.rules.test.mjs && node --test tests/firestore/licensing.rules.test.mjs && node --test tests/firestore/deal-task-authorization.rules.test.mjs && node --test tests/firestore/deal-closure.rules.test.mjs && node --test tests/firestore/beta-gate-a.rules.test.mjs && node --test tests/firestore/platform-console-read.rules.test.mjs\"",
+    "test:storage-rules": "firebase emulators:exec --project demo-bsm-client-app --only firestore,storage \"node --test tests/storage/client-documents.rules.test.mjs\"",
+    "test:membership-api": "firebase emulators:exec --project demo-bsm-client-app --only auth,firestore \"node --test tests/api/membership-route.integration.test.mjs\""
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -32,6 +35,7 @@
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
     "recharts": "^3.10.1",
+    "server-only": "^0.0.1",
     "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {

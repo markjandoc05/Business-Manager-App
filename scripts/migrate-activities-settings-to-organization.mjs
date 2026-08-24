@@ -1,10 +1,12 @@
 /* Phase 2D: copy persisted Activities and Settings into the active organization. */
 import { applicationDefault, initializeApp } from 'firebase-admin/app';
 import { GeoPoint, Timestamp, getFirestore } from 'firebase-admin/firestore';
+import { assertMutationSafety, logMutationSafety } from './lib/safety.mjs';
 
 const apply = process.argv.includes('--apply');
-const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
-if (!projectId) throw new Error('Set GOOGLE_CLOUD_PROJECT, GCLOUD_PROJECT, or NEXT_PUBLIC_FIREBASE_PROJECT_ID.');
+const safety = assertMutationSafety({ apply, scope: 'activities and settings organization migration' });
+const projectId = safety.projectId;
+logMutationSafety(safety);
 
 const app = initializeApp({ projectId, credential: applicationDefault() });
 const db = getFirestore(app);

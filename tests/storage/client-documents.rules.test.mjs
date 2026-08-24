@@ -4,7 +4,7 @@ import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebas
 import { doc, setDoc } from 'firebase/firestore';
 import { getBytes, ref, uploadBytes } from 'firebase/storage';
 
-const PROJECT_ID = 'bsm-client-app-web';
+const PROJECT_ID = 'demo-bsm-client-app';
 const ORG_A = 'storage-org-a';
 const ORG_B = 'storage-org-b';
 const ADMIN = 'storage-admin';
