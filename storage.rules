@@ -29,12 +29,14 @@ service firebase.storage {
     match /organizations/{organizationId}/clients/{clientId}/documents/{documentId}/{fileName} {
       allow read: if organizationMember(organizationId)
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId));
-      allow write: if organizationCanManageClients(organizationId)
+      // Storage Rules have a two-document Firestore access limit. Membership
+      // and the organization license mirror are checked here; Client
+      // existence/status is enforced by the matching Firestore metadata create
+      // rule before the upload is considered complete.
+      allow create, update: if organizationCanManageClients(organizationId)
         && licenseAllowsWrites(organizationId)
-        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId))
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status != 'ARCHIVED'
         && request.resource.size > 0
-        && request.resource.size <= 10 * 1024 * 1024
+        && request.resource.size <= 1048576
         && request.resource.contentType in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'image/jpeg', 'image/png'];
       allow delete: if false;
     }

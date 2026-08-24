@@ -13,7 +13,9 @@ const USER_B = 'gate-a-user-b';
 let testEnv;
 
 const now = Timestamp.fromMillis(1_700_000_000_000);
-const organization = { status: 'active', licenseStatus: 'ACTIVE', licenseWriteEnabled: true, licenseExpiresAt: null };
+const licenseExpiry = Timestamp.fromMillis(Date.now() + 86_400_000);
+const organization = { status: 'active', licenseStatus: 'ACTIVE', licenseWriteEnabled: true, licenseExpiresAt: licenseExpiry };
+const license = { plan: 'TEAM', status: 'ACTIVE', maxUsers: 3, features: { crm: true }, subscriptionStartedAt: now, subscriptionEndsAt: licenseExpiry, createdAt: now, updatedAt: now, updatedBy: ADMIN };
 const member = (userId, role) => ({ userId, role, status: 'active' });
 const client = (uid = ADMIN) => ({ name: 'Client', status: 'ACTIVE', archived: false, assignedToUid: uid, assignedToName: uid, createdAt: now, createdBy: uid, updatedAt: now, updatedBy: uid });
 const deal = () => ({ title: 'Deal', clientId: 'client-a', leadId: null, value: 100, stage: 'New', status: 'Active', expectedCloseDate: '', assignedToUid: ADMIN, assignedToName: 'Admin', archived: false, createdAt: now, createdBy: ADMIN, updatedAt: now, updatedBy: ADMIN, wonAt: null, lostAt: null, lossReason: null });
@@ -38,6 +40,8 @@ async function seed() {
       setDoc(doc(db, `organizations/${ORG_B}/tasks/task-b`), { ...task(), assignedToUid: USER_B, assignedToName: 'User B', createdBy: USER_B, updatedBy: USER_B }),
       setDoc(doc(db, `organizations/${ORG_A}/settings/settings`), { businessName: 'A' }),
       setDoc(doc(db, `organizations/${ORG_B}/settings/settings`), { businessName: 'B' }),
+      setDoc(doc(db, `organizations/${ORG_A}/license/current`), license),
+      setDoc(doc(db, `organizations/${ORG_B}/license/current`), license),
     ]);
   });
 }

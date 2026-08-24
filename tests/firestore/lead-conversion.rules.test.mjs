@@ -5,12 +5,17 @@ import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebas
 import {
   collection,
   doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
   getDoc,
   runTransaction,
   serverTimestamp,
   setDoc,
   Timestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-bsm-client-app';
@@ -181,6 +186,25 @@ test('active ADMIN allows the exact atomic conversion transaction', async () => 
   assert.equal((await getDoc(result.leadRef)).data().status, 'Client');
   assert.equal((await getDoc(result.clientRef)).data().sourceLeadId, LEAD_ID);
   assert.equal((await getDoc(result.timelineRef)).data().entryType, 'SYSTEM');
+});
+
+test('converted Client matches the Clients list query and remains linked to the Lead', async () => {
+  const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const result = await assertSucceeds(productionConversion(db));
+  const clientsQuery = query(
+    collection(db, `${organizationPath()}/clients`),
+    where('archived', '==', false),
+    orderBy('createdAt', 'desc'),
+    limit(25),
+  );
+  const snapshot = await assertSucceeds(getDocs(clientsQuery));
+  const convertedClient = snapshot.docs.find((item) => item.id === result.clientRef.id);
+  assert.ok(convertedClient);
+  assert.equal(convertedClient.data().status, 'ACTIVE');
+  assert.equal(convertedClient.data().archived, false);
+  assert.equal(convertedClient.data().sourceLeadId, LEAD_ID);
+  assert.equal(convertedClient.data().assignedToUid, ADMIN_UID);
+  assert.equal((await getDoc(result.leadRef)).data().convertedClientId, result.clientRef.id);
 });
 
 test('each production conversion write is allowed independently for an ADMIN', async () => {

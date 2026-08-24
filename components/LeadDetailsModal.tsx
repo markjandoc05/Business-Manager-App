@@ -3,9 +3,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Loader2, NotebookPen, Phone, X } from 'lucide-react';
 import { Button, Card, Badge } from '@/components/ui/core';
+import { TaskCard } from '@/components/TaskCard';
 import { completeLeadTimelineActivity, createLeadTimelineEntry, listLeadTimeline, type LeadTimelineCursor } from '@/lib/repositories/leadTimeline';
 import type { AppUser } from '@/types/auth';
-import type { Lead, LeadActivityType, LeadTimelineEntry } from '@/types';
+import type { Lead, LeadActivityType, LeadTimelineEntry, Task } from '@/types';
 
 const activityTypes: LeadActivityType[] = ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other'];
 
@@ -22,7 +23,7 @@ function currentDateTimeValue() {
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
 }
 
-export function LeadDetailsModal({ lead, user, organizationId, canWrite, onAddTask, onClose }: { lead: Lead; user: AppUser; organizationId: string; canWrite: boolean; onAddTask: (task: { title: string; description: string; type: 'Follow-up'; dueDate: string; priority: 'Medium'; relatedTo: { type: 'Lead'; id: string } }) => Promise<void>; onClose: () => void }) {
+export function LeadDetailsModal({ lead, user, organizationId, canWrite, tasks, tasksLoading, tasksError, onLoadTasks, onAddTask, onCompleteTask, timezone, onClose }: { lead: Lead; user: AppUser; organizationId: string; canWrite: boolean; tasks: Task[]; tasksLoading: boolean; tasksError: string | null; onLoadTasks: (leadId: string) => Promise<void>; onAddTask: (task: { title: string; description: string; type: 'Follow-up'; dueDate: string; priority: 'Medium'; relatedTo: { type: 'Lead'; id: string } }) => Promise<void>; onCompleteTask: (taskId: string) => Promise<void>; timezone?: string; onClose: () => void }) {
   const [entries, setEntries] = useState<LeadTimelineEntry[]>([]);
   const [cursor, setCursor] = useState<LeadTimelineCursor>(null);
   const [hasMore, setHasMore] = useState(false);
@@ -36,6 +37,7 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, onAddTa
   const [saving, setSaving] = useState(false);
   const [completingEntryId, setCompletingEntryId] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
@@ -58,6 +60,10 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, onAddTa
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [lead.id, organizationId, user]);
+
+  useEffect(() => {
+    void onLoadTasks(lead.id);
+  }, [lead.id, onLoadTasks]);
 
   const loadMore = async () => {
     if (!cursor || loadingMore) return;
@@ -112,6 +118,23 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, onAddTa
 
   const activityIsScheduled = formType === 'ACTIVITY' && Number.isFinite(new Date(occurredAt).getTime()) && new Date(occurredAt).getTime() > currentTime;
 
+  const leadTasks = tasks.filter((task) => task.relatedTo?.type === 'Lead' && task.relatedTo.id === lead.id && !task.archived);
+  const openTasks = leadTasks.filter((task) => task.status === 'Pending');
+  const completedTasks = leadTasks.filter((task) => task.status === 'Completed');
+  const completeTask = async (taskId: string) => {
+    if (completingTaskId) return;
+    setCompletingTaskId(taskId);
+    setError(null);
+    try {
+      await onCompleteTask(taskId);
+    } catch (completionError) {
+      console.error('Unable to complete Lead task', completionError);
+      setError(completionError instanceof Error ? completionError.message : 'Unable to update the task. Please try again.');
+    } finally {
+      setCompletingTaskId(null);
+    }
+  };
+
   const completeActivity = async (entry: LeadTimelineEntry) => {
     if (completingEntryId) return;
     setCompletingEntryId(entry.id);
@@ -151,6 +174,13 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, onAddTa
           </form>}
           {loading ? <p className="py-8 text-center text-sm text-slate-500">Loading timeline…</p> : entries.length === 0 ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">No activity or notes yet.</p> : <div className="space-y-3">{entries.map((entry) => { const scheduled = entry.entryType === 'ACTIVITY' && entry.activityStatus === 'SCHEDULED'; const overdue = scheduled && new Date(entry.occurredAt).getTime() <= currentTime; const completed = entry.entryType === 'ACTIVITY' && entry.activityStatus === 'COMPLETED'; return <div key={entry.id} className="rounded-xl border border-slate-200 p-4"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-semibold uppercase tracking-wide text-slate-500">{entry.entryType === 'ACTIVITY' ? entry.activityType : entry.entryType}</span>{scheduled && <Badge variant={overdue ? 'red' : 'blue'}>{overdue ? 'Overdue' : 'Scheduled'}</Badge>}{completed && <Badge variant="green">Completed</Badge>}<span className="text-xs text-slate-400">{overdue ? `Was scheduled for ${formatDate(entry.occurredAt)}` : scheduled ? `Scheduled for ${formatDate(entry.occurredAt)}` : formatDate(entry.occurredAt)}</span></div><p className="mt-2 text-sm text-slate-800">{entry.content}</p><p className="mt-2 text-xs text-slate-500">{entry.createdByName}</p>{scheduled && <Button size="sm" variant="outline" className="mt-3" disabled={!canWrite || completingEntryId === entry.id} onClick={() => void completeActivity(entry)}>{completingEntryId === entry.id ? 'Completing…' : 'Mark Complete'}</Button>}</div>; })}</div>}
           {hasMore && <div className="mt-4 text-center"><Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>{loadingMore ? 'Loading…' : 'Load More'}</Button></div>}
+        </section>
+
+        <section aria-labelledby="lead-tasks-heading">
+          <div className="mb-3 flex items-center justify-between gap-2"><div><h4 id="lead-tasks-heading" className="text-lg font-bold text-slate-900">Tasks</h4><p className="text-xs text-slate-500">Related to: this Lead</p></div><span className="text-xs text-slate-500">{openTasks.length} Open</span></div>
+          {tasksError && <p className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{tasksError}</p>}
+          {tasksLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading tasks…</p> : openTasks.length === 0 ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">No open tasks for this lead.</p> : <div className="space-y-2">{openTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} timezone={timezone} canManage={canWrite} busy={completingTaskId === task.id} onToggle={(taskId) => void completeTask(taskId)} />)}</div>}
+          {completedTasks.length > 0 && <details className="mt-5 rounded-xl border border-slate-100 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-600">Completed ({completedTasks.length})</summary><div className="mt-3 space-y-2">{completedTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} timezone={timezone} canManage={canWrite} busy={completingTaskId === task.id} onToggle={(taskId) => void completeTask(taskId)} />)}</div></details>}
         </section>
       </div>
     </Card>

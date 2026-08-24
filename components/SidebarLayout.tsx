@@ -11,7 +11,8 @@ import {
   CheckSquare, 
   BarChart3, 
   Settings,
-  ChevronLeft,
+  PanelLeftClose,
+  PanelLeftOpen,
   Menu,
   Briefcase,
   LogOut
@@ -24,49 +25,77 @@ import { canManageSettings } from '@/lib/permissions';
 import { useWorkspace } from '@/context/WorkspaceContext';
 
 const baseSidebarItems = [
-  { name: 'Dashboard', icon: LayoutDashboard, href: '/' },
-  { name: 'Leads', icon: Users, href: '/leads' },
-  { name: 'Clients', icon: UserCircle, href: '/clients' },
-  { name: 'Pipeline', icon: Kanban, href: '/pipeline' },
-  { name: 'Tasks', icon: CheckSquare, href: '/tasks' },
-  { name: 'Reports', icon: BarChart3, href: '/reports' },
-  { name: 'Settings', icon: Settings, href: '/settings' },
+  { section: 'MAIN', name: 'Dashboard', icon: LayoutDashboard, href: '/' },
+  { section: 'SALES', name: 'Leads', icon: Users, href: '/leads' },
+  { section: 'SALES', name: 'Clients', icon: UserCircle, href: '/clients' },
+  { section: 'SALES', name: 'Pipeline', icon: Kanban, href: '/pipeline' },
+  { section: 'SALES', name: 'Tasks', icon: CheckSquare, href: '/tasks' },
+  { section: 'INSIGHTS', name: 'Reports', icon: BarChart3, href: '/reports' },
+  { section: 'WORKSPACE', name: 'Settings', icon: Settings, href: '/settings' },
 ];
+
+const SIDEBAR_PREFERENCE_KEY = 'bsm_sidebar_collapsed';
 
 export default function SidebarLayout({ children }: { children: React.ReactNode }) {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
+  const [mobileSidebarWidth, setMobileSidebarWidth] = useState(300);
   const pathname = usePathname();
   const { user, signOut } = useAuth();
   const { settings } = useApp();
-  const { membership, licenseState, isReadOnly } = useWorkspace();
+  const { membership, currentOrganization, licenseState, isReadOnly } = useWorkspace();
   const sidebarItems = baseSidebarItems.filter((item) => item.href !== '/settings' || canManageSettings(membership));
+  const sidebarSections = ['MAIN', 'SALES', 'INSIGHTS', 'WORKSPACE'].map((section) => ({
+    label: section,
+    items: sidebarItems.filter((item) => item.section === section),
+  })).filter((section) => section.items.length > 0);
 
   const [isDesktop, setIsDesktop] = useState(true);
 
-  // Handle responsive behavior
   useEffect(() => {
     const handleResize = () => {
       const desktop = window.innerWidth >= 1024;
       setIsDesktop(desktop);
-      setIsCollapsed(!desktop);
+      setMobileSidebarWidth(Math.min(300, Math.round(window.innerWidth * 0.88)));
+      if (desktop) setIsMobileOpen(false);
     };
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    const saved = window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY);
+    if (saved !== null) setIsCollapsed(saved === 'true');
+    setSidebarPreferenceLoaded(true);
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (sidebarPreferenceLoaded) window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(isCollapsed));
+  }, [isCollapsed, sidebarPreferenceLoaded]);
+
   useEffect(() => {
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !isDesktop) {
         setIsMobileOpen(false);
       }
     };
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
-  }, []);
+  }, [isDesktop]);
+
+  useEffect(() => {
+    if (!isMobileOpen || isDesktop) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [isDesktop, isMobileOpen]);
 
   const sidebarCollapsed = isDesktop && isCollapsed;
+  const sidebarWidth = isDesktop ? (sidebarCollapsed ? 68 : 248) : mobileSidebarWidth;
 
   return (
     <div className="flex h-screen bg-[#f7f7f8] text-slate-800 antialiased">
@@ -78,93 +107,95 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsMobileOpen(false)}
-            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+            className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-[1px] lg:hidden"
+            aria-hidden="true"
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
       <motion.aside
-        animate={{ 
-          width: sidebarCollapsed ? '64px' : '224px',
-          x: isMobileOpen || isDesktop ? 0 : -224
-        }}
+        animate={{ width: sidebarWidth, x: isMobileOpen || isDesktop ? 0 : -sidebarWidth }}
+        transition={{ duration: 0.2, ease: 'easeInOut' }}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col bg-[#f7f7f8] text-slate-700 transition-all duration-300 ease-in-out lg:relative border-r border-slate-200",
+          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-slate-200 bg-white text-slate-700 lg:relative",
           sidebarCollapsed ? "items-center" : "items-stretch"
         )}
       >
         {/* Logo Section */}
         <div className={cn(
-          "flex items-center h-14 px-5 border-b border-slate-200",
-          sidebarCollapsed ? "h-auto flex-col gap-1 px-2 py-2" : "justify-between"
+          "flex h-14 items-center border-b border-slate-100",
+          sidebarCollapsed ? "h-auto flex-col gap-2 px-2 py-3" : "justify-between px-4"
         )}>
           <div className="flex items-center gap-3">
             <div
-              className="flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-cover bg-center shadow-sm"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-cover bg-center"
               style={{ backgroundColor: settings.accentColor || '#3b82f6', ...(settings.logoUrl ? { backgroundImage: `url(${settings.logoUrl})` } : {}) }}
             >
               {!settings.logoUrl && <Briefcase size={18} className="text-white" />}
             </div>
-            {!sidebarCollapsed && <span className="max-w-[135px] truncate text-sm font-semibold tracking-tight text-slate-900">{settings.businessName}</span>}
+            {!sidebarCollapsed && <div className="min-w-0"><p className="max-w-[150px] truncate text-sm font-semibold tracking-tight text-slate-900">{settings.businessName}</p><p className="max-w-[150px] truncate text-[11px] text-slate-400">{currentOrganization?.name || 'Workspace'}</p></div>}
           </div>
           {!sidebarCollapsed ? (
             <button 
-              onClick={() => setIsCollapsed(true)}
-              aria-label="Collapse sidebar"
-              title="Collapse sidebar"
-              className="hidden rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700 lg:flex"
+              onClick={() => isDesktop ? setIsCollapsed(true) : setIsMobileOpen(false)}
+              aria-label={isDesktop ? 'Close sidebar' : 'Close navigation'}
+              title={isDesktop ? 'Close sidebar' : 'Close navigation'}
+              className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
             >
-              <ChevronLeft size={18} />
+              <PanelLeftClose size={18} />
             </button>
-          ) : <button onClick={() => setIsCollapsed(false)} aria-label="Expand sidebar" title="Expand sidebar" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"><ChevronLeft size={18} className="rotate-180" /></button>}
+          ) : <button onClick={() => setIsCollapsed(false)} aria-label="Open sidebar" title="Open sidebar" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><PanelLeftOpen size={18} /></button>}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-5 space-y-0.5 overflow-y-auto">
-          {sidebarItems.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                className={cn(
-                  "flex h-9 items-center gap-3 rounded-md px-3 text-[13px] transition-colors duration-150 group",
-                  sidebarCollapsed ? "justify-center" : "",
-                  isActive 
-                    ? "bg-slate-200 text-slate-900 font-medium"
-                    : "text-slate-600 hover:bg-slate-200/80 hover:text-slate-900"
-                )}
-                title={sidebarCollapsed ? item.name : undefined}
-                style={isActive ? { color: settings.accentColor || '#3b82f6' } : undefined}
-                onClick={() => setIsMobileOpen(false)}
-              >
-                <item.icon size={20} className={cn(
-                  "shrink-0",
-                  isActive ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700"
-                )} />
-                {!sidebarCollapsed && <span>{item.name}</span>}
-              </Link>
-            );
-          })}
+        <nav className={cn("flex-1 overflow-y-auto py-4", sidebarCollapsed ? "px-2" : "px-3")} aria-label="Primary navigation">
+          {sidebarSections.map((section) => (
+            <div key={section.label} className="mb-4 last:mb-0">
+              {!sidebarCollapsed && <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{section.label}</p>}
+              <div className="space-y-0.5">
+                {section.items.map((item) => {
+                  const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      className={cn(
+                        "group flex h-9 items-center gap-3 rounded-lg text-[13px] transition-colors duration-150",
+                        sidebarCollapsed ? "justify-center px-0" : "px-3",
+                        isActive
+                          ? "bg-blue-50 font-medium text-slate-900"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                      )}
+                      title={sidebarCollapsed ? item.name : undefined}
+                      onClick={() => setIsMobileOpen(false)}
+                    >
+                      <item.icon size={18} className={cn("shrink-0", isActive ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700")} />
+                      {!sidebarCollapsed && <span>{item.name}</span>}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* Footer Profile Section */}
         <div className={cn(
-          "p-4 border-t border-slate-200",
+          "border-t border-slate-100 p-3",
           sidebarCollapsed ? "flex justify-center" : ""
         )}>
           {sidebarCollapsed ? (
-             <button title="Sign out" onClick={() => signOut()} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</button>
+             <button title="Sign out" aria-label="Sign out" onClick={() => signOut()} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">{user?.name.slice(0, 2).toUpperCase()}</button>
           ) : (
             <div className="flex items-center gap-3">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-slate-900">{user?.name}</p>
                 <p className="truncate text-xs text-slate-500">{user?.email}</p>
                 <p className="truncate text-[10px] text-slate-500">{membership?.role || 'Loading role…'}</p>
               </div>
-              <button title="Sign out" onClick={() => signOut()} className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-800" aria-label="Sign out"><LogOut size={16} /></button>
+              <button title="Sign out" onClick={() => signOut()} className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30" aria-label="Sign out"><LogOut size={16} /></button>
             </div>
           )}
         </div>
@@ -174,7 +205,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="flex-1 overflow-y-auto p-4 sm:p-5">
           <div className="mb-3 lg:hidden">
-            <button type="button" onClick={() => setIsMobileOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50" aria-label="Open navigation">
+            <button type="button" onClick={() => setIsMobileOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30" aria-label="Open navigation">
               <Menu size={18} /> Menu
             </button>
           </div>

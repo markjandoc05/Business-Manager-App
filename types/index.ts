@@ -51,6 +51,9 @@ export interface Note {
   createdByUid?: string;
   createdByName?: string;
   createdAt: string;
+  archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
 }
 
 export interface DocumentItem {
@@ -66,6 +69,9 @@ export interface DocumentItem {
   uploadedByName?: string;
   /** @deprecated Read legacy metadata during the transition only. */
   uploadedBy?: string;
+  archived?: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
 }
 
 export interface Client {

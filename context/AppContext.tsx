@@ -4,11 +4,11 @@ import React, { createContext, useCallback, useContext, useState, useEffect, use
 import { usePathname } from 'next/navigation';
 import { Lead, Client, Deal, Task, Activity, Settings, DocumentItem, Note } from '../types';
 import { useAuth } from '@/context/AuthContext';
-import { addClientNote, archiveClient as archiveClientRepository, createClient as createClientRepository, listArchivedClientsPage, listClientDocumentsPage, listClientNotesPage, listClientsPage, permanentlyDeleteClient as permanentlyDeleteClientRepository, restoreClient as restoreClientRepository, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
+import { addClientNote, archiveClient as archiveClientRepository, archiveClientDocument as archiveClientDocumentRepository, archiveClientNote as archiveClientNoteRepository, createClient as createClientRepository, getClientById, listArchivedClientDocuments, listArchivedClientNotes, listArchivedClientsPage, listClientDocumentsPage, listClientNotesPage, listClientsPage, permanentlyDeleteClient as permanentlyDeleteClientRepository, permanentlyDeleteClientDocument as permanentlyDeleteClientDocumentRepository, permanentlyDeleteClientNote as permanentlyDeleteClientNoteRepository, restoreClient as restoreClientRepository, restoreClientDocument as restoreClientDocumentRepository, restoreClientNote as restoreClientNoteRepository, uploadClientDocument, updateClient as updateClientRepository, type ClientInput } from '@/lib/repositories/clients';
 import { archiveLead as archiveLeadRepository, convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeadsPage, listLeadsPage, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository, updateLead as updateLeadRepository, updateLeadStatus as updateLeadStatusRepository, type LeadInput, type LeadListFilters } from '@/lib/repositories/leads';
 import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDealsPage, listDeals, permanentlyDeleteDeal as permanentlyDeleteDealRepository, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
-import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
-import { defaultSettings, loadSettings, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
+import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listLeadTasks, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
+import { defaultSettings, loadSettings, SettingsLoadError, SettingsPersistenceError, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
 import { invalidateDashboardMetrics } from '@/lib/repositories/dashboard';
 import { listActivities } from '@/lib/repositories/activities';
 import { listAssignableOrganizationUsers, type AssignableUser } from '@/lib/repositories/users';
@@ -42,9 +42,11 @@ interface AppContextType {
   loadMoreArchivedDeals: () => Promise<void>;
   loadMoreArchivedTasks: () => Promise<void>;
   clientNotes: Note[];
+  archivedClientNotes: Note[];
   clientNotesLoading: boolean;
   clientNotesError: string | null;
   clientDocuments: DocumentItem[];
+  archivedClientDocuments: DocumentItem[];
   clientDocumentsLoading: boolean;
   clientDocumentsError: string | null;
   deals: Deal[];
@@ -53,12 +55,18 @@ interface AppContextType {
   tasks: Task[];
   tasksLoading: boolean;
   tasksError: string | null;
+  leadTasks: Task[];
+  leadTasksLoading: boolean;
+  leadTasksError: string | null;
+  loadLeadTasks: (leadId: string) => Promise<void>;
   users: AssignableUser[];
   usersLoading: boolean;
   usersError: string | null;
   activities: Activity[];
   refreshActivities: () => Promise<void>;
   settings: Settings;
+  settingsLoading: boolean;
+  settingsError: string | null;
   addLead: (lead: LeadActionInput) => Promise<void>;
   updateLead: (leadId: string, lead: LeadActionInput) => Promise<void>;
   updateLeadStatus: (lead: Lead, status: Lead['status']) => Promise<void>;
@@ -68,13 +76,15 @@ interface AppContextType {
   archiveClient: (clientId: string) => Promise<void>;
   restoreClient: (clientId: string) => Promise<void>;
   permanentlyDeleteClient: (clientId: string) => Promise<void>;
-  refreshClients: () => Promise<void>;
+  refreshClients: (ensureClientId?: string) => Promise<void>;
   loadMoreClients: () => Promise<void>;
   clientsHasMore: boolean;
   loadClientNotes: (clientId: string) => Promise<void>;
+  loadArchivedClientNotes: (clientId: string) => Promise<void>;
   loadMoreClientNotes: () => Promise<void>;
   clientNotesHasMore: boolean;
   loadClientDocuments: (clientId: string) => Promise<void>;
+  loadArchivedClientDocuments: (clientId: string) => Promise<void>;
   loadMoreClientDocuments: () => Promise<void>;
   clientDocumentsHasMore: boolean;
   addDeal: (deal: Omit<Deal, 'id' | 'createdAt' | 'status'>) => Promise<void>;
@@ -97,7 +107,13 @@ interface AppContextType {
   permanentlyDeleteLead: (leadId: string) => Promise<void>;
   convertLeadToClient: (leadId: string) => Promise<void>;
   addNote: (clientId: string, content: string) => Promise<void>;
+  archiveClientNote: (clientId: string, noteId: string) => Promise<void>;
+  restoreClientNote: (clientId: string, noteId: string) => Promise<void>;
+  permanentlyDeleteClientNote: (clientId: string, noteId: string) => Promise<void>;
   uploadDocument: (clientId: string, file: File) => Promise<void>;
+  archiveClientDocument: (clientId: string, documentId: string) => Promise<void>;
+  restoreClientDocument: (clientId: string, documentId: string) => Promise<void>;
+  permanentlyDeleteClientDocument: (clientId: string, documentId: string) => Promise<void>;
   updateSettings: (settings: Partial<Settings>) => Promise<void>;
   canWrite: boolean;
   isReadOnly: boolean;
@@ -146,10 +162,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [tasksError, setTasksError] = useState<string | null>(null);
   const [tasksCursor, setTasksCursor] = useState<FirestoreCursor>(null);
   const [tasksHasMore, setTasksHasMore] = useState(false);
+  const [leadTasks, setLeadTasks] = useState<Task[]>([]);
+  const [leadTasksOrganizationId, setLeadTasksOrganizationId] = useState<string | null>(null);
+  const [leadTasksUserId, setLeadTasksUserId] = useState<string | null>(null);
+  const [leadTasksLoading, setLeadTasksLoading] = useState(false);
+  const [leadTasksError, setLeadTasksError] = useState<string | null>(null);
   const leadFiltersRef = useRef<LeadListFilters>({});
   const taskFiltersRef = useRef<TaskListFilters>({});
   const leadsRequestRef = useRef(0);
+  const clientsRequestRef = useRef(0);
   const tasksRequestRef = useRef(0);
+  const leadTasksRequestRef = useRef(0);
   const [users, setUsers] = useState<AssignableUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(true);
   const [usersError, setUsersError] = useState<string | null>(null);
@@ -174,12 +197,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [archivedTasksHasMore, setArchivedTasksHasMore] = useState(false);
   const [clientNotes, setClientNotes] = useState<Note[]>([]);
   const [clientNotesOrganizationId, setClientNotesOrganizationId] = useState<string | null>(null);
+  const [clientNotesClientId, setClientNotesClientId] = useState<string | null>(null);
+  const [archivedClientNotes, setArchivedClientNotes] = useState<Note[]>([]);
+  const [archivedClientNotesOrganizationId, setArchivedClientNotesOrganizationId] = useState<string | null>(null);
+  const [archivedClientNotesClientId, setArchivedClientNotesClientId] = useState<string | null>(null);
   const [clientNotesLoading, setClientNotesLoading] = useState(false);
   const [clientNotesError, setClientNotesError] = useState<string | null>(null);
   const [clientNotesCursor, setClientNotesCursor] = useState<FirestoreCursor>(null);
   const [clientNotesHasMore, setClientNotesHasMore] = useState(false);
   const [clientDocuments, setClientDocuments] = useState<DocumentItem[]>([]);
   const [clientDocumentsOrganizationId, setClientDocumentsOrganizationId] = useState<string | null>(null);
+  const [clientDocumentsClientId, setClientDocumentsClientId] = useState<string | null>(null);
+  const [archivedClientDocuments, setArchivedClientDocuments] = useState<DocumentItem[]>([]);
+  const [archivedClientDocumentsOrganizationId, setArchivedClientDocumentsOrganizationId] = useState<string | null>(null);
+  const [archivedClientDocumentsClientId, setArchivedClientDocumentsClientId] = useState<string | null>(null);
   const [clientDocumentsLoading, setClientDocumentsLoading] = useState(false);
   const [clientDocumentsError, setClientDocumentsError] = useState<string | null>(null);
   const [clientDocumentsCursor, setClientDocumentsCursor] = useState<FirestoreCursor>(null);
@@ -234,6 +265,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setClientNotesCursor(loadedNotes.nextCursor);
       setClientNotesHasMore(loadedNotes.hasMore);
       setClientNotesOrganizationId(organizationId);
+      setClientNotesClientId(clientId);
     } catch (error) {
       console.error('Unable to load client notes', error);
       if (requestId === clientNotesRequestRef.current && organizationId === currentOrganizationRef.current) setClientNotesError('Unable to load client notes. Please try again.');
@@ -257,11 +289,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setClientDocumentsCursor(loadedDocuments.nextCursor);
       setClientDocumentsHasMore(loadedDocuments.hasMore);
       setClientDocumentsOrganizationId(organizationId);
+      setClientDocumentsClientId(clientId);
     } catch (error) {
       console.error('Unable to load client documents', error);
       if (requestId === clientDocumentsRequestRef.current && organizationId === currentOrganizationRef.current) setClientDocumentsError('Unable to load client documents. Please try again.');
     } finally {
       if (requestId === clientDocumentsRequestRef.current) setClientDocumentsLoading(false);
+    }
+  }, [currentOrganizationId, user]);
+
+  const loadArchivedClientNotes = useCallback(async (clientId: string) => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    try {
+      const loadedNotes = await listArchivedClientNotes(user, organizationId, clientId);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setArchivedClientNotes(loadedNotes);
+      setArchivedClientNotesOrganizationId(organizationId);
+      setArchivedClientNotesClientId(clientId);
+    } catch (error) {
+      console.error('Unable to load archived client notes', error);
     }
   }, [currentOrganizationId, user]);
 
@@ -293,51 +340,73 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } finally { if (organizationId === currentOrganizationRef.current) setClientDocumentsLoading(false); }
   }, [clientDocuments, clientDocumentsCursor, clientDocumentsLoading, currentOrganizationId, user]);
 
-  const refreshClients = useCallback(async () => {
+  const refreshClients = useCallback(async (ensureClientId?: string) => {
     if (!user || !currentOrganizationId) return;
+    const requestId = ++clientsRequestRef.current;
     const organizationId = currentOrganizationId;
     setClientsLoading(true);
     setClientsError(null);
     try {
       const loadedClients = await listClientsPage(user, organizationId);
-      if (organizationId !== currentOrganizationRef.current) return;
-      setClients(loadedClients.items);
+      let nextClients = loadedClients.items;
+      if (ensureClientId && !nextClients.some((client) => client.id === ensureClientId)) {
+        const ensuredClient = await getClientById(user, organizationId, ensureClientId);
+        if (!ensuredClient.archived) nextClients = [ensuredClient, ...nextClients];
+      }
+      if (requestId !== clientsRequestRef.current || organizationId !== currentOrganizationRef.current) return;
+      setClients(nextClients);
       setClientsCursor(loadedClients.nextCursor);
       setClientsHasMore(loadedClients.hasMore);
       setClientsOrganizationId(organizationId);
     } catch (error) {
       console.error('Unable to load shared clients', error);
-      if (organizationId === currentOrganizationRef.current) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
+      if (requestId === clientsRequestRef.current && organizationId === currentOrganizationRef.current) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
     } finally {
-      if (organizationId === currentOrganizationRef.current) setClientsLoading(false);
+      if (requestId === clientsRequestRef.current && organizationId === currentOrganizationRef.current) setClientsLoading(false);
+    }
+  }, [currentOrganizationId, user]);
+
+  const loadArchivedClientDocuments = useCallback(async (clientId: string) => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    try {
+      const loadedDocuments = await listArchivedClientDocuments(user, organizationId, clientId);
+      if (organizationId !== currentOrganizationRef.current) return;
+      setArchivedClientDocuments(loadedDocuments);
+      setArchivedClientDocumentsOrganizationId(organizationId);
+      setArchivedClientDocumentsClientId(clientId);
+    } catch (error) {
+      console.error('Unable to load archived client documents', error);
     }
   }, [currentOrganizationId, user]);
 
 
   const loadMoreClients = useCallback(async () => {
     if (!user || !currentOrganizationId || !clientsCursor || clientsLoading) return;
+    const requestId = ++clientsRequestRef.current;
     const organizationId = currentOrganizationId;
     setClientsLoading(true);
     try {
       const page = await listClientsPage(user, organizationId, clientsCursor);
-      if (organizationId !== currentOrganizationRef.current) return;
+      if (requestId !== clientsRequestRef.current || organizationId !== currentOrganizationRef.current) return;
       setClients((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setClientsCursor(page.nextCursor);
       setClientsHasMore(page.hasMore);
     } finally {
-      if (organizationId === currentOrganizationRef.current) setClientsLoading(false);
+      if (requestId === clientsRequestRef.current && organizationId === currentOrganizationRef.current) setClientsLoading(false);
     }
   }, [clientsCursor, clientsLoading, currentOrganizationId, user]);
 
   useEffect(() => {
     if (!canLoadTenantData || !user || !currentOrganizationId || !loadsClients) return;
     let cancelled = false;
+    const requestId = ++clientsRequestRef.current;
     const loadClients = async () => {
       setClientsLoading(true);
       setClientsError(null);
       try {
         const loadedClients = await listClientsPage(user, currentOrganizationId, null, isDashboardRoute ? 10 : undefined);
-        if (!cancelled) {
+        if (!cancelled && requestId === clientsRequestRef.current) {
           setClients(loadedClients.items);
           setClientsCursor(loadedClients.nextCursor);
           setClientsHasMore(loadedClients.hasMore);
@@ -345,9 +414,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
       } catch (error) {
         console.error('Unable to load shared clients', error);
-        if (!cancelled) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
+        if (!cancelled && requestId === clientsRequestRef.current) setClientsError(firestoreQueryErrorMessage(error, 'Unable to load clients. Please check your connection and try again.'));
       } finally {
-        if (!cancelled) setClientsLoading(false);
+        if (!cancelled && requestId === clientsRequestRef.current) setClientsLoading(false);
       }
     };
     void loadClients();
@@ -442,6 +511,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (requestId === tasksRequestRef.current) setTasksError(firestoreQueryErrorMessage(error, 'Unable to load tasks. Please check your connection and try again.'));
     } finally {
       if (requestId === tasksRequestRef.current) setTasksLoading(false);
+    }
+  }, [currentOrganizationId, user]);
+
+  const loadLeadTasks = useCallback(async (leadId: string) => {
+    if (!user || !currentOrganizationId) return;
+    const organizationId = currentOrganizationId;
+    const requestId = ++leadTasksRequestRef.current;
+    setLeadTasksLoading(true);
+    setLeadTasksError(null);
+    setLeadTasks([]);
+    setLeadTasksOrganizationId(organizationId);
+    setLeadTasksUserId(user.uid);
+    try {
+      const loadedTasks = await listLeadTasks(user, organizationId, leadId);
+      if (requestId !== leadTasksRequestRef.current || organizationId !== currentOrganizationRef.current) return;
+      setLeadTasks(loadedTasks);
+      setLeadTasksOrganizationId(organizationId);
+    } catch (error) {
+      console.error('Unable to load Lead tasks', error);
+      if (requestId === leadTasksRequestRef.current && organizationId === currentOrganizationRef.current) {
+        setLeadTasksError(firestoreQueryErrorMessage(error, 'Unable to load Lead tasks. Please try again.'));
+      }
+    } finally {
+      if (requestId === leadTasksRequestRef.current) setLeadTasksLoading(false);
     }
   }, [currentOrganizationId, user]);
 
@@ -621,10 +714,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [settingsOrganizationId, setSettingsOrganizationId] = useState<string | null>(null);
+  const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!canLoadTenantData || !user || !currentOrganizationId) return;
     let cancelled = false;
+    const resetSettingsState = (loading: boolean) => {
+      if (cancelled) return;
+      setSettings(defaultSettings);
+      setSettingsOrganizationId(null);
+      setSettingsLoading(loading);
+      setSettingsError(null);
+    };
+
+    if (!canLoadTenantData || !user || !currentOrganizationId) {
+      queueMicrotask(() => resetSettingsState(false));
+      return () => { cancelled = true; };
+    }
+    queueMicrotask(() => resetSettingsState(true));
     const load = async () => {
       try {
         const loadedSettings = await loadSettings(user, currentOrganizationId);
@@ -633,20 +740,64 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           setSettingsOrganizationId(currentOrganizationId);
         }
       } catch (error) {
-        console.error('Unable to load shared business settings', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[Settings load diagnostic]', JSON.stringify(error instanceof SettingsLoadError ? error.diagnostics : {
+            errorName: (error as { name?: string }).name,
+            firebaseCode: (error as { code?: string }).code,
+            firebaseMessage: (error as { message?: string }).message,
+            path: `organizations/${currentOrganizationId}/settings/settings`,
+            operation: 'get',
+            sourceFunction: 'AppProvider.settingsLoad',
+            projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+            authResolved: authStatus === 'active',
+            currentUserPresent: Boolean(user),
+            navigatorOnline: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+            authenticatedUid: user?.uid,
+            organizationId: currentOrganizationId,
+          }));
+        }
+        if (!cancelled) setSettingsError('Unable to load business settings. Please check your connection and try again.');
+      } finally {
+        if (!cancelled) setSettingsLoading(false);
       }
     };
     void load();
     return () => { cancelled = true; };
-  }, [canLoadTenantData, currentOrganizationId, user]);
+  }, [authStatus, canLoadTenantData, currentOrganizationId, user]);
 
   const updateSettings = async (newSettings: Partial<Settings>) => {
-    if (!user) return;
-    requireWritableLicense();
-    if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    await updateSettingsRepository(user, currentOrganizationId, newSettings);
-    setSettings(prev => ({ ...prev, ...newSettings }));
-    setSettingsOrganizationId(currentOrganizationId);
+    try {
+      if (!user) return;
+      requireWritableLicense();
+      if (settingsLoading) throw new Error('Business settings are still loading. Please wait a moment and try again.');
+      if (!currentOrganizationId) throw new Error('No active organization is selected.');
+      await updateSettingsRepository(user, currentOrganizationId, newSettings);
+      setSettings(prev => ({ ...prev, ...newSettings }));
+      setSettingsOrganizationId(currentOrganizationId);
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[Settings save diagnostic]', JSON.stringify({
+          ...(error instanceof SettingsPersistenceError ? error.diagnostics : {
+            firebaseErrorName: (error as { name?: string }).name,
+            firebaseCode: (error as { code?: string }).code,
+            firebaseMessage: (error as { message?: string }).message,
+            path: currentOrganizationId ? `organizations/${currentOrganizationId}/settings/settings` : null,
+            activityPath: currentOrganizationId ? `organizations/${currentOrganizationId}/activities/<generated-id>` : null,
+            activityType: 'settings_update',
+            operation: 'set',
+            merge: true,
+            transactional: true,
+            batchOperationCount: 2,
+            authenticatedUid: user?.uid,
+            organizationId: currentOrganizationId,
+            resolvedRole: membership?.role,
+          }),
+          licenseCanWrite: canWrite,
+          workspaceReady,
+        }));
+      }
+      throw error;
+    }
   };
 
   const addLead = async (leadData: LeadActionInput) => {
@@ -762,6 +913,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => [newTask, ...prev]);
     setTasksOrganizationId(currentOrganizationId);
+    setLeadTasks((prev) => newTask.relatedTo?.type === 'Lead' ? [newTask, ...prev.filter((task) => task.id !== newTask.id)] : prev);
+    setLeadTasksOrganizationId(currentOrganizationId);
   };
 
   const updateTask = async (taskId: string, taskData: Omit<Task, 'id' | 'status'>) => {
@@ -783,6 +936,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     await completeTaskRepository(user, currentOrganizationId, taskId, nextStatus);
     invalidateDashboardMetrics(currentOrganizationId);
     setTasks(prev => prev.map(item => item.id === taskId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
+    setLeadTasks((prev) => prev.map(item => item.id === taskId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
   };
 
   const archiveTask = async (taskId: string) => {
@@ -881,6 +1035,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setClientNotes(prev => [newNote, ...prev]);
   };
 
+  const archiveClientNote = async (clientId: string, noteId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await archiveClientNoteRepository(user, currentOrganizationId, clientId, noteId);
+    setClientNotes((current) => current.filter((note) => note.id !== noteId));
+    await loadArchivedClientNotes(clientId);
+  };
+
+  const restoreClientNote = async (clientId: string, noteId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await restoreClientNoteRepository(user, currentOrganizationId, clientId, noteId);
+    setArchivedClientNotes((current) => current.filter((note) => note.id !== noteId));
+    await loadClientNotes(clientId);
+  };
+
+  const permanentlyDeleteClientNote = async (clientId: string, noteId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await permanentlyDeleteClientNoteRepository(user, currentOrganizationId, clientId, noteId);
+    setArchivedClientNotes((current) => current.filter((note) => note.id !== noteId));
+  };
+
   const uploadDocument = async (clientId: string, file: File) => {
     if (!user) return;
     requireWritableLicense();
@@ -890,15 +1067,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setClientDocumentsOrganizationId(currentOrganizationId);
   };
 
+  const archiveClientDocument = async (clientId: string, documentId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await archiveClientDocumentRepository(user, currentOrganizationId, clientId, documentId);
+    setClientDocuments((current) => current.filter((document) => document.id !== documentId));
+    await loadArchivedClientDocuments(clientId);
+  };
+
+  const restoreClientDocument = async (clientId: string, documentId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await restoreClientDocumentRepository(user, currentOrganizationId, clientId, documentId);
+    setArchivedClientDocuments((current) => current.filter((document) => document.id !== documentId));
+    await loadClientDocuments(clientId);
+  };
+
+  const permanentlyDeleteClientDocument = async (clientId: string, documentId: string) => {
+    if (!user || !currentOrganizationId) throw new Error('No active organization is selected.');
+    requireWritableLicense();
+    await permanentlyDeleteClientDocumentRepository(user, currentOrganizationId, clientId, documentId);
+    setArchivedClientDocuments((current) => current.filter((document) => document.id !== documentId));
+  };
+
   const convertLeadToClient = async (leadId: string) => {
     const lead = leads.find(l => l.id === leadId);
     if (!lead || !user) return;
     requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    const result = await convertLeadRepository(user, currentOrganizationId, lead);
+    const organizationId = currentOrganizationId;
+    const result = await convertLeadRepository(user, organizationId, lead);
     invalidateDashboardMetrics(currentOrganizationId);
     setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'Client', convertedClientId: result.clientId } : l));
-    await refreshClients();
+    await refreshClients(result.clientId);
   };
 
 
@@ -929,14 +1130,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       loadMoreArchivedDeals,
       loadMoreArchivedTasks,
       clientNotes: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotes : [],
+      archivedClientNotes: canLoadTenantData && archivedClientNotesOrganizationId === currentOrganizationId && archivedClientNotesClientId ? archivedClientNotes : [],
       clientNotesLoading: canLoadTenantData && clientNotesOrganizationId === currentOrganizationId ? clientNotesLoading : false,
       clientNotesError,
       loadMoreClientNotes,
+      loadArchivedClientNotes,
       clientNotesHasMore,
       clientDocuments: canLoadTenantData && clientDocumentsOrganizationId === currentOrganizationId ? clientDocuments : [],
+      archivedClientDocuments: canLoadTenantData && archivedClientDocumentsOrganizationId === currentOrganizationId && archivedClientDocumentsClientId ? archivedClientDocuments : [],
       clientDocumentsLoading: canLoadTenantData && clientDocumentsOrganizationId === currentOrganizationId ? clientDocumentsLoading : false,
       clientDocumentsError,
       loadMoreClientDocuments,
+      loadArchivedClientDocuments,
       clientDocumentsHasMore,
       deals: canLoadTenantData && dealsOrganizationId === currentOrganizationId ? deals : [],
       dealsLoading: canLoadTenantData ? (dealsOrganizationId !== currentOrganizationId || dealsLoading) : false,
@@ -944,12 +1149,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       tasks: canLoadTenantData && tasksOrganizationId === currentOrganizationId ? tasks : [],
       tasksLoading: canLoadTenantData ? (tasksOrganizationId !== currentOrganizationId || tasksLoading) : false,
       tasksError,
+      leadTasks: canLoadTenantData && leadTasksOrganizationId === currentOrganizationId && leadTasksUserId === user?.uid ? leadTasks : [],
+      leadTasksLoading: canLoadTenantData && leadTasksOrganizationId === currentOrganizationId && leadTasksUserId === user?.uid ? leadTasksLoading : false,
+      leadTasksError: canLoadTenantData && leadTasksOrganizationId === currentOrganizationId && leadTasksUserId === user?.uid ? leadTasksError : null,
+      loadLeadTasks,
       users,
       usersLoading,
       usersError,
       activities: canLoadTenantData && activitiesOrganizationId === currentOrganizationId ? activities : [],
       refreshActivities,
       settings: canLoadTenantData && settingsOrganizationId === currentOrganizationId ? settings : defaultSettings,
+      settingsLoading: canLoadTenantData ? settingsLoading || settingsOrganizationId !== currentOrganizationId : false,
+      settingsError,
       addLead,
       updateLead,
       updateLeadStatus,
@@ -982,7 +1193,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       permanentlyDeleteLead,
       convertLeadToClient,
       addNote,
+      archiveClientNote,
+      restoreClientNote,
+      permanentlyDeleteClientNote,
       uploadDocument,
+      archiveClientDocument,
+      restoreClientDocument,
+      permanentlyDeleteClientDocument,
       updateSettings,
       canWrite,
       isReadOnly,

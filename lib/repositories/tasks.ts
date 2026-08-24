@@ -125,6 +125,27 @@ export async function listTasks(user: AppUser | null, organizationId: string) {
   return (await listTasksPage(user, organizationId)).items;
 }
 
+/**
+ * Load only the non-archived tasks related to one Lead. This is intentionally
+ * separate from the paginated Tasks page query so Lead Details does not depend
+ * on whatever global task page happens to be loaded in AppContext.
+ */
+export async function listLeadTasks(user: AppUser | null, organizationId: string, leadId: string) {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  try {
+    const constraints: QueryConstraint[] = [where('relatedTo.id', '==', leadId)];
+    if (membership.role === 'USER') constraints.push(where('assignedToUid', '==', user?.uid));
+    const snapshot = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), ...constraints));
+    return snapshot.docs
+      .map((taskDoc) => mapTask(taskDoc.id, taskDoc.data()))
+      .filter((task) => !task.archived && task.relatedTo?.type === 'Lead' && task.relatedTo.id === leadId)
+      .sort((left, right) => Date.parse(left.dueDate) - Date.parse(right.dueDate));
+  } catch (error) {
+    reportFirestoreFailure('listLead', error);
+    throw new Error(firestoreQueryErrorMessage(error, 'Unable to load Lead tasks. Please try again.'));
+  }
+}
+
 export async function createTask(user: AppUser | null, organizationId: string, input: TaskInput) {
   await requireTaskManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a task.');

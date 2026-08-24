@@ -14,17 +14,55 @@ function LoadingScreen() {
 
 function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => void }) {
   const { signInWithGoogle, error, authenticating } = useAuth();
-  const start = (intent: 'create' | 'signin') => {
+  const [authAction, setAuthAction] = React.useState<'signin' | 'create-workspace' | null>(null);
+  const isAuthenticating = authenticating || authAction !== null;
+
+  const start = async (intent: 'create' | 'signin') => {
+    if (isAuthenticating) return;
     onIntent(intent);
-    void signInWithGoogle();
+    setAuthAction(intent === 'signin' ? 'signin' : 'create-workspace');
+    try {
+      await signInWithGoogle();
+    } catch {
+      // AuthContext owns the user-facing error state; this keeps the CTA state recoverable.
+    } finally {
+      setAuthAction(null);
+    }
   };
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 sm:p-6">
-      <Card className="w-full max-w-lg space-y-7 p-6 sm:p-10">
-        <div className="text-center"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white"><ShieldCheck size={25} /></div><p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">BSM</p><h1 className="mt-2 text-2xl font-semibold text-slate-900 sm:text-3xl">Manage your leads, clients, and sales in one place.</h1><p className="mx-auto mt-3 max-w-md text-sm leading-6 text-slate-500">Keep prospects, clients, follow-ups, deals, and your sales pipeline organized in one simple workspace.</p></div>
-        <div className="space-y-3"><Button type="button" disabled={authenticating} onClick={() => start('create')} className="w-full justify-between gap-2" size="lg">{authenticating ? 'Signing in…' : 'Create Your Workspace'} {!authenticating && <ArrowRight size={17} />}</Button><Button type="button" variant="outline" disabled={authenticating} onClick={() => start('signin')} className="w-full gap-2" size="lg">{authenticating ? 'Signing in…' : <><LogIn size={17} /> Sign In</>}</Button></div>
-        <p className="text-center text-xs text-slate-400">New to BSM? Start your workspace trial with Google.</p>
+      <Card className="w-full max-w-md space-y-6 p-6 sm:p-8">
+        <div className="text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
+            <ShieldCheck size={25} />
+          </div>
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">BSM</p>
+          <h1 className="mx-auto mt-3 max-w-sm text-xl font-semibold leading-7 text-slate-900 sm:text-2xl">
+            Manage your leads, clients, and sales in one place.
+          </h1>
+          <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
+            Keep prospects, clients, follow-ups, deals, and your sales pipeline organized in one simple workspace.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          <Button type="button" disabled={isAuthenticating} onClick={() => void start('signin')} className="w-full gap-2" size="lg">
+            {authAction === 'signin' ? 'Signing in…' : <><LogIn size={17} /> Sign In with Google</>}
+          </Button>
+          <div className="flex items-center gap-3 text-xs text-slate-400" aria-hidden="true">
+            <span className="h-px flex-1 bg-slate-200" />
+            <span>New to BSM?</span>
+            <span className="h-px flex-1 bg-slate-200" />
+          </div>
+          <Button type="button" variant="outline" disabled={isAuthenticating} onClick={() => void start('create')} className="w-full" size="lg">
+            {authAction === 'create-workspace' ? 'Creating workspace…' : 'Create Your Workspace'}
+          </Button>
+        </div>
+
         {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
+        <p className="text-center text-[11px] leading-5 text-slate-400">
+          By using BSM App, you agree to the <span className="underline decoration-slate-300 underline-offset-2">Terms of Service</span> and <span className="underline decoration-slate-300 underline-offset-2">Data Processing Agreement</span>.
+        </p>
       </Card>
     </div>
   );

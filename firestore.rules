@@ -63,6 +63,27 @@ service cloud.firestore {
           || request.time <= get(/databases/$(database)/documents/organizations/$(organizationId)).data.licenseExpiresAt);
     }
 
+    // Settings mutations additionally verify the canonical license. This keeps
+    // browser writes fail-closed if a mirror is stale, missing, or malformed.
+    function settingsLicenseAllowsWrites(organizationId) {
+      return licenseAllowsWrites(organizationId)
+        && exists(/databases/$(database)/documents/organizations/$(organizationId)/license/current)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.plan in ['TRIAL', 'STARTER', 'TEAM', 'LEGACY']
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.maxUsers is int
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.maxUsers >= 1
+        && get(/databases/$(database)/documents/organizations/$(organizationId)).data.licenseStatus == get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.status
+        && ((get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.status == 'TRIAL'
+          && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.trialStartedAt is timestamp
+          && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.trialEndsAt is timestamp
+          && request.time <= get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.trialEndsAt
+          && get(/databases/$(database)/documents/organizations/$(organizationId)).data.licenseExpiresAt == get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.trialEndsAt)
+          || (get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.status == 'ACTIVE'
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.subscriptionStartedAt is timestamp
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.subscriptionEndsAt is timestamp
+            && request.time <= get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.subscriptionEndsAt
+            && get(/databases/$(database)/documents/organizations/$(organizationId)).data.licenseExpiresAt == get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.subscriptionEndsAt));
+    }
+
     function organizationCanWrite(organizationId) {
       return organizationCanView(organizationId) && licenseAllowsWrites(organizationId);
     }
@@ -190,7 +211,7 @@ service cloud.firestore {
     }
 
     function activityUpdatesSettings(organizationId) {
-      return getAfter(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).exists()
+      return getAfter(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).data.businessName is string
         && (!exists(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings)
           || getAfter(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).data.diff(get(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).data).affectedKeys().size() > 0);
     }
@@ -365,20 +386,31 @@ service cloud.firestore {
       allow read: if organizationCanView(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
       allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['content', 'createdAt', 'createdByUid', 'createdByName'])
+        && request.resource.data.keys().hasOnly(['content', 'createdAt', 'createdByUid', 'createdByName', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.content is string
         && request.resource.data.createdAt is timestamp
         && request.resource.data.createdByUid == request.auth.uid
         && request.resource.data.createdByName is string
+        && request.resource.data.archived == false
+        && request.resource.data.archivedAt == null
+        && request.resource.data.archivedBy == null
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
-      allow update, delete: if false;
+      allow update: if organizationCanManageWrite(organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'archivedAt', 'archivedBy'])
+        && ((request.resource.data.archived == true
+          && request.resource.data.archivedAt is timestamp
+          && request.resource.data.archivedBy == request.auth.uid)
+          || (request.resource.data.archived == false
+          && request.resource.data.archivedAt == null
+          && request.resource.data.archivedBy == null));
+      allow delete: if false;
     }
 
     match /organizations/{organizationId}/clients/{clientId}/documents/{documentId} {
       allow read: if organizationCanView(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
       allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedAt', 'uploadedByUid', 'uploadedByName'])
+        && request.resource.data.keys().hasOnly(['name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedAt', 'uploadedByUid', 'uploadedByName', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.name is string
         && request.resource.data.storagePath is string
         && request.resource.data.downloadURL is string
@@ -387,12 +419,25 @@ service cloud.firestore {
         && request.resource.data.uploadedAt is timestamp
         && request.resource.data.uploadedByUid == request.auth.uid
         && request.resource.data.uploadedByName is string
+        && request.resource.data.archived == false
+        && request.resource.data.archivedAt == null
+        && request.resource.data.archivedBy == null
         && request.resource.data.size > 0
-        && request.resource.data.size <= 10 * 1024 * 1024
+        && request.resource.data.size <= 1048576
         && request.resource.data.mimeType in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'image/jpeg', 'image/png']
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status != 'ARCHIVED';
-      allow update, delete: if false;
+      allow update: if organizationCanManageWrite(organizationId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'archivedAt', 'archivedBy'])
+        && ((request.resource.data.archived == true
+          && request.resource.data.archivedAt is timestamp
+          && request.resource.data.archivedBy == request.auth.uid)
+          || (request.resource.data.archived == false
+          && request.resource.data.archivedAt == null
+          && request.resource.data.archivedBy == null));
+      // Permanent document deletion is authorized and performed by the trusted
+      // server endpoint after it has removed the matching Storage object.
+      allow delete: if false;
     }
 
     match /organizations/{organizationId}/leads/{leadId} {
@@ -576,13 +621,13 @@ service cloud.firestore {
     match /organizations/{organizationId}/settings/{settingsId} {
       allow read: if isActivePlatformAdmin() || organizationCanView(organizationId);
       allow create: if (isBootstrapOrganizationCreate(organizationId)
-          || (isOrganizationAdmin(organizationId) && licenseAllowsWrites(organizationId)))
+          || (isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)))
         && settingsId == 'settings'
         && request.resource.data.keys().hasOnly([
           'businessName', 'businessType', 'email', 'phone', 'website', 'address',
           'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources'
         ]);
-      allow update: if isOrganizationAdmin(organizationId) && licenseAllowsWrites(organizationId)
+      allow update: if isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)
         && settingsId == 'settings'
         && request.resource.data.keys().hasOnly([
           'businessName', 'businessType', 'email', 'phone', 'website', 'address',

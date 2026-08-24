@@ -11,7 +11,7 @@ changes. Run the commands below only after an explicit deployment approval.
 - Domain: `https://app.aiph.tech`
 - Current revision: `bsm-client-app-00003-pln`
 - Current traffic: 100% to the current revision
-- Runtime service account: `668750157413-compute@developer.gserviceaccount.com`
+- Runtime service account: `bsm-client-runtime@bsm-client-app-web.iam.gserviceaccount.com`
 - Source deployment mechanism: Cloud Run source deployment/buildpack, with the
   image emitted to Artifact Registry
 - Artifact Registry repository: `asia-southeast1-docker.pkg.dev/bsm-client-app-web/cloud-run-source-deploy`
@@ -88,7 +88,7 @@ gcloud run deploy bsm-client-app \
   --project=bsm-client-app-web \
   --region=asia-southeast1 \
   --no-traffic \
-  --service-account=668750157413-compute@developer.gserviceaccount.com \
+  --service-account=bsm-client-runtime@bsm-client-app-web.iam.gserviceaccount.com \
   --set-env-vars=GOOGLE_CLOUD_PROJECT=bsm-client-app-web,BSM_EXPECTED_PROJECT_ID=bsm-client-app-web \
   --set-build-env-vars="NEXT_PUBLIC_FIREBASE_API_KEY=${NEXT_PUBLIC_FIREBASE_API_KEY},NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN},NEXT_PUBLIC_FIREBASE_PROJECT_ID=bsm-client-app-web,NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET},NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID},NEXT_PUBLIC_FIREBASE_APP_ID=${NEXT_PUBLIC_FIREBASE_APP_ID}"
 ```

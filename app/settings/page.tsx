@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
-import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, Trash2 } from 'lucide-react';
+import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { UserRole } from '@/types/auth';
 import { canManageSettings } from '@/lib/permissions';
@@ -21,7 +21,7 @@ function formatLastLogin(value: unknown) {
 }
 
 export default function SettingsPage() {
-  const { settings, updateSettings } = useApp();
+  const { settings, settingsLoading, settingsError, updateSettings } = useApp();
   const { user } = useAuth();
   const { currentOrganizationId, membership, license, licenseState, isReadOnly } = useWorkspace();
   const canManageSystemSettings = canManageSettings(membership);
@@ -30,6 +30,10 @@ export default function SettingsPage() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsActionError, setSettingsActionError] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
+  const [accentColorDraft, setAccentColorDraft] = useState(settings.accentColor || '#3b82f6');
 
   // Profile form state
   const [profile, setProfile] = useState({
@@ -46,7 +50,7 @@ export default function SettingsPage() {
   const [newSourceName, setNewSourceName] = useState('');
 
   useEffect(() => {
-    const syncProfile = async () => {
+    const syncSettingsDrafts = async () => {
       setProfile({
         businessName: settings.businessName,
         businessType: settings.businessType,
@@ -57,9 +61,26 @@ export default function SettingsPage() {
         currency: settings.currency || 'USD',
         timezone: settings.timezone || 'UTC',
       });
+      setAccentColorDraft(settings.accentColor || '#3b82f6');
     };
-    void syncProfile();
+    void syncSettingsDrafts();
   }, [settings]);
+
+  const saveSettings = async (changes: Parameters<typeof updateSettings>[0], successMessage: string, onSuccess?: () => void) => {
+    if (settingsSaving || isReadOnly) return;
+    setSettingsSaving(true);
+    setSettingsActionError(null);
+    setSettingsNotice(null);
+    try {
+      await updateSettings(changes);
+      onSuccess?.();
+      setSettingsNotice(successMessage);
+    } catch (error) {
+      setSettingsActionError('Unable to save settings. Please try again.');
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
 
   const loadUsers = async () => {
     if (!user || !currentOrganizationId || !canManageSystemSettings) return;
@@ -102,26 +123,29 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSaveProfile = (e: React.FormEvent) => {
+  const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    void updateSettings(profile).then(() => alert('Settings saved successfully!')).catch((error) => {
-      console.error('Unable to save settings', error);
-      alert('Unable to save settings. Please try again.');
-    });
+    await saveSettings(profile, 'Business profile saved.');
   };
 
-  const addLeadSource = () => {
-    if (isReadOnly || !newSourceName.trim()) return;
-    const updated = [...settings.leadSources, { name: newSourceName.trim(), isActive: true }];
-    updateSettings({ leadSources: updated });
-    setNewSourceName('');
+  const addLeadSource = async () => {
+    const normalizedName = newSourceName.trim();
+    if (settingsLoading || isReadOnly || !normalizedName || settingsSaving) return;
+    if (settings.leadSources.some((source) => source.name.trim().toLocaleLowerCase() === normalizedName.toLocaleLowerCase())) {
+      setSettingsActionError('That lead source already exists.');
+      setSettingsNotice(null);
+      return;
+    }
+    const updated = [...settings.leadSources, { name: normalizedName, isActive: true }];
+    await saveSettings({ leadSources: updated }, 'Lead source saved.', () => setNewSourceName(''));
   };
 
-  const toggleLeadSource = (index: number) => {
-    if (isReadOnly) return;
-    const updated = [...settings.leadSources];
-    updated[index].isActive = !updated[index].isActive;
-    updateSettings({ leadSources: updated });
+  const toggleLeadSource = async (index: number) => {
+    if (settingsLoading || isReadOnly || settingsSaving) return;
+    const updated = settings.leadSources.map((source, sourceIndex) => sourceIndex === index
+      ? { ...source, isActive: !source.isActive }
+      : source);
+    await saveSettings({ leadSources: updated }, 'Lead source updated.');
   };
 
   const tabs = [
@@ -144,9 +168,19 @@ export default function SettingsPage() {
     return <Card className="mx-auto max-w-xl space-y-2 p-8 text-center"><h2 className="text-xl font-bold text-slate-900">Settings access restricted</h2><p className="text-sm text-slate-500">System settings are available to ADMIN users only.</p></Card>;
   }
 
+  if (settingsLoading) {
+    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><Card className="p-8 text-center text-sm text-slate-500">Loading organization settings…</Card></div>;
+  }
+
+  if (settingsError) {
+    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><div role="alert"><Card className="p-8 text-center text-sm text-red-700">{settingsError}</Card></div></div>;
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." />
+      {settingsActionError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{settingsActionError}</p>}
+      {settingsNotice && <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700" role="status">{settingsNotice}</p>}
       
       <div className="flex flex-col gap-4 md:flex-row">
         <aside className="w-full md:w-64 space-y-1">
@@ -181,7 +215,7 @@ export default function SettingsPage() {
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Business Type</label>
                     <select className="w-full p-2 border rounded-lg" value={profile.businessType} onChange={e => setProfile({...profile, businessType: e.target.value as any})}>
-                      {['Real Estate', 'Insurance', 'Agency', 'Freelancer/Consultant', 'Small Business', 'Other'].map(t => <option key={t} value={t}>{t}</option>)}
+                      {['Solo Entrepreneur', 'Agency', 'Real Estate', 'Professional Services', 'Retail', 'Insurance', 'Freelancer/Consultant', 'Small Business', 'Other'].map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
                 </div>
@@ -194,6 +228,10 @@ export default function SettingsPage() {
                     <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
                     <input className="w-full p-2 border rounded-lg" value={profile.phone} onChange={e => setProfile({...profile, phone: e.target.value})} />
                   </div>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500 uppercase">Website</label>
+                  <input type="url" className="w-full p-2 border rounded-lg" value={profile.website} onChange={e => setProfile({...profile, website: e.target.value})} placeholder="https://" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -211,7 +249,7 @@ export default function SettingsPage() {
                   <label className="text-xs font-bold text-slate-500 uppercase">Address</label>
                   <input className="w-full p-2 border rounded-lg" value={profile.address} onChange={e => setProfile({...profile, address: e.target.value})} />
                 </div>
-                <Button type="submit" disabled={isReadOnly}>Save Profile</Button>
+                <Button type="submit" disabled={isReadOnly || settingsSaving}>{settingsSaving ? 'Saving…' : 'Save Profile'}</Button>
               </form>
             )}
 
@@ -220,11 +258,12 @@ export default function SettingsPage() {
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500 uppercase">Accent Color</label>
                   <div className="flex gap-2 items-center">
-                    <input type="color" disabled={isReadOnly} value={settings.accentColor || '#3b82f6'} onChange={e => updateSettings({ accentColor: e.target.value })} className="w-12 h-10 p-1 border rounded-lg cursor-pointer" />
-                    <span className="text-sm font-mono">{settings.accentColor || '#3b82f6'}</span>
+                    <input type="color" disabled={isReadOnly || settingsSaving} value={accentColorDraft} onChange={e => setAccentColorDraft(e.target.value)} className="w-12 h-10 p-1 border rounded-lg cursor-pointer" />
+                    <span className="text-sm font-mono">{accentColorDraft}</span>
+                    <Button size="sm" variant="outline" disabled={isReadOnly || settingsSaving || accentColorDraft === (settings.accentColor || '#3b82f6')} onClick={() => void saveSettings({ accentColor: accentColorDraft }, 'Branding saved.')}>{settingsSaving ? 'Saving…' : 'Save Branding'}</Button>
                   </div>
                 </div>
-                <p className="text-sm text-slate-500">Branding customizations apply instantly across all modules.</p>
+                <p className="text-sm text-slate-500">Saved branding customizations apply across all modules.</p>
               </div>
             )}
 
@@ -297,8 +336,8 @@ export default function SettingsPage() {
             {activeTab === 'sources' && (
               <div className="space-y-4">
                 <div className="flex gap-2">
-                  <input disabled={isReadOnly} placeholder="New lead source..." className="p-2 border rounded-lg flex-1" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} />
-                  <Button disabled={isReadOnly} onClick={addLeadSource} className="gap-1"><Plus size={16}/> Add Source</Button>
+                    <input disabled={isReadOnly || settingsSaving} placeholder="New lead source..." className="p-2 border rounded-lg flex-1" value={newSourceName} onChange={e => setNewSourceName(e.target.value)} />
+                  <Button disabled={isReadOnly || settingsSaving} onClick={() => void addLeadSource()} className="gap-1"><Plus size={16}/> Add Source</Button>
                 </div>
                 <div className="space-y-2">
                   {settings.leadSources.map((source, idx) => (
@@ -306,7 +345,7 @@ export default function SettingsPage() {
                       <span className="font-medium">{source.name}</span>
                       <div className="flex items-center gap-2">
                         <Badge variant={source.isActive ? 'green' : 'gray'}>{source.isActive ? 'Active' : 'Inactive'}</Badge>
-                        <Button size="sm" variant="outline" disabled={isReadOnly} onClick={() => toggleLeadSource(idx)}>
+                        <Button size="sm" variant="outline" disabled={isReadOnly || settingsSaving} onClick={() => void toggleLeadSource(idx)}>
                           {source.isActive ? 'Deactivate' : 'Activate'}
                         </Button>
                       </div>

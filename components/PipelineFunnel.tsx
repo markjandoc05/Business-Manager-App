@@ -1,4 +1,7 @@
-import React from 'react';
+'use client';
+
+import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Card, Badge } from '@/components/ui/core';
 import { formatCurrency } from '@/lib/formatting';
 import { DEAL_STAGES, getDealProbability } from '@/lib/deal-workflow';
@@ -6,8 +9,18 @@ import type { Deal } from '@/types';
 
 export const PIPELINE_STAGES = DEAL_STAGES;
 
+const STAGE_DESCRIPTIONS: Record<typeof DEAL_STAGES[number], string> = {
+  New: 'New opportunities that have just been added to the sales pipeline.',
+  Qualified: 'Opportunities that have been reviewed and identified as potential sales.',
+  Proposal: 'Opportunities where a proposal, quotation, or solution has been presented.',
+  Negotiation: 'Opportunities where pricing, terms, or other details are being discussed.',
+  Won: 'Deals that have been successfully closed and won.',
+  Lost: 'Deals that were not successfully closed.',
+};
+
 export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[]; currency: string; stageSummary?: Record<string, { count: number; value: number }> }) {
   const stageColors = ['#2563eb', '#3b82f6', '#0f766e', '#d97706', '#b45309'];
+  const [activeStage, setActiveStage] = useState<typeof DEAL_STAGES[number] | null>(null);
 
   return <Card className="h-full overflow-hidden border-slate-200 p-4 sm:p-5">
     <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
@@ -26,14 +39,153 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
         const width = `${100 - index * 10}%`;
         const dealLabel = `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`;
 
-        return <div key={stage} className="flex min-h-[62px] items-center justify-between gap-3 px-4 py-2.5 text-white shadow-sm transition-[width,filter] duration-200 hover:brightness-105 sm:px-6" style={{ width, backgroundColor: stageColors[index], clipPath: 'polygon(3% 0, 97% 0, 94% 100%, 6% 100%)' }}>
-          <div className="min-w-0 pl-1 sm:pl-2">
-            <p className="truncate text-sm font-semibold">{stage}</p>
-            <p className="truncate text-xs text-white/80">{dealLabel} · {getDealProbability(stage)}% probability</p>
-          </div>
-          <p className="shrink-0 text-sm font-semibold tabular-nums sm:text-base">{formatCurrency(totalValue, currency)}</p>
-        </div>;
+        return <FunnelStage key={stage} stage={stage} color={stageColors[index]} width={width} dealLabel={dealLabel} totalValue={formatCurrency(totalValue, currency)} probability={getDealProbability(stage)} description={STAGE_DESCRIPTIONS[stage]} active={activeStage === stage} onShow={() => setActiveStage(stage)} onHide={() => setActiveStage((current) => current === stage ? null : current)} />;
       })}
     </div>
   </Card>;
+}
+
+function FunnelStage({ stage, color, width, dealLabel, totalValue, probability, description, active, onShow, onHide }: {
+  stage: typeof DEAL_STAGES[number];
+  color: string;
+  width: string;
+  dealLabel: string;
+  totalValue: string;
+  probability: number;
+  description: string;
+  active: boolean;
+  onShow: () => void;
+  onHide: () => void;
+}) {
+  const stageRef = useRef<HTMLDivElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const tooltipId = useId();
+  const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
+  const [positionedStage, setPositionedStage] = useState<typeof DEAL_STAGES[number] | null>(null);
+  const [pointerPosition, setPointerPosition] = useState<{ x: number; y: number } | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+
+    const dismissOnOutsideTouch = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse' && !stageRef.current?.contains(event.target as Node)) onHide();
+    };
+
+    document.addEventListener('pointerdown', dismissOnOutsideTouch);
+    return () => document.removeEventListener('pointerdown', dismissOnOutsideTouch);
+  }, [active, onHide]);
+
+  useLayoutEffect(() => {
+    if (!active) return;
+
+    const updateTooltipPosition = () => {
+      const stageElement = stageRef.current;
+      const tooltipElement = tooltipRef.current;
+      if (!stageElement || !tooltipElement) return;
+
+      const stageRect = stageElement.getBoundingClientRect();
+      const tooltipRect = tooltipElement.getBoundingClientRect();
+      const edgePadding = 10;
+      const gap = 14;
+      const maxLeft = Math.max(edgePadding, window.innerWidth - tooltipRect.width - edgePadding);
+      const maxTop = Math.max(edgePadding, window.innerHeight - tooltipRect.height - edgePadding);
+
+      let left: number;
+      let top: number;
+      if (pointerPosition) {
+        left = pointerPosition.x + gap;
+        top = pointerPosition.y + gap;
+        if (left + tooltipRect.width > window.innerWidth - edgePadding) left = pointerPosition.x - tooltipRect.width - gap;
+        if (top + tooltipRect.height > window.innerHeight - edgePadding) top = pointerPosition.y - tooltipRect.height - gap;
+        left = Math.min(Math.max(left, edgePadding), maxLeft);
+        top = Math.min(Math.max(top, edgePadding), maxTop);
+      } else {
+        const canPlaceRight = stageRect.right + gap + tooltipRect.width <= window.innerWidth - edgePadding;
+        const canPlaceLeft = stageRect.left - gap - tooltipRect.width >= edgePadding;
+        const centeredTop = stageRect.top + (stageRect.height - tooltipRect.height) / 2;
+        if (canPlaceRight) {
+          left = stageRect.right + gap;
+          top = Math.min(Math.max(centeredTop, edgePadding), maxTop);
+        } else if (canPlaceLeft) {
+          left = stageRect.left - gap - tooltipRect.width;
+          top = Math.min(Math.max(centeredTop, edgePadding), maxTop);
+        } else {
+          left = Math.min(Math.max(stageRect.left + (stageRect.width - tooltipRect.width) / 2, edgePadding), maxLeft);
+          const belowTop = stageRect.bottom + gap;
+          const aboveTop = stageRect.top - tooltipRect.height - gap;
+          top = belowTop <= maxTop ? belowTop : Math.max(edgePadding, aboveTop);
+        }
+      }
+
+      setTooltipPosition({ top, left });
+      setPositionedStage(stage);
+    };
+
+    updateTooltipPosition();
+    window.addEventListener('resize', updateTooltipPosition);
+    window.addEventListener('scroll', updateTooltipPosition, true);
+    return () => {
+      window.removeEventListener('resize', updateTooltipPosition);
+      window.removeEventListener('scroll', updateTooltipPosition, true);
+    };
+  }, [active, pointerPosition, stage]);
+
+  return <>
+    <div
+      ref={stageRef}
+      tabIndex={0}
+      role="group"
+      aria-describedby={active ? tooltipId : undefined}
+      onMouseEnter={(event) => {
+        setPointerPosition({ x: event.clientX, y: event.clientY });
+        onShow();
+      }}
+      onMouseLeave={onHide}
+      onPointerMove={(event) => {
+        if (event.pointerType === 'mouse') setPointerPosition({ x: event.clientX, y: event.clientY });
+      }}
+      onFocus={() => {
+        setPointerPosition(null);
+        onShow();
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setPointerPosition(null);
+          onHide();
+        }
+      }}
+      onPointerDown={(event) => {
+        if (event.pointerType !== 'mouse') {
+          setPointerPosition(null);
+          if (active) onHide();
+          else onShow();
+        }
+      }}
+      className="flex min-h-[62px] items-center justify-center px-4 py-2.5 text-white shadow-sm transition-[filter,box-shadow] duration-200 hover:brightness-105 focus-visible:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-white sm:px-6"
+      style={{ width, backgroundColor: color, clipPath: 'polygon(3% 0, 97% 0, 94% 100%, 6% 100%)' }}
+    >
+      <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
+        <div className="flex min-w-0 items-center justify-center gap-3 text-sm font-semibold sm:text-base">
+          <span className="truncate">{stage}</span>
+          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/45" />
+          <span className="shrink-0 tabular-nums">{totalValue}</span>
+        </div>
+        <p className="truncate text-xs text-white/80">{dealLabel} · {probability}% probability</p>
+      </div>
+    </div>
+    {active && typeof document !== 'undefined' && createPortal(
+      <div
+        ref={tooltipRef}
+        id={tooltipId}
+        role="tooltip"
+        aria-hidden={positionedStage !== stage}
+        style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
+        className={`pointer-events-none fixed z-[1000] w-[min(260px,calc(100vw-1.25rem))] rounded-lg border border-slate-200 bg-white p-3 text-left shadow-[0_12px_30px_rgba(15,23,42,0.16)] transition-opacity duration-150 ${positionedStage === stage ? 'opacity-100' : 'opacity-0'}`}
+      >
+        <p className="text-sm font-semibold text-slate-900">{stage}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">{description}</p>
+      </div>,
+      document.body,
+    )}
+  </>;
 }

@@ -9,6 +9,7 @@ import {
   Users, 
   TrendingUp, 
   Clock, 
+  Check,
   CheckCircle2, 
   DollarSign, 
   Briefcase, 
@@ -20,13 +21,15 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
-import { formatCurrency } from '@/lib/formatting';
+import { formatCurrency, formatCurrencyParts } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageLeads } from '@/lib/permissions';
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
 import { loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
+import { IconActionButton } from '@/components/IconActionButton';
+import { isToday } from 'date-fns';
 
 type DashboardFollowUpItem =
   | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
@@ -36,6 +39,15 @@ type SecondaryDashboardCard = 'leads' | 'activity';
 type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
 const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'activity'] as SecondaryDashboardCard[] };
+
+function DashboardCurrencyValue({ value, currency }: { value: number; currency: string }) {
+  const parts = formatCurrencyParts(value, currency);
+  return <span className="mt-3 inline-flex whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">
+    <span>{parts.beforeDecimal}</span>
+    {parts.decimal && <span className="text-[18px] font-semibold align-baseline">{parts.decimal}</span>}
+    {parts.afterDecimal && <span>{parts.afterDecimal}</span>}
+  </span>;
+}
 
 function getDashboardLayoutPreference() {
   if (typeof window === 'undefined') return DEFAULT_DASHBOARD_LAYOUT;
@@ -108,8 +120,19 @@ export default function DashboardPage() {
   const [leadForm, setLeadForm] = useState({ name: '', email: '', phone: '', company: '', source: settings.leadSources[0]?.name || 'Website' });
   const [clientForm, setClientForm] = useState({ name: '', email: '', phone: '', company: '' });
   const [taskForm, setTaskForm] = useState({ title: '', description: '', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High' });
+  const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [leadSaving, setLeadSaving] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
+
+  const handleCompleteDashboardTask = async (taskId: string) => {
+    if (!canWrite || completingTaskId === taskId) return;
+    setCompletingTaskId(taskId);
+    try {
+      await completeTask(taskId);
+    } finally {
+      setCompletingTaskId(null);
+    }
+  };
 
   // KPI Calculations
   const totalLeads = dashboardMetrics?.totalLeads ?? leads.length;
@@ -247,7 +270,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6 pb-8">
       <PageHeader
-        title="Dashboard & Sales Overview"
+        title="Dashboard"
         subtitle="Overview of your sales, follow-ups, and activity."
         actions={<>
           {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
@@ -257,72 +280,56 @@ export default function DashboardPage() {
       />
 
       {/* KPI Cards Grid (6 cards required) */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+        <div className="grid min-w-[1120px] grid-cols-6 gap-3">
         <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Leads</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{totalLeads}</span>
-            <div className="rounded-md bg-blue-50 p-1 text-blue-600"><Users size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Potential customers</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Users size={14} /></span><span>Leads</span></div>
+          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{totalLeads}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Potential customers</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="openDealsKpi" order={kpiCardOrder.indexOf('openDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('openDealsKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Open Deals</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{activeOpportunities}</span>
-            <div className="rounded-md bg-indigo-50 p-1 text-indigo-600"><TrendingUp size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Deals currently in progress</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-indigo-50 p-1 text-indigo-600"><TrendingUp size={14} /></span><span>Open Deals</span></div>
+          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{activeOpportunities}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Deals currently in progress</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="followupsKpi" order={kpiCardOrder.indexOf('followupsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followupsKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Follow-ups Due</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{followUpsDue}</span>
-            <div className="rounded-md bg-orange-50 p-1 text-orange-600"><Clock size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Tasks needing your attention</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-orange-50 p-1 text-orange-600"><Clock size={14} /></span><span>Follow-ups Due</span></div>
+          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{followUpsDue}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Tasks needing your attention</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="wonDealsKpi" order={kpiCardOrder.indexOf('wonDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('wonDealsKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Deals</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{wonDealsCount}</span>
-            <div className="rounded-md bg-green-50 p-1 text-green-600"><CheckCircle2 size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Successfully closed deals</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-green-50 p-1 text-green-600"><CheckCircle2 size={14} /></span><span>Won Deals</span></div>
+          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{wonDealsCount}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Successfully closed deals</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="potentialSalesKpi" order={kpiCardOrder.indexOf('potentialSalesKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('potentialSalesKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Potential Sales</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{formatCurrency(pipelineValue, settings.currency)}</span>
-            <div className="rounded-md bg-purple-50 p-1 text-purple-600"><DollarSign size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Total value of open deals</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-purple-50 p-1 text-purple-600"><DollarSign size={14} /></span><span>Potential Sales</span></div>
+          <DashboardCurrencyValue value={pipelineValue} currency={settings.currency} />
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Total value of open deals</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="salesMonthKpi" order={kpiCardOrder.indexOf('salesMonthKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('salesMonthKpi', 'kpis')}>
-        <Card className="flex min-h-24 flex-col justify-between p-3.5">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Sales This Month</p>
-          <div className="flex items-end justify-between">
-            <span className="text-xl font-semibold text-slate-900">{formatCurrency(salesThisMonth, settings.currency)}</span>
-            <div className="rounded-md bg-blue-50 p-1 text-blue-600"><Briefcase size={14} /></div>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">Sales closed this month</p>
+        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Briefcase size={14} /></span><span>Sales This Month</span></div>
+          <DashboardCurrencyValue value={salesThisMonth} currency={settings.currency} />
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Sales closed this month</p>
         </Card>
         </MovableDashboardCard>
+        </div>
       </div>
 
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}
@@ -342,24 +349,23 @@ export default function DashboardPage() {
             <Badge variant="gray">{followUpItems.length} open</Badge>
           </div>
 
-          <div className="max-h-[350px] flex-1 divide-y divide-slate-100 overflow-y-auto">
+          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {followUpItems.map((item) => (
-              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="cursor-pointer py-2.5 transition-colors first:pt-0 last:pb-0 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
-                <div className="min-w-0 space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant={sourceBadgeVariant(item.source)}>{item.source}</Badge>
-                    <span className="truncate text-xs font-medium text-slate-700">{item.relatedName}</span>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
+              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="flex cursor-pointer items-start justify-between gap-3 rounded-lg border-b border-slate-100 p-3 transition-colors duration-150 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
+                <div className="w-full min-w-0 flex-1 space-y-1 text-left">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <Badge variant={sourceBadgeVariant(item.source)}>{item.source}</Badge>
+                      <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'OVERDUE' : isToday(new Date(item.scheduledAt)) ? 'DUE TODAY' : 'SCHEDULED'}</Badge>
+                      <span className="truncate text-xs font-medium text-slate-700">{item.relatedName}</span>
+                    </div>
                     <p className="min-w-0 truncate text-sm font-medium text-slate-900">{item.title}</p>
-                    <Button size="sm" variant="outline" disabled={!canWrite} onClick={(event) => { event.stopPropagation(); void completeTask(item.taskId); }} className="shrink-0">Complete</Button>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                    <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'Overdue' : 'Scheduled'}</Badge>
-                    <span className="flex items-center gap-1"><Calendar size={12} /> {formatCompactDateTime(item.scheduledAt, settings.timezone)}</span>
-                    {'priority' in item && <span>· {item.priority} Priority</span>}
-                  </div>
-                  {item.description && <p className="max-w-[420px] truncate text-xs text-slate-500">{item.description}</p>}
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                      <span className="flex items-center gap-1"><Calendar size={12} /> {formatCompactDateTime(item.scheduledAt, settings.timezone)}</span>
+                      <span>· {item.priority} Priority</span>
+                    </div>
+                </div>
+                <div className="shrink-0">
+                  <IconActionButton icon={<Check size={15} />} label="Complete Task" variant="success" disabled={!canWrite || completingTaskId === item.taskId} onClick={(event) => { event.stopPropagation(); void handleCompleteDashboardTask(item.taskId); }} />
                 </div>
               </div>
             ))}

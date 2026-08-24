@@ -185,6 +185,14 @@
       "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedToUid", "order": "ASCENDING" },
+        { "fieldPath": "relatedTo.id", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

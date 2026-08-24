@@ -152,7 +152,9 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
   await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to update a deal.');
   if (deal.clientId !== input.clientId || deal.leadId !== (input.leadId || undefined)) throw new Error('Client and lead relationships cannot be changed from Deal editing.');
-  if (deal.status !== 'Active' && input.stage !== deal.stage) throw new Error('Won and Lost deals cannot be reopened or moved.');
+  if (deal.status !== 'Active' && input.stage !== deal.stage && getDealStatusForStage(input.stage) !== 'Active') {
+    throw new Error('Won and Lost deals can only be reopened into an active stage.');
+  }
   if (!input.title.trim() || !Number.isFinite(input.value) || input.value < 0) throw new Error('Deal details are incomplete.');
   const nextStatus = getDealStatusForStage(input.stage);
   const nextLossReason = nextStatus === 'Lost' ? input.lossReason?.trim() : undefined;
