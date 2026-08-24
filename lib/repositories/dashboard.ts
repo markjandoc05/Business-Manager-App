@@ -5,6 +5,9 @@ import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
 import { cachedRequest, invalidateCachedRequest } from '@/lib/repositories/requestCache';
 import { DEAL_ACTIVE_STAGES, DEAL_STAGES } from '@/lib/deal-workflow';
+import { getDashboardLeadTotal } from '@/lib/dashboard-metrics';
+
+export { getDashboardLeadTotal } from '@/lib/dashboard-metrics';
 
 const OPEN_STAGES = DEAL_ACTIVE_STAGES;
 

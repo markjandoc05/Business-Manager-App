@@ -27,7 +27,7 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageLeads } from '@/lib/permissions';
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
-import { loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
+import { getDashboardLeadTotal, loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { IconActionButton } from '@/components/IconActionButton';
 import { isToday } from 'date-fns';
 
@@ -135,7 +135,7 @@ export default function DashboardPage() {
   };
 
   // KPI Calculations
-  const totalLeads = dashboardMetrics?.totalLeads ?? leads.length;
+  const totalLeads = getDashboardLeadTotal(dashboardMetrics);
   const openDealStages = new Set(['New', 'Qualified', 'Proposal', 'Negotiation']);
   const openDeals = deals.filter((deal) => openDealStages.has(deal.stage));
   const activeOpportunities = dashboardMetrics?.activeDeals ?? openDeals.length;
@@ -391,7 +391,7 @@ export default function DashboardPage() {
               <h3 className="font-bold text-slate-800">Recent Leads</h3>
               <p className="text-xs text-slate-500">Latest prospects registered in the system</p>
             </div>
-            <Badge variant="purple">{leads.length} Total</Badge>
+            <Badge variant="purple">{totalLeads} Total</Badge>
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
