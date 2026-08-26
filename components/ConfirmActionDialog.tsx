@@ -13,6 +13,7 @@ export function ConfirmActionDialog({
   cancelLabel = 'Cancel',
   variant = 'default',
   loading = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
 }: {
@@ -23,6 +24,7 @@ export function ConfirmActionDialog({
   cancelLabel?: string;
   variant?: ConfirmVariant;
   loading?: boolean;
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -44,7 +46,7 @@ export function ConfirmActionDialog({
       <p id="confirm-action-description" className="mt-2 text-sm leading-5 text-slate-600">{description}</p>
       <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="outline" autoFocus disabled={loading} onClick={onCancel}>{cancelLabel}</Button>
-        <Button type="button" variant={confirmVariant} disabled={loading} onClick={onConfirm}>{loading ? `${confirmLabel}…` : confirmLabel}</Button>
+        <Button type="button" variant={confirmVariant} disabled={loading || confirmDisabled} onClick={onConfirm}>{loading ? `${confirmLabel}…` : confirmLabel}</Button>
       </div>
     </div>
   </div>;

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
@@ -19,26 +19,26 @@ import {
   X,
   GripVertical
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatCurrencyParts } from '@/lib/formatting';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
-import { canManageLeads } from '@/lib/permissions';
+import { canManageClients, canManageLeads, canManageTasks } from '@/lib/permissions';
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
 import { getDashboardLeadTotal, loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { IconActionButton } from '@/components/IconActionButton';
 import { isToday } from 'date-fns';
+import { emitStartupTiming, markStartup, observeStartupLcp } from '@/lib/startupTiming';
 
 type DashboardFollowUpItem =
   | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
 
 type PrimaryDashboardCard = 'pipeline' | 'followups';
-type SecondaryDashboardCard = 'leads' | 'activity';
+type SecondaryDashboardCard = 'leads' | 'clients' | 'deals' | 'activity';
 type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
-const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'activity'] as SecondaryDashboardCard[] };
+const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
 
 function DashboardCurrencyValue({ value, currency }: { value: number; currency: string }) {
   const parts = formatCurrencyParts(value, currency);
@@ -56,7 +56,7 @@ function getDashboardLayoutPreference() {
     return {
       kpis: saved.kpis?.length === 6 && DEFAULT_DASHBOARD_LAYOUT.kpis.every((card) => saved.kpis?.includes(card)) ? saved.kpis : DEFAULT_DASHBOARD_LAYOUT.kpis,
       primary: saved.primary?.length === 2 && saved.primary.includes('pipeline') && saved.primary.includes('followups') ? saved.primary : DEFAULT_DASHBOARD_LAYOUT.primary,
-      secondary: saved.secondary?.length === 2 && saved.secondary.includes('leads') && saved.secondary.includes('activity') ? saved.secondary : DEFAULT_DASHBOARD_LAYOUT.secondary,
+      secondary: saved.secondary?.length === 4 && DEFAULT_DASHBOARD_LAYOUT.secondary.every((card) => saved.secondary?.includes(card)) ? saved.secondary : DEFAULT_DASHBOARD_LAYOUT.secondary,
     };
   } catch {
     return DEFAULT_DASHBOARD_LAYOUT;
@@ -69,33 +69,67 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
   const canManage = canManageLeads(membership) && canWrite;
+  const canManageClientsAction = canManageClients(membership) && canWrite;
+  const canManageTasksAction = canManageTasks(membership) && canWrite;
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
   const [kpiCardOrder, setKpiCardOrder] = useState<KpiDashboardCard[]>(() => getDashboardLayoutPreference().kpis);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
+  const [dashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
+  const dashboardPaintMeasured = useRef(false);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
   }, [kpiCardOrder, primaryCardOrder, secondaryCardOrder]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const reloadDashboardMetrics = useCallback(async () => {
     if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
       setDashboardMetrics(null);
-      return () => { cancelled = true; };
+      return;
     }
-    void loadDashboardMetrics(user, currentOrganizationId).then((metrics) => {
-      if (!cancelled) setDashboardMetrics(metrics);
-    }).catch((error) => {
+    setDashboardMetricsError(null);
+    try {
+      const metrics = await loadDashboardMetrics(user, currentOrganizationId);
+      setDashboardMetrics(metrics);
+      markStartup('dashboard-data-ready');
+      emitStartupTiming();
+    } catch (error) {
       console.error('Unable to load dashboard metrics', error);
-      if (!cancelled) setDashboardMetrics(null);
-    });
-    return () => { cancelled = true; };
+      setDashboardMetrics(null);
+      setDashboardMetricsError('Dashboard metrics could not be loaded. Please refresh and try again.');
+    } finally {
+    }
   }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
-  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      if (cancelled) return;
+      await reloadDashboardMetrics();
+    };
+    void load();
+    const handleInvalidation = () => { void reloadDashboardMetrics(); };
+    window.addEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
+    };
+  }, [reloadDashboardMetrics]);
+  useEffect(() => {
+    const stopObservingLcp = observeStartupLcp('[data-startup-lcp="dashboard-kpi"]');
+    const frame = window.requestAnimationFrame(() => {
+      if (dashboardPaintMeasured.current) return;
+      dashboardPaintMeasured.current = true;
+      markStartup('dashboard-first-paint');
+      emitStartupTiming();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      stopObservingLcp?.();
+    };
+  }, []);
 
   const moveDashboardCard = (target: string, group: 'kpis' | 'primary' | 'secondary') => {
     if (!draggingCard || draggingCard === target) return;
@@ -191,6 +225,8 @@ export default function DashboardPage() {
   }, [clients, currentTime, deals, leads, tasks]);
 
   const openLead = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
+  const openClient = (clientId: string) => router.push(`/clients?clientId=${encodeURIComponent(clientId)}`);
+  const openDeal = (dealId: string) => router.push(`/pipeline?dealId=${encodeURIComponent(dealId)}`);
   const openFollowUp = (item: DashboardFollowUpItem) => {
     const task = tasks.find((candidate) => candidate.id === item.taskId);
     if (!task) return;
@@ -206,7 +242,7 @@ export default function DashboardPage() {
     }
   };
 
-  const followUpsDue = followUpItems.length;
+  const followUpsDue = dashboardMetrics?.pendingFollowUps ?? followUpItems.length;
   const sourceBadgeVariant = (source: DashboardFollowUpItem['source']) => source === 'LEAD' ? 'blue' : source === 'CLIENT' ? 'green' : source === 'DEAL' ? 'purple' : 'gray';
 
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -274,13 +310,13 @@ export default function DashboardPage() {
         subtitle="Overview of your sales, follow-ups, and activity."
         actions={<>
           {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
-          <Button variant="outline" onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
-          <Button variant="outline" onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
+          <Button variant="outline" disabled={!canManageClientsAction} onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
+          <Button variant="outline" disabled={!canManageTasksAction} onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
         </>}
       />
 
       {/* KPI Cards Grid (6 cards required) */}
-      <div className="-mx-1 overflow-x-auto px-1 pb-1">
+      <div data-startup-lcp="dashboard-kpi" className="-mx-1 overflow-x-auto px-1 pb-1">
         <div className="grid min-w-[1120px] grid-cols-6 gap-3">
         <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
         <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
@@ -381,7 +417,7 @@ export default function DashboardPage() {
 
       </div>
 
-      {/* Second Grid: Recent Leads & Recent Activity */}
+      {/* Second Grid: Recent Records & Recent Activity */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Recent Leads */}
         <MovableDashboardCard cardId="leads" order={secondaryCardOrder.indexOf('leads')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leads', 'secondary')}>
@@ -409,6 +445,48 @@ export default function DashboardPage() {
                 </div>
               </div>
             ))}
+          </div>
+        </Card>
+        </MovableDashboardCard>
+
+        <MovableDashboardCard cardId="clients" order={secondaryCardOrder.indexOf('clients')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('clients', 'secondary')}>
+        <Card className="flex flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="font-bold text-slate-800">Recent Clients</h3>
+              <p className="text-xs text-slate-500">Latest active client records</p>
+            </div>
+            <Badge variant="green">{clients.length} Loaded</Badge>
+          </div>
+          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
+            {clients.slice(0, 5).map((client) => (
+              <div key={client.id} role="button" tabIndex={0} onClick={() => openClient(client.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openClient(client.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{client.name}</p><p className="truncate text-xs text-slate-500">{client.company || client.email}</p></div>
+                <p className="shrink-0 text-[10px] text-slate-400">{new Date(client.createdAt).toLocaleDateString()}</p>
+              </div>
+            ))}
+            {clients.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No clients yet.</div>}
+          </div>
+        </Card>
+        </MovableDashboardCard>
+
+        <MovableDashboardCard cardId="deals" order={secondaryCardOrder.indexOf('deals')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('deals', 'secondary')}>
+        <Card className="flex flex-col space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="font-bold text-slate-800">Recent Deals</h3>
+              <p className="text-xs text-slate-500">Latest opportunities and closed deals</p>
+            </div>
+            <Badge variant="purple">{deals.length} Loaded</Badge>
+          </div>
+          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
+            {deals.slice(0, 5).map((deal) => (
+              <div key={deal.id} role="button" tabIndex={0} onClick={() => openDeal(deal.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDeal(deal.id); } }} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{deal.title}</p><p className="truncate text-xs text-slate-500">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>
+                <Badge variant={deal.status === 'Won' ? 'green' : deal.status === 'Lost' ? 'red' : 'blue'}>{deal.status}</Badge>
+              </div>
+            ))}
+            {deals.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No deals yet.</div>}
           </div>
         </Card>
         </MovableDashboardCard>
@@ -443,15 +521,10 @@ export default function DashboardPage() {
       </div>
 
       {/* Modals for Quick Actions */}
-      <AnimatePresence>
-        {activeModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative w-full max-w-lg space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.14)]"
-            >
+      {dashboardMetricsError && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800" role="status">{dashboardMetricsError}</p>}
+      {activeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="relative w-full max-w-lg space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.14)]">
               <button 
                 onClick={() => setActiveModal(null)}
                 className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 rounded-lg"
@@ -624,10 +697,9 @@ export default function DashboardPage() {
                   </div>
                 </form>
               )}
-            </motion.div>
           </div>
-        )}
-      </AnimatePresence>
+          </div>
+      )}
     </div>
   );
 }

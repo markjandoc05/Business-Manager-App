@@ -1,6 +1,6 @@
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
-import type { AppUser } from '@/types/auth';
+import type { AppUser, OrganizationMembership } from '@/types/auth';
 import { organizationMemberDocument } from '@/lib/organizations/paths';
 import { requireOrganizationAccess } from '@/lib/permissions';
 
@@ -13,9 +13,9 @@ export function getDefaultAssignment(user: AppUser): RecordAssignment {
   return { assignedToUid: user.uid, assignedToName: user.name };
 }
 
-export async function resolveAssignment(user: AppUser, organizationId: string, assignedToUid?: string, assignedToName?: string): Promise<RecordAssignment> {
+export async function resolveAssignment(user: AppUser, organizationId: string, assignedToUid?: string, assignedToName?: string, verifiedMembership?: OrganizationMembership): Promise<RecordAssignment> {
   const targetUid = assignedToUid?.trim() || user.uid;
-  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const membership = verifiedMembership || (await requireOrganizationAccess(user, organizationId)).membership;
   if (targetUid !== user.uid && membership.role === 'USER') throw new Error('You can only assign records to yourself.');
 
   const targetSnapshot = await getDoc(organizationMemberDocument(db, organizationId, targetUid));
@@ -30,9 +30,9 @@ export async function resolveAssignment(user: AppUser, organizationId: string, a
   };
 }
 
-export async function resolveOrganizationAssignment(user: AppUser, organizationId: string, assignedToUid?: string, assignedToName?: string): Promise<RecordAssignment> {
+export async function resolveOrganizationAssignment(user: AppUser, organizationId: string, assignedToUid?: string, assignedToName?: string, verifiedMembership?: OrganizationMembership): Promise<RecordAssignment> {
   const targetUid = assignedToUid?.trim() || user.uid;
-  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const membership = verifiedMembership || (await requireOrganizationAccess(user, organizationId)).membership;
   if (targetUid !== user.uid && membership.role === 'USER') throw new Error('You can only assign records to yourself.');
 
   const membershipSnapshot = await getDoc(organizationMemberDocument(db, organizationId, targetUid));

@@ -16,6 +16,9 @@ export interface Lead {
   archived?: boolean;
   archivedAt?: string;
   archivedBy?: string;
+  trashed?: boolean;
+  trashedAt?: string;
+  trashedBy?: string;
   convertedClientId?: string;
   nextScheduledActivityAt?: string;
   nextScheduledActivityType?: LeadActivityType;
@@ -54,6 +57,9 @@ export interface Note {
   archived?: boolean;
   archivedAt?: string;
   archivedBy?: string;
+  trashed?: boolean;
+  trashedAt?: string;
+  trashedBy?: string;
 }
 
 export interface DocumentItem {
@@ -90,6 +96,9 @@ export interface Client {
   archived?: boolean;
   archivedAt?: string;
   archivedBy?: string;
+  trashed?: boolean;
+  trashedAt?: string;
+  trashedBy?: string;
   createdBy?: string;
   updatedAt?: string;
   updatedBy?: string;
@@ -163,9 +172,9 @@ export interface Task {
 
 export interface Activity {
   id: string;
-  type: 'lead_creation' | 'task_completion' | 'stage_change' | 'client_conversion' | 'client_creation' | 'client_update' | 'client_archive' | 'deal_creation' | 'deal_update' | 'deal_won' | 'deal_lost' | 'settings_update' | 'won_deal';
+  type: 'lead_creation' | 'task_creation' | 'task_update' | 'task_completion' | 'task_reopened' | 'task_archive' | 'task_restore' | 'stage_change' | 'client_conversion' | 'client_creation' | 'client_update' | 'client_archive' | 'client_restore' | 'deal_creation' | 'deal_update' | 'deal_won' | 'deal_lost' | 'deal_reopened' | 'deal_archive' | 'deal_restore' | 'note_creation' | 'note_update' | 'note_archive' | 'note_restore' | 'settings_update' | 'won_deal';
   description: string;
-  entityType?: 'Lead' | 'Client' | 'Deal' | 'Task' | 'Settings';
+  entityType?: 'Lead' | 'Client' | 'Deal' | 'Task' | 'Note' | 'Settings';
   entityId?: string;
   createdAt: string;
   createdBy?: string;

@@ -6,6 +6,7 @@ import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationDocumentInCollection } from '@/lib/organizations/paths';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
 import { activityData, activityRef } from '@/lib/repositories/activityEvents';
+import { cachedRequest, invalidateCachedRequest } from '@/lib/repositories/requestCache';
 
 function settingsDocument(organizationId: string) {
   return organizationDocumentInCollection(db, organizationId, 'settings', 'settings');
@@ -105,10 +106,6 @@ export class SettingsLoadError extends Error {
   }
 }
 
-async function requireActiveUser(user: AppUser | null, organizationId: string) {
-  return requireOrganizationAccess(user, organizationId);
-}
-
 async function requireSettingsManager(user: AppUser | null, organizationId: string) {
   return requireOrganizationAccess(user, organizationId, ['ADMIN']);
 }
@@ -161,8 +158,10 @@ export async function loadSettings(user: AppUser | null, organizationId: string)
   const path = settingsDocument(organizationId).path;
   const startedAt = Date.now();
   try {
-    await requireActiveUser(user, organizationId);
-    const snapshot = await getDoc(settingsDocument(organizationId));
+    if (!user) throw new Error('You must be signed in to access business settings.');
+    // WorkspaceContext has already resolved the active tenant. Firestore Rules remain
+    // authoritative for this read; the short cache only deduplicates startup/UI reads.
+    const snapshot = await cachedRequest(`settings:${user.uid}:${organizationId}`, 30_000, () => getDoc(settingsDocument(organizationId)));
     // Defaults are returned in memory only; an absent document is never overwritten automatically.
     return snapshot.exists() ? mapSettings(snapshot.data()) : defaultSettings;
   } catch (error) {
@@ -208,6 +207,7 @@ export async function updateSettings(user: AppUser | null, organizationId: strin
         entityType: 'Settings',
       }));
     });
+    invalidateCachedRequest(`settings:${user.uid}:${organizationId}`);
   } catch (error) {
     const diagnostics: SettingsPersistenceDiagnostics = {
       ...safeFirebaseError(error),

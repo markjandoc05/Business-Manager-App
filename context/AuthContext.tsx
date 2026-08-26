@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -18,6 +18,9 @@ import {
 import { auth, db } from '@/lib/firebase/client';
 import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
+import { listUserMemberships } from '@/lib/repositories/workspaces';
+import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
+import { clearCachedRequests } from '@/lib/repositories/requestCache';
 
 type AuthStatus = 'loading' | 'signed-out' | 'active' | 'disabled' | 'error';
 
@@ -52,6 +55,7 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
 }
 
 async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
+  startStartupStage('root-user');
   const userRef = doc(db, 'users', firebaseUser.uid);
   const snapshot = await getDoc(userRef);
 
@@ -71,6 +75,8 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
       lastLogin: serverTimestamp(),
       lastLoginAt: serverTimestamp(),
     });
+    finishStartupStage('root-user');
+    markStartup('root-user-complete');
     return { uid: firebaseUser.uid, name, email, role: 'USER', active: false, accountStatus: 'pending' };
   }
 
@@ -90,6 +96,8 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
     lastLoginAt: serverTimestamp(),
   }).catch((error) => console.error('Unable to update user login metadata', error));
 
+  finishStartupStage('root-user');
+  markStartup('root-user-complete');
   return appUser;
 }
 
@@ -99,11 +107,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
+  const lastAuthUidRef = useRef<string | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
       setFirebaseUser(nextFirebaseUser);
       setError(null);
+      // Do not retain display/startup data across an auth boundary.
+      const nextUid = nextFirebaseUser?.uid || null;
+      if (lastAuthUidRef.current !== nextUid) clearCachedRequests();
+      lastAuthUidRef.current = nextUid;
 
       if (!nextFirebaseUser) {
         setUser(null);
@@ -111,6 +124,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      beginStartupTrace(nextFirebaseUser.uid);
+      markStartup('auth-ready');
+      // Start the authorization discovery while the global profile is loading.
+      // WorkspaceContext consumes the same in-flight request; rules remain authoritative.
+      void listUserMemberships(nextFirebaseUser).catch(() => undefined);
       setStatus('loading');
       try {
         const nextUser = await syncUser(nextFirebaseUser);
@@ -134,7 +152,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       logError: (signInError) => console.error('Google sign-in failed', signInError),
     }), []);
 
-  const signInWithGoogle = () => signInController.signIn();
+  const signInWithGoogle = async () => {
+    beginStartupTrace();
+    await signInController.signIn();
+  };
 
   const signOut = () => firebaseSignOut(auth);
 

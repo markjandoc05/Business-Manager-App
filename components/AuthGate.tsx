@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import WorkspaceOnboarding from '@/components/WorkspaceOnboarding';
 import { getNoMembershipDestination, type EntryIntent } from '@/lib/auth/entryFlow';
+import { emitStartupTiming, markStartup } from '@/lib/startupTiming';
 
 function LoadingScreen() {
   return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Loading your account…</div>;
@@ -112,8 +113,15 @@ function WorkspaceErrorScreen({ error, refresh }: { error: string; refresh: () =
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const { status, firebaseUser } = useAuth();
-  const { loading: workspaceLoading, ready: workspaceReady, onboardingRequired, hasMembership, membershipCount, activeMembershipCount, membershipSummaries, availableOrganizations, currentOrganizationId, membership, error: workspaceError, refresh } = useWorkspace();
+  const { loading: workspaceLoading, ready: workspaceReady, onboardingRequired, hasMembership, membershipCount, activeMembershipCount, membershipSummaries, availableOrganizations, currentOrganizationId, error: workspaceError, refresh } = useWorkspace();
   const [entryIntent, setEntryIntent] = React.useState<EntryIntent | null>(null);
+  const lastWorkspaceDiagnosticRef = React.useRef('');
+  useEffect(() => {
+    if (status === 'active' && workspaceReady) {
+      markStartup('shell-renderable');
+      emitStartupTiming();
+    }
+  }, [status, workspaceReady]);
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
       const workspaceStatus = workspaceError ? 'error' : workspaceLoading ? 'loading' : workspaceReady ? 'ready' : hasMembership ? 'pending' : 'no-membership';
@@ -125,27 +133,31 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             ? 'blocked'
             : workspaceLoading
               ? 'loading'
-              : workspaceError
-                ? 'workspace-error'
-                : onboardingRequired || !hasMembership
-                  ? 'onboarding'
-                  : workspaceReady
+                : workspaceError
+                  ? 'workspace-error'
+                  : onboardingRequired || !hasMembership
+                    ? 'onboarding'
+                    : workspaceReady
                     ? 'dashboard'
                     : 'pending';
-      console.info('[Workspace Resolution]', {
+      const diagnosticState = {
         uid: firebaseUser?.uid || null,
-        email: firebaseUser?.email || null,
-        workspaceLoading,
-        membershipCount,
-        activeMembershipCount,
-        organizationIds: membershipSummaries.map((summary) => summary.organizationId),
-        membershipStatuses: membershipSummaries.map((summary) => `${summary.organizationId}:${summary.status}`),
-        activeOrganizationId: currentOrganizationId,
         workspaceStatus,
         routeDecision,
+        activeOrganizationId: currentOrganizationId,
+        membershipCount,
+        activeMembershipCount,
+        membershipStatuses: membershipSummaries.map((summary) => `${summary.organizationId}:${summary.status}`),
+        error: workspaceError,
+      };
+      const diagnosticKey = JSON.stringify(diagnosticState);
+      if (diagnosticKey === lastWorkspaceDiagnosticRef.current) return;
+      lastWorkspaceDiagnosticRef.current = diagnosticKey;
+      console.info('[Workspace Resolution]', {
+        ...diagnosticState,
       });
     }
-  }, [activeMembershipCount, currentOrganizationId, firebaseUser?.email, firebaseUser?.uid, hasMembership, membership, membershipCount, membershipSummaries, onboardingRequired, status, workspaceError, workspaceLoading, workspaceReady]);
+  }, [activeMembershipCount, currentOrganizationId, firebaseUser?.uid, hasMembership, membershipCount, membershipSummaries, onboardingRequired, status, workspaceError, workspaceLoading, workspaceReady]);
   if (status === 'loading') return <LoadingScreen />;
   if (status === 'signed-out' || status === 'error') return <LoginScreen onIntent={setEntryIntent} />;
   if (status === 'disabled') return <PendingScreen disabled />;

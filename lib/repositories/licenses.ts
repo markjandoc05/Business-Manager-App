@@ -1,58 +1,25 @@
-import { doc, getDoc, onSnapshot, Timestamp, type Unsubscribe } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
-import type { AppUser, License, LicensePlan, LicenseStatus, ResolvedLicenseState } from '@/types/auth';
+import type { AppUser, License } from '@/types/auth';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationDocumentInCollection } from '@/lib/organizations/paths';
-import { DEFAULT_LEGACY_MAX_USERS, DEFAULT_LICENSE_FEATURES } from '@/lib/licensing/config';
+import { DEFAULT_LEGACY_MAX_USERS } from '@/lib/licensing/config';
+import { parseLicense, resolveLicenseState } from '@/lib/licensing/license-evaluator';
+
+export { parseLicense, resolveLicenseState } from '@/lib/licensing/license-evaluator';
 
 export function licenseDocument(organizationId: string) {
   return organizationDocumentInCollection(db, organizationId, 'license', 'current');
 }
 
-function timestamp(value: unknown) {
-  return value instanceof Timestamp ? value : undefined;
-}
-
-function hasTimestamp(value: unknown) {
-  return value instanceof Timestamp && Number.isFinite(value.toMillis());
-}
-
-function mapLicense(data: Record<string, unknown>): License | null {
-  const plan = ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(data.plan as string) ? data.plan as LicensePlan : null;
-  const status = ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.status as string) ? data.status as LicenseStatus : null;
-  const maxUsers = data.maxUsers;
-  if (!plan || !status || typeof maxUsers !== 'number' || !Number.isInteger(maxUsers) || maxUsers < 1) return null;
-  const requiredTimestamps = status === 'TRIAL'
-    ? ['trialStartedAt', 'trialEndsAt']
-    : status === 'ACTIVE'
-      ? ['subscriptionStartedAt', 'subscriptionEndsAt']
-      : [];
-  const timestampFields = ['trialStartedAt', 'trialEndsAt', 'subscriptionStartedAt', 'subscriptionEndsAt', 'createdAt', 'updatedAt'];
-  if (timestampFields.some((field) => data[field] !== undefined && data[field] !== null && !hasTimestamp(data[field]))) return null;
-  if (requiredTimestamps.some((field) => !hasTimestamp(data[field]))) return null;
-  return {
-    plan,
-    status,
-    maxUsers,
-    features: data.features && typeof data.features === 'object' ? data.features as Record<string, boolean> : { ...DEFAULT_LICENSE_FEATURES },
-    trialStartedAt: timestamp(data.trialStartedAt),
-    trialEndsAt: timestamp(data.trialEndsAt),
-    subscriptionStartedAt: timestamp(data.subscriptionStartedAt),
-    subscriptionEndsAt: timestamp(data.subscriptionEndsAt),
-    createdAt: timestamp(data.createdAt),
-    updatedAt: timestamp(data.updatedAt),
-    updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
-  };
-}
-
 export async function getOrganizationLicense(organizationId: string) {
   const snapshot = await getDoc(licenseDocument(organizationId));
-  return snapshot.exists() ? mapLicense(snapshot.data()) : null;
+  return snapshot.exists() ? parseLicense(snapshot.data()) : null;
 }
 
 export function subscribeToOrganizationLicense(organizationId: string, onChange: (license: License | null) => void, onError: (error: Error) => void): Unsubscribe {
   return onSnapshot(licenseDocument(organizationId), (snapshot) => {
-    onChange(snapshot.exists() ? mapLicense(snapshot.data()) : null);
+    onChange(snapshot.exists() ? parseLicense(snapshot.data()) : null);
   }, onError);
 }
 
@@ -64,27 +31,6 @@ export async function loadOrganizationLicense(user: AppUser | null, organization
     console.error('Unable to load organization license', error);
     throw new Error('Unable to load subscription status. Please try again.');
   }
-}
-
-export function resolveLicenseState(license: License | null, now = Date.now()): ResolvedLicenseState {
-  if (!license) {
-    return { license: null, plan: 'TRIAL', status: 'EXPIRED', canWrite: false, isReadOnly: true, daysRemaining: null, reason: 'missing' };
-  }
-
-  if (license.status === 'SUSPENDED') return { license, plan: license.plan, status: 'SUSPENDED', canWrite: false, isReadOnly: true, daysRemaining: null, reason: 'suspended' };
-  if (license.status === 'EXPIRED') return { license, plan: license.plan, status: 'EXPIRED', canWrite: false, isReadOnly: true, daysRemaining: 0, reason: 'expired' };
-
-  if (license.status === 'TRIAL') {
-    const endsAt = license.trialEndsAt?.toMillis();
-    if (endsAt !== undefined && now > endsAt) return { license, plan: license.plan, status: 'EXPIRED', canWrite: false, isReadOnly: true, daysRemaining: 0, reason: 'expired' };
-    const daysRemaining = endsAt === undefined ? null : Math.max(0, Math.ceil((endsAt - now) / 86_400_000));
-    return { license, plan: license.plan, status: 'TRIAL', canWrite: true, isReadOnly: false, daysRemaining, reason: 'trial' };
-  }
-
-  const endsAt = license.subscriptionEndsAt?.toMillis();
-  if (endsAt !== undefined && now > endsAt) return { license, plan: license.plan, status: 'EXPIRED', canWrite: false, isReadOnly: true, daysRemaining: 0, reason: 'expired' };
-  const daysRemaining = endsAt === undefined ? null : Math.max(0, Math.ceil((endsAt - now) / 86_400_000));
-  return { license, plan: license.plan, status: 'ACTIVE', canWrite: true, isReadOnly: false, daysRemaining, reason: 'active' };
 }
 
 export const legacyMaxUsers = DEFAULT_LEGACY_MAX_USERS;

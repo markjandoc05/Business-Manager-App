@@ -1,6 +1,6 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, updateDoc, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
-import type { AppUser } from '@/types/auth';
+import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Task } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
@@ -48,16 +48,22 @@ async function requireActiveUser(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId);
 }
 
-async function requireTaskManager(user: AppUser | null, organizationId: string, task?: Task) {
+async function requireTaskManager(user: AppUser | null, organizationId: string, task?: Task): Promise<OrganizationMembership> {
   const { membership } = await requireOrganizationAccess(user, organizationId);
-  if (['ADMIN', 'MANAGER'].includes(membership.role)) return;
-  if (membership.role === 'USER' && task?.assignedToUid === user?.uid) return;
+  if (['ADMIN', 'MANAGER'].includes(membership.role)) return membership;
+  if (membership.role === 'USER' && task?.assignedToUid === user?.uid) return membership;
   throw new Error('You do not have permission to manage this task.');
 }
 
-function reportFirestoreFailure(operation: string, error: unknown) {
+async function requireTaskCreator(user: AppUser | null, organizationId: string): Promise<OrganizationMembership> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  if (['ADMIN', 'MANAGER', 'USER'].includes(membership.role)) return membership;
+  throw new Error('You do not have permission to create this task.');
+}
+
+function reportFirestoreFailure(operation: string, error: unknown, details: Record<string, unknown> = {}) {
   const firebaseError = error as { code?: string; message?: string };
-  console.error(`[Firestore] tasks:${operation} failed code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`);
+  console.error(`[Firestore] tasks:${operation} failed code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`, details);
 }
 
 function taskPayload(input: TaskInput) {
@@ -74,10 +80,21 @@ function taskPayload(input: TaskInput) {
 }
 
 async function requireRelatedRecords(organizationId: string, relatedTo: TaskInput['relatedTo']) {
-  if (!relatedTo) return;
+  if (!relatedTo) return undefined;
   const relatedRef = organizationDocumentInCollection(db, organizationId, `${relatedTo.type.toLowerCase()}s`, relatedTo.id);
   const snapshot = await getDoc(relatedRef);
   if (!snapshot.exists() || snapshot.data().archived === true || snapshot.data().status === 'ARCHIVED') throw new Error('The related record is not available in this organization.');
+  return relatedTo.type === 'Client'
+    ? relatedTo.id
+    : relatedTo.type === 'Deal' && typeof snapshot.data().clientId === 'string'
+      ? snapshot.data().clientId
+      : undefined;
+}
+
+async function taskActivityMetadata(organizationId: string, relatedTo: TaskInput['relatedTo']) {
+  if (!relatedTo) return undefined;
+  const clientId = await requireRelatedRecords(organizationId, relatedTo);
+  return clientId ? { clientId, ...(relatedTo.type === 'Deal' ? { dealId: relatedTo.id } : {}) } : undefined;
 }
 
 async function getOrganizationTask(organizationId: string, taskId: string) {
@@ -108,7 +125,8 @@ export async function listTasksPage(user: AppUser | null, organizationId: string
   const { membership } = await requireOrganizationAccess(user, organizationId);
   try {
     const tasksCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks');
-    const constraints: QueryConstraint[] = [where('archived', '==', false), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []), ...taskFilterConstraints(filters), orderBy(filters.due && filters.due !== 'All' ? 'dueDate' : 'createdAt', filters.due && filters.due !== 'All' ? 'asc' : 'desc')];
+    const orderByDueDate = (filters.due && filters.due !== 'All') || (filters.status === 'Pending' && filters.type === 'Follow-up');
+    const constraints: QueryConstraint[] = [where('archived', '==', false), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []), ...taskFilterConstraints(filters), orderBy(orderByDueDate ? 'dueDate' : 'createdAt', orderByDueDate ? 'asc' : 'desc')];
     const tasksQuery = cursor ? query(tasksCollection, ...constraints, startAfter(cursor), limit(pageSize)) : query(tasksCollection, ...constraints, limit(pageSize));
     const snapshot = await getDocs(tasksQuery);
     const items = snapshot.docs
@@ -147,14 +165,15 @@ export async function listLeadTasks(user: AppUser | null, organizationId: string
 }
 
 export async function createTask(user: AppUser | null, organizationId: string, input: TaskInput) {
-  await requireTaskManager(user, organizationId);
+  const membership = await requireTaskCreator(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
-  await requireRelatedRecords(organizationId, input.relatedTo);
+  const relatedClientId = await requireRelatedRecords(organizationId, input.relatedTo);
 
   try {
-    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName)) };
-    const taskRef = await addDoc(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), {
+    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName, membership)) };
+    const taskRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
+    const taskData = {
       ...payload,
       status: 'Pending',
       archived: false,
@@ -162,25 +181,38 @@ export async function createTask(user: AppUser | null, organizationId: string, i
       createdBy: user.uid,
       updatedAt: serverTimestamp(),
       updatedBy: user.uid,
+    };
+    const batch = writeBatch(db);
+    batch.set(taskRef, taskData);
+    addActivityToBatch(batch, organizationId, user, {
+      type: 'task_creation',
+      description: `Task created: ${input.title.trim()}`,
+      entityType: 'Task',
+      entityId: taskRef.id,
+      ...(relatedClientId ? { metadata: { clientId: relatedClientId, ...(input.relatedTo?.type === 'Deal' ? { dealId: input.relatedTo.id } : {}) } } : {}),
     });
+    await batch.commit();
     const now = new Date().toISOString();
     return mapTask(taskRef.id, { ...payload, status: 'Pending', archived: false, createdAt: now, createdBy: user.uid, updatedAt: now, updatedBy: user.uid });
   } catch (error) {
-    reportFirestoreFailure('create', error);
+    reportFirestoreFailure('create', error, { role: membership.role, relatedType: input.relatedTo?.type || 'None' });
     throw new Error('Unable to create the task. Please try again.');
   }
 }
 
 export async function updateTask(user: AppUser | null, organizationId: string, taskId: string, input: TaskInput) {
   const existingTask = await getOrganizationTask(organizationId, taskId);
-  await requireTaskManager(user, organizationId, existingTask);
+  const membership = await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
-  await requireRelatedRecords(organizationId, input.relatedTo);
+  const metadata = await taskActivityMetadata(organizationId, input.relatedTo);
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { ...taskPayload(input), updatedAt: serverTimestamp(), updatedBy: user.uid });
+    const batch = writeBatch(db);
+    batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { ...taskPayload(input), updatedAt: serverTimestamp(), updatedBy: user.uid });
+    addActivityToBatch(batch, organizationId, user, { type: 'task_update', description: `Task edited: ${input.title.trim()}`, entityType: 'Task', entityId: taskId, ...(metadata ? { metadata } : {}) });
+    await batch.commit();
   } catch (error) {
-    reportFirestoreFailure('update', error);
+    reportFirestoreFailure('update', error, { role: membership.role, relatedType: input.relatedTo?.type || 'None' });
     throw new Error('Unable to update the task. Please try again.');
   }
 }
@@ -190,9 +222,10 @@ export async function completeTask(user: AppUser | null, organizationId: string,
   await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to update a task.');
   try {
+    const metadata = await taskActivityMetadata(organizationId, existingTask.relatedTo);
     const batch = writeBatch(db);
     batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { status, updatedAt: serverTimestamp(), updatedBy: user.uid });
-    if (status === 'Completed') addActivityToBatch(batch, organizationId, user, { type: 'task_completion', description: `Task Completed: ${existingTask.title}`, entityType: 'Task', entityId: taskId });
+    addActivityToBatch(batch, organizationId, user, { type: status === 'Completed' ? 'task_completion' : 'task_reopened', description: status === 'Completed' ? `Task completed: ${existingTask.title}` : `Task reopened: ${existingTask.title}`, entityType: 'Task', entityId: taskId, ...(metadata ? { metadata } : {}) });
     await batch.commit();
   } catch (error) {
     reportFirestoreFailure('complete', error);
@@ -205,7 +238,11 @@ export async function archiveTask(user: AppUser | null, organizationId: string, 
   await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to archive a task.');
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    const metadata = await taskActivityMetadata(organizationId, existingTask.relatedTo);
+    const batch = writeBatch(db);
+    batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    addActivityToBatch(batch, organizationId, user, { type: 'task_archive', description: `Task archived: ${existingTask.title}`, entityType: 'Task', entityId: taskId, ...(metadata ? { metadata } : {}) });
+    await batch.commit();
   } catch (error) {
     reportFirestoreFailure('archive', error);
     throw new Error('Unable to archive the task. Please try again.');
@@ -230,7 +267,11 @@ export async function restoreTask(user: AppUser | null, organizationId: string, 
   const existingTask = await getOrganizationTask(organizationId, taskId);
   await requireTaskManager(user, organizationId, existingTask);
   if (!user) throw new Error('You must be signed in to restore a task.');
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  const metadata = await taskActivityMetadata(organizationId, existingTask.relatedTo);
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  addActivityToBatch(batch, organizationId, user, { type: 'task_restore', description: `Task restored: ${existingTask.title}`, entityType: 'Task', entityId: taskId, ...(metadata ? { metadata } : {}) });
+  await batch.commit();
 }
 
 export async function permanentlyDeleteTask(user: AppUser | null, organizationId: string, taskId: string) {

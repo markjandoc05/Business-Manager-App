@@ -3,8 +3,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { getOrganization, listUserMemberships, subscribeToOrganization } from '@/lib/repositories/workspaces';
-import { getOrganizationLicense, resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
+import { invalidateCachedRequest } from '@/lib/repositories/requestCache';
+import { resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
+import { firestoreWorkspaceErrorMessage, isFirestoreIndexError } from '@/lib/repositories/pagination';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
+import { finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 
 interface WorkspaceContextValue {
   currentOrganization: Organization | null;
@@ -35,7 +38,7 @@ interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const { user, status: authStatus } = useAuth();
+  const { firebaseUser } = useAuth();
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
   const [membership, setMembership] = useState<OrganizationMembership | null>(null);
   const [availableOrganizations, setAvailableOrganizations] = useState<Organization[]>([]);
@@ -48,8 +51,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [licenseError, setLicenseError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const [resolvedMemberships, setResolvedMemberships] = useState<OrganizationMembership[]>([]);
   const resolutionRequestRef = useRef(0);
-  const lastResolvedUserIdRef = useRef<string | null>(null);
 
   const clearWorkspace = () => {
     setCurrentOrganization(null);
@@ -57,9 +60,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setAvailableOrganizations([]);
     setHasMembership(false);
     setMembershipSummaries([]);
+    setResolvedMemberships([]);
     setError(null);
     setLicense(null);
     setLicenseError(null);
+    setLicenseLoading(false);
   };
 
   /* Workspace reset is intentionally synchronous so stale tenant state is invalidated immediately. */
@@ -67,91 +72,130 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     const requestId = ++resolutionRequestRef.current;
-    const userId = user?.uid;
+    const userId = firebaseUser?.uid;
+    let activeMembershipCount = 0;
 
     const isCurrentRequest = () => !cancelled && requestId === resolutionRequestRef.current;
 
-    if (authStatus !== 'active' || !user || !userId) {
-      lastResolvedUserIdRef.current = null;
+    if (!firebaseUser) {
       setSelectedOrganizationId(null);
       clearWorkspace();
       setLoading(false);
       return () => { cancelled = true; };
     }
 
-    if (lastResolvedUserIdRef.current !== userId) {
-      lastResolvedUserIdRef.current = userId;
-      setSelectedOrganizationId(null);
-    }
+    setSelectedOrganizationId(null);
     clearWorkspace();
     setLoading(true);
-    setLicenseLoading(true);
+    setLicenseLoading(false);
 
-    void listUserMemberships(user).then(async (memberships) => {
+    void listUserMemberships(firebaseUser).then(async (memberships) => {
+      if (!isCurrentRequest() || userId !== firebaseUser.uid) return;
       setHasMembership(memberships.length > 0);
       setMembershipSummaries(memberships.map((item) => ({ organizationId: item.organizationId, status: item.status, role: item.role })));
+      setResolvedMemberships(memberships);
       const activeMemberships = memberships.filter((item) => item.status === 'active');
-      let licenseLoadFailed = false;
-      const resolved = await Promise.all(activeMemberships.map(async (item) => {
-        const organization = await getOrganization(item.organizationId);
-        let license: License | null = null;
-        try {
-          license = await getOrganizationLicense(item.organizationId);
-        } catch (licenseLoadError) {
-          console.error('Unable to resolve organization license', licenseLoadError);
-          licenseLoadFailed = true;
-        }
-        return { organization, license };
-      }));
-      if (!isCurrentRequest() || userId !== user.uid) return;
-      const organizations = resolved.map((item) => item.organization).filter((organization): organization is Organization => organization !== null);
-      setAvailableOrganizations(organizations);
-      const preferredOrganizationId = activeMemberships.length === 1 ? activeMemberships[0].organizationId : selectedOrganizationId;
-      const selectedMembership = activeMemberships.find((item) => item.organizationId === preferredOrganizationId && organizations.some((organization) => organization.id === item.organizationId)) || null;
-      setMembership(selectedMembership);
-      const selectedOrganization = selectedMembership ? organizations.find((organization) => organization.id === selectedMembership.organizationId) || null : null;
-      setCurrentOrganization(selectedOrganization);
-      setLicense(selectedOrganization ? resolved.find((item) => item.organization?.id === selectedOrganization.id)?.license || null : null);
-      setLicenseError(licenseLoadFailed ? 'Subscription status is not available yet.' : null);
-    }).catch((workspaceError) => {
-      console.error('Unable to resolve workspace memberships', workspaceError);
-      if (isCurrentRequest() && userId === user.uid) {
-        setError('Workspace information is not available yet.');
-        setLicenseError('Subscription status is not available yet.');
+      activeMembershipCount = activeMemberships.length;
+      if (!activeMemberships.length) return;
+      if (activeMemberships.length === 1) {
+        setSelectedOrganizationId(activeMemberships[0].organizationId);
+        return;
       }
-    }).finally(() => { if (isCurrentRequest()) { setLoading(false); setLicenseLoading(false); } });
+      const organizations = (await Promise.all(activeMemberships.map((item) => getOrganization(item.organizationId))))
+        .filter((organization): organization is Organization => organization !== null);
+      if (!isCurrentRequest() || userId !== firebaseUser.uid) return;
+      setAvailableOrganizations(organizations);
+    }).catch((workspaceError) => {
+      if (isFirestoreIndexError(workspaceError)) {
+        if (process.env.NODE_ENV !== 'production') console.info('[Workspace] Membership index is unavailable or still building.', workspaceError);
+      } else {
+        console.error('Unable to resolve workspace memberships', workspaceError);
+      }
+      if (isCurrentRequest() && userId === firebaseUser.uid) {
+        setError(firestoreWorkspaceErrorMessage(workspaceError));
+      }
+    }).finally(() => {
+      if (!isCurrentRequest()) return;
+      // A single active membership is completed by the selected-workspace effect.
+      if (activeMembershipCount === 1) return;
+      setLoading(false);
+    });
     return () => { cancelled = true; };
-  }, [authStatus, selectedOrganizationId, user, refreshToken]);
+  }, [firebaseUser, refreshToken]);
+
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    let cancelled = false;
+    const requestId = resolutionRequestRef.current;
+    const selectedMembership = resolvedMemberships.find((item) => item.organizationId === selectedOrganizationId && item.status === 'active') || null;
+    if (!selectedOrganizationId || !selectedMembership || !firebaseUser) return undefined;
+
+    setLoading(true);
+    setLicenseLoading(true);
+    setError(null);
+    setLicenseError(null);
+    startStartupStage('organization-resolution');
+    const unsubscribeOrganization = subscribeToOrganization(selectedOrganizationId, (nextOrganization) => {
+      if (cancelled || requestId !== resolutionRequestRef.current) return;
+      if (!nextOrganization) {
+        finishStartupStage('organization-resolution');
+        setError('This workspace is no longer available.');
+        setLoading(false);
+        return;
+      }
+      finishStartupStage('organization-resolution');
+      markStartup('organization-resolved');
+      setMembership(selectedMembership);
+      setCurrentOrganization(nextOrganization);
+      setAvailableOrganizations((organizations) => organizations.some((organization) => organization.id === nextOrganization.id)
+        ? organizations.map((organization) => organization.id === nextOrganization.id ? nextOrganization : organization)
+        : [...organizations, nextOrganization]);
+      setLoading(false);
+    }, (snapshotError) => {
+      if (cancelled || requestId !== resolutionRequestRef.current) return;
+      finishStartupStage('organization-resolution');
+      if (isFirestoreIndexError(snapshotError)) {
+        if (process.env.NODE_ENV !== 'production') console.info('[Workspace] Organization index is unavailable or still building.', snapshotError);
+      } else {
+        console.error('Unable to resolve organization', snapshotError);
+      }
+      setError(firestoreWorkspaceErrorMessage(snapshotError, snapshotError.message));
+      setLoading(false);
+    });
+    const unsubscribeLicense = subscribeToOrganizationLicense(selectedOrganizationId, (nextLicense) => {
+      if (cancelled || requestId !== resolutionRequestRef.current) return;
+      setLicense(nextLicense);
+      setLicenseLoading(false);
+    }, (snapshotError) => {
+      if (cancelled || requestId !== resolutionRequestRef.current) return;
+      console.error('Unable to resolve organization license', snapshotError);
+      setLicenseError('Subscription status is not available yet.');
+      setLicenseLoading(false);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribeOrganization();
+      unsubscribeLicense();
+    };
+  }, [firebaseUser, resolvedMemberships, selectedOrganizationId]);
   /* eslint-enable react-hooks/set-state-in-effect */
 
   const ready = !loading && currentOrganization !== null && ['trial', 'active', 'expired', 'suspended'].includes(currentOrganization.status) && membership?.status === 'active';
   const resolvedLicenseState = resolveLicenseState(license);
-  const mirrorsMatch = Boolean(currentOrganization && license && currentOrganization.licenseStatus === license.status
-    && currentOrganization.licenseWriteEnabled === resolveLicenseState(license).canWrite
-    && (currentOrganization.licenseExpiresAt || null) === (license.status === 'TRIAL' ? license.trialEndsAt?.toDate().toISOString() : license.status === 'ACTIVE' ? license.subscriptionEndsAt?.toDate().toISOString() : null));
+  const expectedLicenseExpiresAt = resolvedLicenseState.canWrite
+    ? (license?.status === 'TRIAL' ? license.trialEndsAt?.toDate().toISOString() : license?.status === 'ACTIVE' ? license.subscriptionEndsAt?.toDate().toISOString() : null)
+    : null;
+  const mirrorsMatch = Boolean(currentOrganization && license && currentOrganization.licenseStatus === resolvedLicenseState.status
+    && currentOrganization.licenseWriteEnabled === resolvedLicenseState.canWrite
+    && (currentOrganization.licenseExpiresAt || null) === (expectedLicenseExpiresAt || null));
   const licenseState: ResolvedLicenseState = licenseError || !mirrorsMatch
-    ? { ...resolvedLicenseState, canWrite: false, isReadOnly: true, reason: 'unavailable' }
+    ? { ...resolvedLicenseState, plan: license ? resolvedLicenseState.plan : null, status: 'UNKNOWN', canRead: true, canWrite: false, isReadOnly: true, daysRemaining: null, reason: 'unavailable' }
     : resolvedLicenseState;
 
-  useEffect(() => {
-    if (!currentOrganization?.id) return undefined;
-    const unsubscribeOrganization = subscribeToOrganization(currentOrganization.id, (nextOrganization) => {
-      setCurrentOrganization(nextOrganization);
-      setAvailableOrganizations((organizations) => organizations.map((organization) => organization.id === nextOrganization?.id ? nextOrganization : organization));
-    }, (snapshotError) => setLicenseError(snapshotError.message));
-    const unsubscribeLicense = subscribeToOrganizationLicense(currentOrganization.id, (nextLicense) => {
-      setLicense(nextLicense);
-      setLicenseLoading(false);
-    }, (snapshotError) => {
-      setLicenseError(snapshotError.message);
-      setLicenseLoading(false);
-    });
-    return () => {
-      unsubscribeOrganization();
-      unsubscribeLicense();
-    };
-  }, [currentOrganization?.id]);
-  const refresh = useCallback(() => setRefreshToken((value) => value + 1), []);
+  const refresh = useCallback(() => {
+    if (firebaseUser) invalidateCachedRequest(`workspace-memberships:${firebaseUser.uid}`);
+    setRefreshToken((value) => value + 1);
+  }, [firebaseUser]);
   const selectOrganization = useCallback((organizationId: string) => {
     if (availableOrganizations.some((organization) => organization.id === organizationId)) setSelectedOrganizationId(organizationId);
   }, [availableOrganizations]);

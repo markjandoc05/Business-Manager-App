@@ -140,6 +140,8 @@ async function productionConversion(db, uid = ADMIN_UID, organizationId = ORGANI
   const leadRef = doc(db, leadPath(organizationId, leadId));
   const clientRef = doc(collection(db, `${organizationPath(organizationId)}/clients`));
   const timelineRef = doc(db, timelinePath(organizationId, leadId));
+  const conversionActivityRef = doc(collection(db, `${organizationPath(organizationId)}/activities`));
+  const clientActivityRef = doc(collection(db, `${organizationPath(organizationId)}/activities`));
   const now = serverTimestamp();
   const client = conversionClient(clientRef.id);
   client.sourceLeadId = leadId;
@@ -159,6 +161,24 @@ async function productionConversion(db, uid = ADMIN_UID, organizationId = ORGANI
       updatedBy: uid,
     });
     transaction.set(timelineRef, timeline);
+    transaction.set(conversionActivityRef, {
+      type: 'client_conversion',
+      description: 'Converted lead to Client',
+      entityType: 'Lead',
+      entityId: leadId,
+      metadata: { clientId: clientRef.id },
+      createdAt: now,
+      createdBy: uid,
+    });
+    transaction.set(clientActivityRef, {
+      type: 'client_creation',
+      description: 'Client created from lead',
+      entityType: 'Client',
+      entityId: clientRef.id,
+      metadata: { sourceLeadId: leadId },
+      createdAt: now,
+      createdBy: uid,
+    });
   });
 
   return { leadRef, clientRef, timelineRef };

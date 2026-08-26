@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -13,12 +13,11 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
-  Menu,
   Briefcase,
   LogOut
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '@/lib/utils';
+import { MobileNavigationProvider } from '@/components/MobileNavigationContext';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { canManageSettings } from '@/lib/permissions';
@@ -40,8 +39,9 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
-  const [mobileSidebarWidth, setMobileSidebarWidth] = useState(300);
   const pathname = usePathname();
+  const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const wasMobileOpen = useRef(false);
   const { user, signOut } = useAuth();
   const { settings } = useApp();
   const { membership, currentOrganization, licenseState, isReadOnly } = useWorkspace();
@@ -57,7 +57,6 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     const handleResize = () => {
       const desktop = window.innerWidth >= 1024;
       setIsDesktop(desktop);
-      setMobileSidebarWidth(Math.min(300, Math.round(window.innerWidth * 0.88)));
       if (desktop) setIsMobileOpen(false);
     };
     handleResize();
@@ -87,6 +86,22 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     return () => window.removeEventListener('keydown', handleEscape);
   }, [isDesktop]);
 
+  /* eslint-disable react-hooks/set-state-in-effect -- close the transient drawer after route navigation. */
+  useEffect(() => {
+    setIsMobileOpen(false);
+  }, [pathname]);
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  useEffect(() => {
+    if (isMobileOpen && !isDesktop) {
+      wasMobileOpen.current = true;
+      mobileCloseButtonRef.current?.focus();
+    } else if (!isMobileOpen && !isDesktop && wasMobileOpen.current) {
+      wasMobileOpen.current = false;
+      document.getElementById('mobile-navigation-trigger')?.focus();
+    }
+  }, [isDesktop, isMobileOpen]);
+
   useEffect(() => {
     if (!isMobileOpen || isDesktop) return undefined;
     const previousOverflow = document.body.style.overflow;
@@ -95,32 +110,35 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   }, [isDesktop, isMobileOpen]);
 
   const sidebarCollapsed = isDesktop && isCollapsed;
-  const sidebarWidth = isDesktop ? (sidebarCollapsed ? 68 : 248) : mobileSidebarWidth;
-
   return (
-    <div className="flex h-screen bg-[#f7f7f8] text-slate-800 antialiased">
+    <MobileNavigationProvider openNavigation={() => setIsMobileOpen(true)} isOpen={isMobileOpen}>
+      <div
+        className="flex h-[100dvh] min-h-screen min-w-0 overflow-hidden bg-[#f7f7f8] text-slate-800 antialiased"
+        style={{ '--sidebar-width': isDesktop ? (sidebarCollapsed ? '68px' : '248px') : '0px' } as React.CSSProperties}
+      >
       {/* Mobile Backdrop */}
-      <AnimatePresence>
-        {isMobileOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setIsMobileOpen(false)}
-            className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-[1px] lg:hidden"
-            aria-hidden="true"
-          />
-        )}
-      </AnimatePresence>
+      {isMobileOpen && (
+        <div
+          onClick={() => setIsMobileOpen(false)}
+          className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-[1px] lg:hidden"
+          aria-hidden="true"
+        />
+      )}
 
       {/* Sidebar */}
-      <motion.aside
-        animate={{ width: sidebarWidth, x: isMobileOpen || isDesktop ? 0 : -sidebarWidth }}
-        transition={{ duration: 0.2, ease: 'easeInOut' }}
+      <aside
+        id="mobile-navigation-drawer"
+        aria-label="Navigation"
+        aria-hidden={!isDesktop && !isMobileOpen}
+        inert={!isDesktop && !isMobileOpen ? true : undefined}
+        role={!isDesktop ? 'dialog' : undefined}
+        aria-modal={!isDesktop ? true : undefined}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r border-slate-200 bg-white text-slate-700 lg:relative",
+          "fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] max-w-[85vw] -translate-x-full flex-col border-r border-slate-200 bg-white text-slate-700 shadow-xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:w-[var(--sidebar-width)] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-[width,transform] lg:duration-200",
+          isMobileOpen && "translate-x-0",
           sidebarCollapsed ? "items-center" : "items-stretch"
         )}
+        style={{ '--sidebar-width': sidebarCollapsed ? '68px' : '248px' } as React.CSSProperties}
       >
         {/* Logo Section */}
         <div className={cn(
@@ -138,14 +156,16 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
           </div>
           {!sidebarCollapsed ? (
             <button 
+              ref={mobileCloseButtonRef}
+              type="button"
               onClick={() => isDesktop ? setIsCollapsed(true) : setIsMobileOpen(false)}
               aria-label={isDesktop ? 'Close sidebar' : 'Close navigation'}
               title={isDesktop ? 'Close sidebar' : 'Close navigation'}
-              className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
             >
               <PanelLeftClose size={18} />
             </button>
-          ) : <button onClick={() => setIsCollapsed(false)} aria-label="Open sidebar" title="Open sidebar" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><PanelLeftOpen size={18} /></button>}
+          ) : <button type="button" onClick={() => setIsCollapsed(false)} aria-label="Open sidebar" title="Open sidebar" className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><PanelLeftOpen size={18} /></button>}
         </div>
 
         {/* Navigation */}
@@ -199,23 +219,19 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
             </div>
           )}
         </div>
-      </motion.aside>
+      </aside>
 
       {/* Main Content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <main className="flex-1 overflow-y-auto p-4 sm:p-5">
-          <div className="mb-3 lg:hidden">
-            <button type="button" onClick={() => setIsMobileOpen(true)} className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30" aria-label="Open navigation">
-              <Menu size={18} /> Menu
-            </button>
-          </div>
-          <div className="mx-auto max-w-7xl min-w-0">
+        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 2xl:p-8">
+          <div className="mx-auto w-full min-w-0 max-w-[1536px]">
             {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
-            {isReadOnly && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
+            {isReadOnly && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{licenseState.status === 'UNKNOWN' ? 'Subscription status could not be verified. This workspace is temporarily read-only.' : licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
             {children}
           </div>
         </main>
       </div>
-    </div>
+      </div>
+    </MobileNavigationProvider>
   );
 }

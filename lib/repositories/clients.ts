@@ -1,4 +1,4 @@
-import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
@@ -9,6 +9,7 @@ import { organizationCollection, organizationDocumentInCollection, organizationS
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
+import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositories/lifecycle';
 
 export const CLIENT_PAGE_SIZE = 25;
 
@@ -42,6 +43,9 @@ function mapClient(id: string, data: Record<string, unknown>): Client {
     archived: data.archived === true || data.status === 'ARCHIVED',
     archivedAt: typeof data.archivedAt === 'object' && data.archivedAt && 'toDate' in data.archivedAt && typeof data.archivedAt.toDate === 'function' ? data.archivedAt.toDate().toISOString() : undefined,
     archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
+    trashed: data.trashed === true,
+    trashedAt: optionalIsoDate(data.trashedAt),
+    trashedBy: typeof data.trashedBy === 'string' ? data.trashedBy : undefined,
     createdAt: toIsoDate(data.createdAt),
     updatedAt: toIsoDate(data.updatedAt),
     createdBy: typeof data.createdBy === 'string' ? data.createdBy : undefined,
@@ -68,7 +72,7 @@ export async function listClientsPage(user: AppUser | null, organizationId: stri
   const snapshot = await getDocs(clientsQuery);
   const items = snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
-    .filter((client) => !client.archived);
+    .filter((client) => !client.archived && !client.trashed);
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
@@ -80,6 +84,7 @@ export async function getClientById(user: AppUser | null, organizationId: string
   await requireActiveUser(user, organizationId);
   const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
   if (!snapshot.exists()) throw new Error('The client could not be found.');
+  if (snapshot.data().trashed === true) throw new Error('The client could not be found.');
   return mapClient(snapshot.id, snapshot.data());
 }
 
@@ -95,6 +100,7 @@ export async function createClient(user: AppUser | null, organizationId: string,
     ...assignment,
     status: 'ACTIVE',
     archived: false,
+    trashed: false,
     createdAt: serverTimestamp(),
     createdBy: user.uid,
     updatedAt: serverTimestamp(),
@@ -105,7 +111,7 @@ export async function createClient(user: AppUser | null, organizationId: string,
   addActivityToBatch(batch, organizationId, user, { type: 'client_creation', description: `Client added: ${input.name}`, entityType: 'Client', entityId: clientRef.id });
   await batch.commit();
 
-  return mapClient(clientRef.id, { ...input, ...assignment, status: 'ACTIVE', archived: false, createdAt: new Date().toISOString(), createdBy: user.uid, updatedAt: new Date().toISOString(), updatedBy: user.uid });
+  return mapClient(clientRef.id, { ...input, ...assignment, status: 'ACTIVE', archived: false, trashed: false, createdAt: new Date().toISOString(), createdBy: user.uid, updatedAt: new Date().toISOString(), updatedBy: user.uid });
 }
 
 export async function updateClient(user: AppUser | null, organizationId: string, clientId: string, input: ClientInput) {
@@ -128,11 +134,16 @@ export async function updateClient(user: AppUser | null, organizationId: string,
 export async function archiveClient(user: AppUser | null, organizationId: string, clientId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a client.');
+  const decision = await getLifecycleDecision(user, organizationId, 'Client', 'archive', clientId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
 
   const batch = writeBatch(db);
   batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
     status: 'ARCHIVED',
     archived: true,
+    trashed: false,
+    trashedAt: null,
+    trashedBy: null,
     archivedAt: serverTimestamp(),
     archivedBy: user.uid,
     updatedAt: serverTimestamp(),
@@ -149,7 +160,7 @@ export async function listArchivedClientsPage(user: AppUser | null, organization
     ? query(clientsCollection, where('archived', '==', true), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
     : query(clientsCollection, where('archived', '==', true), orderBy('createdAt', 'desc'), limit(pageSize));
   const snapshot = await getDocs(clientsQuery);
-  const items = snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.archived);
+  const items = snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.archived && !client.trashed);
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
@@ -157,37 +168,54 @@ export async function listArchivedClients(user: AppUser | null, organizationId: 
   return (await listArchivedClientsPage(user, organizationId)).items;
 }
 
+export async function listTrashedClientsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = CLIENT_PAGE_SIZE): Promise<PageResult<Client>> {
+  await requireActiveUser(user, organizationId);
+  const clientsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'clients');
+  const clientsQuery = cursor
+    ? query(clientsCollection, where('trashed', '==', true), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
+    : query(clientsCollection, where('trashed', '==', true), orderBy('createdAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(clientsQuery);
+  const items = snapshot.docs.map((clientDoc) => mapClient(clientDoc.id, clientDoc.data())).filter((client) => client.trashed);
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
 export async function restoreClient(user: AppUser | null, organizationId: string, clientId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to restore a client.');
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId), { status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), { status: 'ACTIVE', archived: false, trashed: false, trashedAt: null, trashedBy: null, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  addActivityToBatch(batch, organizationId, user, { type: 'client_restore', description: `Client restored: ${clientId}`, entityType: 'Client', entityId: clientId });
+  await batch.commit();
+}
+
+export async function trashClient(user: AppUser | null, organizationId: string, clientId: string) {
+  await requireClientManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to move a client to Trash.');
+  const decision = await getLifecycleDecision(user, organizationId, 'Client', 'trash', clientId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
+    status: 'ARCHIVED', archived: true, trashed: true, trashedAt: serverTimestamp(), trashedBy: user.uid,
+    updatedAt: serverTimestamp(), updatedBy: user.uid,
+  });
+  addActivityToBatch(batch, organizationId, user, { type: 'client_archive', description: `Client moved to Trash: ${clientId}`, entityType: 'Client', entityId: clientId });
+  await batch.commit();
 }
 
 export async function permanentlyDeleteClient(user: AppUser | null, organizationId: string, clientId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to delete a client.');
-  const clientRef = organizationDocumentInCollection(db, organizationId, 'clients', clientId);
-  const snapshot = await getDoc(clientRef);
-  if (!snapshot.exists() || !(snapshot.data().archived === true || snapshot.data().status === 'ARCHIVED')) throw new Error('Only archived clients can be permanently deleted.');
-  const [deals, tasks, notes, activities] = await Promise.all([
-    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'), where('clientId', '==', clientId), limit(1))),
-    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), where('relatedTo.id', '==', clientId), limit(1))),
-    getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'), limit(1))),
-    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'), where('entityType', '==', 'Client'), where('entityId', '==', clientId), limit(1))),
-  ]);
-  const hasRelated = deals.docs.some((item) => item.data().clientId === clientId)
-    || tasks.docs.some((item) => { const related = item.data().relatedTo as { type?: string; id?: string } | undefined; return related?.type === 'Client' && related.id === clientId; })
-    || notes.size > 0
-    || activities.docs.some((item) => item.data().entityType === 'Client' && item.data().entityId === clientId);
-  if (hasRelated) throw new Error('This client cannot be deleted while related deals, tasks, notes, or activity history exist.');
-  await deleteDoc(clientRef);
+  const decision = await getLifecycleDecision(user, organizationId, 'Client', 'permanent-delete', clientId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
+  await permanentlyDeleteRecord(user, organizationId, 'Client', clientId);
 }
 
 export async function addClientNote(user: AppUser | null, organizationId: string, clientId: string, content: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a client note.');
 
-  const noteRef = await addDoc(organizationSubcollection(db, organizationId, 'clients', clientId, 'notes'), {
+  const noteRef = doc(organizationSubcollection(db, organizationId, 'clients', clientId, 'notes'));
+  const noteData = {
     content,
     createdAt: serverTimestamp(),
     createdByUid: user.uid,
@@ -195,7 +223,11 @@ export async function addClientNote(user: AppUser | null, organizationId: string
     archived: false,
     archivedAt: null,
     archivedBy: null,
-  });
+  };
+  const batch = writeBatch(db);
+  batch.set(noteRef, noteData);
+  addActivityToBatch(batch, organizationId, user, { type: 'note_creation', description: 'Note added.', entityType: 'Note', entityId: noteRef.id, metadata: { clientId, noteId: noteRef.id } });
+  await batch.commit();
 
   return {
     id: noteRef.id,
@@ -207,6 +239,18 @@ export async function addClientNote(user: AppUser | null, organizationId: string
     createdAt: new Date().toISOString(),
     archived: false,
   } satisfies Note;
+}
+
+export async function updateClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string, content: string) {
+  await requireClientManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to update a client note.');
+  const trimmedContent = content.trim();
+  if (!trimmedContent) throw new Error('Note content is required.');
+  const noteRef = organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId);
+  const batch = writeBatch(db);
+  batch.update(noteRef, { content: trimmedContent });
+  addActivityToBatch(batch, organizationId, user, { type: 'note_update', description: 'Note edited.', entityType: 'Note', entityId: noteId, metadata: { clientId, noteId } });
+  await batch.commit();
 }
 
 export async function listClientNotesPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, pageSize = 20): Promise<PageResult<Note>> {
@@ -259,21 +303,34 @@ export async function listArchivedClientNotes(user: AppUser | null, organization
 export async function archiveClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a client note.');
-  await updateDoc(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid });
+  const batch = writeBatch(db);
+  batch.update(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid });
+  addActivityToBatch(batch, organizationId, user, { type: 'note_archive', description: 'Note archived.', entityType: 'Note', entityId: noteId, metadata: { clientId, noteId } });
+  await batch.commit();
 }
 
 export async function restoreClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to restore a client note.');
-  await updateDoc(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId), { archived: false, archivedAt: null, archivedBy: null });
+  const batch = writeBatch(db);
+  batch.update(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId), { archived: false, archivedAt: null, archivedBy: null });
+  addActivityToBatch(batch, organizationId, user, { type: 'note_restore', description: 'Note restored.', entityType: 'Note', entityId: noteId, metadata: { clientId, noteId } });
+  await batch.commit();
 }
 
 export async function permanentlyDeleteClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
   await requireClientManager(user, organizationId);
-  const noteRef = organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'notes', noteId);
-  const snapshot = await getDoc(noteRef);
-  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived notes can be permanently deleted.');
-  await deleteDoc(noteRef);
+  if (!user) throw new Error('You must be signed in to delete a client note.');
+  await auth.authStateReady();
+  const firebaseUser = auth.currentUser;
+  if (!firebaseUser) throw new Error('Authentication is required.');
+  const token = await firebaseUser.getIdToken(false);
+  const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/notes/${encodeURIComponent(noteId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+  });
+  const payload = await response.json().catch(() => null) as { error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error || 'Unable to permanently delete this note.');
 }
 
 function safeStorageFilename(filename: string) {

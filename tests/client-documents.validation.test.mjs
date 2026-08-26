@@ -11,5 +11,5 @@ test('a file exactly 1 MB is allowed by application validation', () => {
 });
 
 test('a file one byte over 1 MB is rejected by application validation', () => {
-  assert.equal(getClientDocumentSizeError(MAX_CLIENT_DOCUMENT_SIZE + 1), 'File is too large. Maximum upload size is 1 MB.');
+  assert.equal(getClientDocumentSizeError(MAX_CLIENT_DOCUMENT_SIZE + 1), 'Maximum file size: 1 MB');
 });

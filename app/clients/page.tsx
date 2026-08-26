@@ -35,11 +35,25 @@ import { TaskCard } from '@/components/TaskCard';
 import { formatCompactDateTime, formatTaskDueDate, getNextFollowUp, sortOpenTasks } from '@/lib/task-utils';
 import { getDefaultAssignment } from '@/lib/ownership';
 import { IconActionButton } from '@/components/IconActionButton';
+import { getLifecycleDecision } from '@/lib/repositories/lifecycle';
+import type { LifecycleDecision } from '@/lib/record-lifecycle';
+import { previewBulkLifecycle } from '@/lib/repositories/lifecycle';
+import type { BulkLifecycleAction, BulkLifecycleResult } from '@/lib/repositories/lifecycle';
+import { BulkActionToolbar } from '@/components/BulkActionToolbar';
+import { TablePagination } from '@/components/TablePagination';
+import { SortableColumnHeader } from '@/components/SortableColumnHeader';
+import { compareDate, compareNumber, compareText, type SortDirection } from '@/lib/table-sorting';
 import { MoneyInput } from '@/components/MoneyInput';
 import { countClientTabRecords, type ClientTabCounts } from '@/lib/repositories/clientCounts';
+import { listActivitiesForClient } from '@/lib/repositories/activities';
+import { activityBelongsToClient } from '@/lib/activity-history';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
 import { Archive, Download, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import type { ChangeEvent } from 'react';
+import type { Activity, Client, Task } from '@/types';
+type ClientColumn = 'select' | 'client' | 'company' | 'contact' | 'clientSince' | 'activeDeals' | 'totalSales' | 'action';
+type ClientSortKey = Exclude<ClientColumn, 'select' | 'action'>;
+type ClientSort = { key: ClientSortKey; direction: SortDirection } | null;
 function currentDateTimeValue() {
   const date = new Date();
   const offset = date.getTimezoneOffset();
@@ -102,11 +116,12 @@ export default function ClientsPage() {
     refreshClients,
     loadMoreClients,
     clientsHasMore,
-    deals, 
+    deals,
+    dealsLoading,
+    dealsError,
     leads,
-    tasks, 
-    activities, 
-    refreshActivities,
+    tasks,
+    tasksLoading,
     refreshDeals,
     refreshLeads,
     refreshTasks,
@@ -114,7 +129,9 @@ export default function ClientsPage() {
     addDeal, 
     updateDeal,
     addTask, 
+    updateTask,
     addNote, 
+    updateNote,
     archiveClientNote,
     restoreClientNote,
     permanentlyDeleteClientNote,
@@ -126,12 +143,17 @@ export default function ClientsPage() {
     updateClient: updateClientInApp,
     archiveClient: archiveClientInApp,
     archivedClients,
+    trashedClients,
     archivedDeals,
     archivedTasks,
     loadArchivedRecords,
+    loadTrashRecords,
     loadMoreArchivedClients,
+    loadMoreTrashedClients,
     archivedClientsHasMore,
+    trashedClientsHasMore,
     restoreClient,
+    trashClient,
     permanentlyDeleteClient,
     archiveDeal,
     restoreDeal,
@@ -139,27 +161,41 @@ export default function ClientsPage() {
     archiveTask,
     restoreTask,
     permanentlyDeleteTask,
+    executeBulkLifecycleAction: executeBulkLifecycleInApp,
   } = useApp();
   const { user } = useAuth();
   const { currentOrganizationId, membership, canWrite } = useWorkspace();
   const canManage = canManageClients(membership) && canWrite;
   const canManageDeal = canManageDeals(membership) && canWrite;
   const canManageTask = canManageTasks(membership) && canWrite;
+  const canCreateTask = canWrite && (canManageTask || membership?.role === 'USER');
   const [actionError, setActionError] = useState<string | null>(null);
   const [savingClient, setSavingClient] = useState(false);
+  const [savingDeal, setSavingDeal] = useState(false);
   const [savingTask, setSavingTask] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'trash' | 'restore' | 'delete'; id: string; name: string; decision?: LifecycleDecision } | null>(null);
+  const [trashDecisions, setTrashDecisions] = useState<Record<string, LifecycleDecision>>({});
   const [detailConfirmAction, setDetailConfirmAction] = useState<{ entity: 'Deal' | 'Task' | 'Note' | 'Document'; kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [detailConfirmBusy, setDetailConfirmBusy] = useState(false);
+  const [selectedClientIds, setSelectedClientIds] = useState<Set<string>>(new Set());
+  const [bulkClientAction, setBulkClientAction] = useState<BulkLifecycleAction | ''>('');
+  const [bulkClientBusy, setBulkClientBusy] = useState(false);
+  const [bulkClientConfirmation, setBulkClientConfirmation] = useState<{ action: BulkLifecycleAction; ids: string[]; results: BulkLifecycleResult[] } | null>(null);
+  const [clientPage, setClientPage] = useState(1);
+  const [clientPageSize, setClientPageSize] = useState(25);
+  const [clientSort, setClientSort] = useState<ClientSort>(null);
   const [showArchivedDeals, setShowArchivedDeals] = useState(false);
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
   const [showArchivedNotes, setShowArchivedNotes] = useState(false);
   const [showArchivedDocuments, setShowArchivedDocuments] = useState(false);
   const notesLoadedForClientRef = useRef<string | null>(null);
+  const archivedNotesLoadedForClientRef = useRef<string | null>(null);
   const documentsLoadedForClientRef = useRef<string | null>(null);
-  const activitiesLoadedForOrganizationRef = useRef<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [clientQuickFilter, setClientQuickFilter] = useState<ClientQuickFilter>('All');
@@ -176,11 +212,22 @@ export default function ClientsPage() {
   const [showAddDealModal, setShowAddDealModal] = useState(false);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTaskForm, setEditTaskForm] = useState({ title: '', description: '', type: 'Follow-up' as 'Task' | 'Follow-up', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High', assignedToUid: '', assignedToName: '' });
+  const [savingTaskEdit, setSavingTaskEdit] = useState(false);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editNoteContent, setEditNoteContent] = useState('');
+  const [savingNoteEdit, setSavingNoteEdit] = useState(false);
   const [documentSaving, setDocumentSaving] = useState(false);
   const [clientTabCounts, setClientTabCounts] = useState<{ clientId: string; counts: ClientTabCounts } | null>(null);
   const [clientTabCountsLoading, setClientTabCountsLoading] = useState(false);
   const [clientTabCountsError, setClientTabCountsError] = useState<string | null>(null);
+  const [clientActivities, setClientActivities] = useState<Activity[]>([]);
+  const [clientActivitiesLoading, setClientActivitiesLoading] = useState(false);
+  const [clientActivitiesError, setClientActivitiesError] = useState<string | null>(null);
+  const [activityReloadToken, setActivityReloadToken] = useState(0);
+  const [activityFilter, setActivityFilter] = useState<'All' | 'Deals' | 'Tasks' | 'Notes'>('All');
   const clientTabCountsRequestRef = useRef(0);
   const currentOrganizationForCountsRef = useRef(currentOrganizationId);
 
@@ -198,6 +245,7 @@ export default function ClientsPage() {
   // Selected client computed data
   const selectedClient = clients.find(c => c.id === selectedClientId);
   const selectedClientSourceLeadId = selectedClient?.sourceLeadId;
+  const refreshClientActivity = useCallback(() => setActivityReloadToken((current) => current + 1), []);
 
   useEffect(() => {
     currentOrganizationForCountsRef.current = currentOrganizationId;
@@ -230,6 +278,12 @@ export default function ClientsPage() {
   const refreshSelectedClientTabCounts = () => {
     if (selectedClientId) void loadClientTabCounts(selectedClientId, selectedClientSourceLeadId);
   };
+
+  const adjustSelectedClientTabCounts = useCallback((changes: Partial<ClientTabCounts>) => {
+    setClientTabCounts((current) => current && current.clientId === selectedClientId
+      ? { ...current, counts: { ...current.counts, ...Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, Math.max(0, (current.counts[key as keyof ClientTabCounts] || 0) + Number(value))])) } }
+      : current);
+  }, [selectedClientId]);
 
   useEffect(() => {
     if (!selectedClientId || !selectedClient) {
@@ -280,6 +334,7 @@ export default function ClientsPage() {
   useEffect(() => {
     if (!selectedClientId) {
       notesLoadedForClientRef.current = null;
+      archivedNotesLoadedForClientRef.current = null;
       return;
     }
     if (activeTab === 'notes' && notesLoadedForClientRef.current !== selectedClientId) {
@@ -294,15 +349,33 @@ export default function ClientsPage() {
 
   useEffect(() => {
     if (!selectedClientId) return;
-    void Promise.all([refreshDeals(), refreshTasks(), refreshLeads()]);
-  }, [refreshDeals, refreshLeads, refreshTasks, selectedClientId]);
+    void Promise.all([refreshDeals(), refreshTasks()]);
+  }, [refreshDeals, refreshTasks, selectedClientId]);
 
   useEffect(() => {
-    if (!selectedClientId || activeTab !== 'activity' || !currentOrganizationId) return;
-    if (activitiesLoadedForOrganizationRef.current === currentOrganizationId) return;
-    activitiesLoadedForOrganizationRef.current = currentOrganizationId;
-    void refreshActivities();
-  }, [activeTab, currentOrganizationId, refreshActivities, selectedClientId]);
+    if (!selectedDealId || !currentOrganizationId) return;
+    void refreshLeads();
+  }, [currentOrganizationId, refreshLeads, selectedDealId]);
+
+  useEffect(() => {
+    if (!selectedClientId || activeTab !== 'activity' || !currentOrganizationId) {
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setClientActivitiesLoading(true);
+      setClientActivitiesError(null);
+      void listActivitiesForClient(user, currentOrganizationId, selectedClientId, selectedClientSourceLeadId)
+        .then((loadedActivities) => { if (!cancelled) setClientActivities(loadedActivities); })
+        .catch((error) => {
+          console.error('Unable to load selected Client activities', error);
+          if (!cancelled) setClientActivitiesError(error instanceof Error ? error.message : 'Unable to load activity history.');
+        })
+        .finally(() => { if (!cancelled) setClientActivitiesLoading(false); });
+    });
+    return () => { cancelled = true; };
+  }, [activeTab, activityReloadToken, currentOrganizationId, selectedClientId, selectedClientSourceLeadId, user]);
 
   useEffect(() => {
     if (!selectedClientId) {
@@ -321,7 +394,10 @@ export default function ClientsPage() {
 
   useEffect(() => {
     if (!selectedClientId) return;
-    if (showArchivedNotes) void loadArchivedClientNotes(selectedClientId);
+    if (showArchivedNotes && archivedNotesLoadedForClientRef.current !== selectedClientId) {
+      archivedNotesLoadedForClientRef.current = selectedClientId;
+      void loadArchivedClientNotes(selectedClientId);
+    }
   }, [loadArchivedClientNotes, selectedClientId, showArchivedNotes]);
 
   useEffect(() => {
@@ -350,8 +426,30 @@ export default function ClientsPage() {
     }
   };
 
-  const clientDeals = selectedClientId ? deals.filter(d => d.clientId === selectedClientId) : [];
+  const dealsByClientId = useMemo(() => {
+    const grouped = new Map<string, typeof deals>();
+    deals.forEach((deal) => grouped.set(deal.clientId, [...(grouped.get(deal.clientId) || []), deal]));
+    return grouped;
+  }, [deals]);
+  const pendingClientTasksByClientId = useMemo(() => {
+    const grouped = new Map<string, typeof tasks>();
+    tasks.forEach((task) => {
+      if (task.relatedTo?.type !== 'Client' || task.status !== 'Pending') return;
+      const clientId = task.relatedTo.id;
+      grouped.set(clientId, [...(grouped.get(clientId) || []), task]);
+    });
+    return grouped;
+  }, [tasks]);
+  const clientDeals = useMemo(() => selectedClientId ? dealsByClientId.get(selectedClientId) || [] : [], [dealsByClientId, selectedClientId]);
   const selectedDeal = selectedDealId ? deals.find((deal) => deal.id === selectedDealId) : undefined;
+  const pendingDealTaskCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    tasks.forEach((task) => {
+      if (task.relatedTo?.type !== 'Deal' || task.status !== 'Pending') return;
+      counts.set(task.relatedTo.id, (counts.get(task.relatedTo.id) || 0) + 1);
+    });
+    return counts;
+  }, [tasks]);
   const activeDealsCount = clientDeals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length;
   const totalSalesValue = clientDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
   const activePipelineDeals = clientDeals.filter((deal) => ['New', 'Qualified', 'Proposal', 'Negotiation'].includes(deal.stage));
@@ -360,16 +458,19 @@ export default function ClientsPage() {
   const wonValue = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
 
   // Next follow up task
-  const clientTasks = selectedClientId ? tasks.filter(t => t.relatedTo?.type === 'Client' && t.relatedTo.id === selectedClientId && t.status === 'Pending') : [];
+  const selectedClientTasks = useMemo(() => selectedClientId ? tasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId) : [], [selectedClientId, tasks]);
+  const clientTasks = useMemo(() => selectedClientTasks.filter((task) => task.status === 'Pending'), [selectedClientTasks]);
+  const openClientTasks = useMemo(() => sortOpenTasks(clientTasks, currentTime), [clientTasks, currentTime]);
+  const completedClientTasks = useMemo(() => selectedClientTasks.filter((task) => task.status === 'Completed').sort((left, right) => (right.updatedAt || right.dueDate).localeCompare(left.updatedAt || left.dueDate)), [selectedClientTasks]);
   const nextTask = getNextFollowUp(clientTasks, currentTime);
   const nextFollowUp = nextTask ? `${Date.parse(nextTask.dueDate) <= currentTime ? 'Overdue: ' : ''}${new Date(nextTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
 
-  const visibleClients = clients.filter(client => client.status !== 'ARCHIVED');
+  const visibleClients = clients.filter(client => client.status !== 'ARCHIVED' && !client.trashed);
   const clientRows = useMemo(() => visibleClients.map((client) => {
-    const clientDeals = deals.filter((deal) => deal.clientId === client.id);
+    const clientDeals = dealsByClientId.get(client.id) || [];
     const activeDeals = clientDeals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost').length;
     const totalSales = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
-    const pendingFollowUps = tasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === client.id && task.status === 'Pending');
+    const pendingFollowUps = pendingClientTasksByClientId.get(client.id) || [];
     const nextClientTask = getNextFollowUp(pendingFollowUps, currentTime);
     const nextFollowUpIsOverdue = Boolean(nextClientTask && Date.parse(nextClientTask.dueDate) <= currentTime);
     return {
@@ -377,12 +478,12 @@ export default function ClientsPage() {
       activeDeals,
       totalSales,
       hasFollowUp: Boolean(nextClientTask),
-      nextFollowUp: nextClientTask ? `${nextFollowUpIsOverdue ? 'Overdue: ' : 'Scheduled for '}${new Date(nextClientTask.dueDate).toLocaleString()}` : 'No pending follow-ups',
+      nextFollowUp: nextClientTask ? `${nextFollowUpIsOverdue ? 'Overdue · ' : ''}${formatCompactDateTime(nextClientTask.dueDate, settings.timezone)}` : '—',
       nextFollowUpIsOverdue,
     };
-  }), [currentTime, deals, tasks, visibleClients]);
+  }), [currentTime, dealsByClientId, pendingClientTasksByClientId, settings.timezone, visibleClients]);
 
-  const filteredClientRows = clientRows.filter(({ client, activeDeals, hasFollowUp }) => {
+  const filteredClientRows = useMemo(() => clientRows.filter(({ client, activeDeals, hasFollowUp }) => {
     const query = searchTerm.trim().toLowerCase();
     const companyQuery = companyFilter.trim().toLowerCase();
     const createdAt = Date.parse(client.createdAt);
@@ -397,12 +498,136 @@ export default function ClientsPage() {
       || (clientQuickFilter === 'Follow-up Due' && hasFollowUp)
       || (clientQuickFilter === 'No Follow-up' && !hasFollowUp);
     return matchesSearch && matchesCompany && matchesDate && matchesQuickFilter;
+  }), [clientQuickFilter, clientRows, clientSinceFrom, clientSinceTo, companyFilter, searchTerm]);
+  const sortedClientRows = useMemo(() => {
+    if (!clientSort) return filteredClientRows;
+    const sorted = [...filteredClientRows];
+    sorted.sort((left, right) => {
+      switch (clientSort.key) {
+        case 'client': return compareText(left.client.name, right.client.name, clientSort.direction);
+        case 'company': return compareText(left.client.company, right.client.company, clientSort.direction);
+        case 'contact': return compareText(left.client.email || left.client.phone, right.client.email || right.client.phone, clientSort.direction);
+        case 'clientSince': return compareDate(left.client.createdAt, right.client.createdAt, clientSort.direction);
+        case 'activeDeals': return compareNumber(left.activeDeals, right.activeDeals, clientSort.direction);
+        case 'totalSales': return compareNumber(left.totalSales, right.totalSales, clientSort.direction);
+      }
+    });
+    return sorted;
+  }, [clientSort, filteredClientRows]);
+  const selectableClientRows = showArchived
+    ? archivedClients
+    : showTrash
+      ? trashedClients
+      : filteredClientRows.map(({ client }) => client);
+  const clientPageCount = Math.max(1, Math.ceil(filteredClientRows.length / clientPageSize));
+  const safeClientPage = Math.min(clientPage, clientPageCount);
+  const currentPageClients = showArchived || showTrash ? selectableClientRows : sortedClientRows.slice((safeClientPage - 1) * clientPageSize, safeClientPage * clientPageSize).map(({ client }) => client);
+  const selectedMatchingClientIds = selectableClientRows.filter((client) => selectedClientIds.has(client.id)).map((client) => client.id);
+  const selectedVisibleClientIds = currentPageClients.filter((client) => selectedClientIds.has(client.id)).map((client) => client.id);
+  const allVisibleClientsSelected = currentPageClients.length > 0 && selectedVisibleClientIds.length === currentPageClients.length;
+  const someVisibleClientsSelected = selectedVisibleClientIds.length > 0 && !allVisibleClientsSelected;
+  const clientBulkActions = showTrash
+    ? [{ value: 'restore', label: 'Restore' }, { value: 'permanent-delete', label: 'Delete permanently' }]
+    : showArchived
+      ? [{ value: 'restore', label: 'Restore' }, { value: 'trash', label: 'Move to Trash' }]
+      : [{ value: 'archive', label: 'Archive' }, { value: 'trash', label: 'Move to Trash' }];
+  const bulkClientBlocked = bulkClientConfirmation?.results.filter((result) => !result.ok || result.decision?.outcome === 'BLOCKED').length || 0;
+  const bulkClientAffected = bulkClientConfirmation?.results.reduce((total, result) => total + Object.values(result.decision?.cleanupRecords || {}).reduce((sum, count) => sum + count, 0), 0) || 0;
+  const bulkClientPreviewDescription = bulkClientConfirmation
+    ? bulkClientConfirmation.results.map((result) => {
+      const name = [...clients, ...archivedClients, ...trashedClients].find((client) => client.id === result.id)?.name || result.id;
+      const cleanup = Object.entries(result.decision?.cleanupRecords || {}).map(([label, count]) => `${count} ${label}`).join(', ');
+      return `${name}: ${result.ok ? cleanup || 'no eligible related records' : result.error || 'unavailable'}.`;
+    }).join(' ')
+    : '';
+
+  const toggleClientSelection = (clientId: string) => setSelectedClientIds((current) => {
+    const next = new Set(current);
+    if (next.has(clientId)) next.delete(clientId); else next.add(clientId);
+    return next;
   });
+  const toggleAllVisibleClients = () => setSelectedClientIds((current) => {
+    const next = new Set(current);
+    if (allVisibleClientsSelected) currentPageClients.forEach((client) => next.delete(client.id));
+    else currentPageClients.forEach((client) => next.add(client.id));
+    return next;
+  });
+  const selectAllMatchingClients = () => setSelectedClientIds((current) => new Set([...current, ...selectableClientRows.map((client) => client.id)]));
+  const resetClientTableContext = () => {
+    setClientPage(1);
+    setSelectedClientIds(new Set());
+  };
+  const handleClientSearchChange = (value: string) => { resetClientTableContext(); setSearchTerm(value); };
+  const handleClientQuickFilterChange = (value: ClientQuickFilter) => { resetClientTableContext(); setClientQuickFilter(value); };
+  const handleCompanyFilterChange = (value: string) => { resetClientTableContext(); setCompanyFilter(value); };
+  const handleClientSinceFromChange = (value: string) => { resetClientTableContext(); setClientSinceFrom(value); };
+  const handleClientSinceToChange = (value: string) => { resetClientTableContext(); setClientSinceTo(value); };
+  const clearClientTableFilters = () => {
+    resetClientTableContext();
+    setClientQuickFilter('All');
+    setCompanyFilter('');
+    setClientSinceFrom('');
+    setClientSinceTo('');
+  };
+  const handleClientSort = (key: ClientSortKey) => {
+    setClientSort((current) => current?.key === key
+      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, direction: 'asc' });
+    setClientPage(1);
+  };
+  const runBulkClientPreview = async () => {
+    if (!user || !currentOrganizationId || !bulkClientAction || selectedMatchingClientIds.length === 0) return;
+    setBulkClientBusy(true);
+    setActionError(null);
+    try {
+      const results = await previewBulkLifecycle(user, currentOrganizationId, 'Client', bulkClientAction, selectedMatchingClientIds);
+      setBulkClientConfirmation({ action: bulkClientAction, ids: selectedMatchingClientIds, results });
+    } catch (error) {
+      console.error('Unable to preview bulk Client action', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to preview the bulk Client action. Please try again.');
+    } finally {
+      setBulkClientBusy(false);
+    }
+  };
+
+  const executeBulkClientAction = async () => {
+    if (!bulkClientConfirmation || bulkClientBusy) return;
+    setBulkClientBusy(true);
+    setActionError(null);
+    try {
+      const results = await executeBulkLifecycleInApp('Client', bulkClientConfirmation.action, bulkClientConfirmation.ids);
+      const failed = results.filter((result) => !result.ok);
+      const succeeded = results.filter((result) => result.ok);
+      setSelectedClientIds((current) => new Set([...current].filter((id) => failed.some((result) => result.id === id))));
+      setBulkClientConfirmation(null);
+      if (failed.length > 0) setActionError(`${succeeded.length} Client${succeeded.length === 1 ? '' : 's'} processed. ${failed.length} failed: ${failed.map((result) => result.error || result.id).join(' ')}`);
+    } catch (error) {
+      console.error('Unable to execute bulk Client action', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to complete the bulk Client action. Please try again.');
+    } finally {
+      setBulkClientBusy(false);
+      setBulkClientAction('');
+    }
+  };
 
   const toggleArchived = () => {
     const next = !showArchived;
+    setClientPage(1);
     setShowArchived(next);
+    setShowTrash(false);
+    setSelectedClientIds(new Set());
+    setBulkClientAction('');
     if (next && archivedClients.length === 0) void loadArchivedRecords();
+  };
+
+  const toggleTrash = () => {
+    const next = !showTrash;
+    setClientPage(1);
+    setShowTrash(next);
+    setShowArchived(false);
+    setSelectedClientIds(new Set());
+    setBulkClientAction('');
+    if (next && trashedClients.length === 0) void loadTrashRecords();
   };
 
   const handleCreateClient = async (e: React.FormEvent) => {
@@ -429,6 +654,7 @@ export default function ClientsPage() {
     setActionError(null);
     try {
       await updateClientInApp(selectedClient.id, editClientForm);
+      refreshClientActivity();
       setShowEditModal(false);
     } catch (error) {
       console.error('Unable to update client', error);
@@ -446,15 +672,41 @@ export default function ClientsPage() {
       if (confirmAction.kind === 'archive') {
         await archiveClientInApp(confirmAction.id);
         setSelectedClientId(null);
+      } else if (confirmAction.kind === 'trash') {
+        await trashClient(confirmAction.id);
+        setSelectedClientId(null);
       } else if (confirmAction.kind === 'restore') {
         await restoreClient(confirmAction.id);
-      } else {
+      } else if (confirmAction.decision?.outcome !== 'BLOCKED') {
         await permanentlyDeleteClient(confirmAction.id);
       }
       setConfirmAction(null);
     } catch (error) {
       console.error('Unable to complete client lifecycle action', error);
       setActionError(error instanceof Error ? error.message : 'Unable to complete the client action. Please try again.');
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
+  const requestClientLifecycleAction = async (kind: 'archive' | 'trash', client: Client) => {
+    if (!user || !currentOrganizationId || !canManage) return;
+    const decision = await getLifecycleDecision(user, currentOrganizationId, 'Client', kind, client.id);
+    if (decision.outcome === 'BLOCKED') { setActionError(`${decision.reason} ${decision.recommendedAction}`); return; }
+    setConfirmAction({ kind, id: client.id, name: client.name, decision });
+  };
+
+  const handlePermanentDelete = async (client: Client) => {
+    if (!user || !currentOrganizationId || !canManage || confirmBusy) return;
+    setConfirmBusy(true);
+    setActionError(null);
+    try {
+      const decision = await getLifecycleDecision(user, currentOrganizationId, 'Client', 'permanent-delete', client.id);
+      setTrashDecisions((current) => ({ ...current, [client.id]: decision }));
+      setConfirmAction({ kind: 'delete', id: client.id, name: client.name, decision });
+    } catch (error) {
+      console.error('Unable to evaluate client deletion', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to evaluate client deletion. Please try again.');
     } finally {
       setConfirmBusy(false);
     }
@@ -471,20 +723,20 @@ export default function ClientsPage() {
         if (kind === 'archive') await archiveDeal(id);
         else if (kind === 'restore') await restoreDeal(id);
         else await permanentlyDeleteDeal(id);
-        await loadArchivedRecords();
-        await refreshDeals();
+        if (kind === 'archive') adjustSelectedClientTabCounts({ deals: -1 });
+        else if (kind === 'restore') adjustSelectedClientTabCounts({ deals: 1 });
       } else if (entity === 'Task') {
         if (kind === 'archive') await archiveTask(id);
         else if (kind === 'restore') await restoreTask(id);
         else await permanentlyDeleteTask(id);
-        await loadArchivedRecords();
-        await refreshTasks();
+        if (kind === 'archive') adjustSelectedClientTabCounts({ tasks: -1 });
+        else if (kind === 'restore') adjustSelectedClientTabCounts({ tasks: 1 });
       } else if (entity === 'Note') {
         if (kind === 'archive') await archiveClientNote(selectedClientId, id);
         else if (kind === 'restore') await restoreClientNote(selectedClientId, id);
         else await permanentlyDeleteClientNote(selectedClientId, id);
-        await loadClientNotes(selectedClientId);
-        await loadArchivedClientNotes(selectedClientId);
+        if (kind === 'archive') adjustSelectedClientTabCounts({ notes: -1 });
+        else if (kind === 'restore') adjustSelectedClientTabCounts({ notes: 1 });
       } else {
         if (kind === 'archive') await archiveClientDocument(selectedClientId, id);
         else if (kind === 'restore') await restoreClientDocument(selectedClientId, id);
@@ -492,7 +744,8 @@ export default function ClientsPage() {
         await loadClientDocuments(selectedClientId);
         await loadArchivedClientDocuments(selectedClientId);
       }
-      refreshSelectedClientTabCounts();
+      if (entity === 'Document') refreshSelectedClientTabCounts();
+      if (entity !== 'Document') refreshClientActivity();
       setDetailConfirmAction(null);
     } catch (error) {
       console.error('Unable to complete Client record lifecycle action', error);
@@ -518,7 +771,7 @@ export default function ClientsPage() {
     if (!Number.isFinite(dealForm.value) || dealForm.value < 0) { setActionError('Deal value must be zero or greater.'); return; }
     if (!defaultDealStage) { setActionError('No active sales stage is available. Please configure your Pipeline settings.'); return; }
     if (!dealCreationStages.some((stage) => stage.name === dealForm.stage)) { setActionError('No active sales stage is available. Please configure your Pipeline settings.'); return; }
-    setSavingClient(true);
+    setSavingDeal(true);
     setActionError(null);
     try {
       await addDeal({
@@ -530,14 +783,15 @@ export default function ClientsPage() {
         expectedCloseDate: dealForm.expectedCloseDate,
         notes: dealForm.notes,
       });
-      refreshSelectedClientTabCounts();
+      adjustSelectedClientTabCounts({ deals: 1 });
+      refreshClientActivity();
       setDealForm({ title: '', productServiceName: '', value: 0, stage: defaultDealStage, expectedCloseDate: '', notes: '' });
       setShowAddDealModal(false);
     } catch (error) {
       console.error('Unable to create deal', error);
       setActionError('Unable to create the deal. Please try again.');
     } finally {
-      setSavingClient(false);
+      setSavingDeal(false);
     }
   };
 
@@ -552,7 +806,7 @@ export default function ClientsPage() {
 
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClientId || !taskForm.title || !taskForm.dueDate || !canManageTask) return;
+    if (!selectedClientId || !taskForm.title || !taskForm.dueDate || !canCreateTask) return;
     setSavingTask(true);
     setActionError(null);
     try {
@@ -564,7 +818,8 @@ export default function ClientsPage() {
         priority: taskForm.priority,
         relatedTo: { type: 'Client', id: selectedClientId }
       });
-      refreshSelectedClientTabCounts();
+      adjustSelectedClientTabCounts({ tasks: 1 });
+      refreshClientActivity();
       setTaskForm({ title: '', dueDate: currentDateTimeValue(), priority: 'Medium', description: '' });
       setShowAddTaskModal(false);
     } catch (error) {
@@ -576,8 +831,19 @@ export default function ClientsPage() {
   };
 
   const handleCompleteTask = async (taskId: string) => {
-    await completeTask(taskId);
-    refreshSelectedClientTabCounts();
+    if (busyTaskId) return;
+    setBusyTaskId(taskId);
+    setActionError(null);
+    try {
+      await completeTask(taskId);
+      refreshClientActivity();
+    } catch (error) {
+      console.error('Unable to update client task status', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to update the task. Please try again.');
+      throw error;
+    } finally {
+      setBusyTaskId(null);
+    }
   };
 
   const openAddTask = () => {
@@ -587,15 +853,70 @@ export default function ClientsPage() {
 
   const handleCreateNote = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClientId || !noteForm.content) return;
+    if (!selectedClientId || !noteForm.content || savingNote) return;
+    setSavingNote(true);
+    setActionError(null);
     try {
       await addNote(selectedClientId, noteForm.content);
-      refreshSelectedClientTabCounts();
+      adjustSelectedClientTabCounts({ notes: 1 });
+      refreshClientActivity();
       setNoteForm({ content: '' });
       setShowAddNoteModal(false);
     } catch (error) {
       console.error('Unable to save client note', error);
       setActionError('Unable to save the note. Please try again.');
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const openEditTask = (task: Task) => {
+    setEditingTask(task);
+    setEditTaskForm({
+      title: task.title,
+      description: task.description || '',
+      type: task.type === 'Task' ? 'Task' : 'Follow-up',
+      dueDate: toDateTimeInput(task.dueDate),
+      priority: task.priority,
+      assignedToUid: task.assignedToUid || '',
+      assignedToName: task.assignedToName || task.assignedTo || '',
+    });
+  };
+
+  const handleEditTask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingTask || !editTaskForm.title.trim() || !editTaskForm.dueDate || savingTaskEdit) return;
+    setSavingTaskEdit(true);
+    setActionError(null);
+    try {
+      await updateTask(editingTask.id, { ...editTaskForm, relatedTo: editingTask.relatedTo });
+      setEditingTask(null);
+      refreshClientActivity();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to update the task. Please try again.');
+    } finally {
+      setSavingTaskEdit(false);
+    }
+  };
+
+  const openEditNote = (noteId: string, content: string) => {
+    setEditingNoteId(noteId);
+    setEditNoteContent(content);
+  };
+
+  const handleEditNote = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedClientId || !editingNoteId || !editNoteContent.trim() || savingNoteEdit) return;
+    setSavingNoteEdit(true);
+    setActionError(null);
+    try {
+      await updateNote(selectedClientId, editingNoteId, editNoteContent);
+      setEditingNoteId(null);
+      refreshClientActivity();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to update the note. Please try again.');
+    } finally {
+      setSavingNoteEdit(false);
     }
   };
 
@@ -604,7 +925,7 @@ export default function ClientsPage() {
       {(actionError || clientsError) && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{actionError || clientsError}</p>}
       {/* If Client is Selected, Show Client Profile */}
       {selectedClient ? (
-        <div className="space-y-6">
+        <div className={`space-y-6 ${selectedMatchingClientIds.length > 0 ? 'pb-24' : ''}`}>
           {/* Back Button & Header */}
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0">
@@ -628,7 +949,7 @@ export default function ClientsPage() {
               }} className="gap-2">
                 <Edit size={16} /> Edit Client
               </Button>}
-              {canManage && <Button variant="warning" onClick={() => setConfirmAction({ kind: 'archive', id: selectedClient.id, name: selectedClient.name })} className="gap-2">
+              {canManage && <Button variant="warning" onClick={() => void requestClientLifecycleAction('archive', selectedClient)} className="gap-2">
                 Archive Client
               </Button>}
               {canManageDeal && <Button onClick={openAddDeal} className="gap-2">
@@ -657,7 +978,7 @@ export default function ClientsPage() {
             <div className="space-y-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Next Follow-up</p>
               <p className="text-sm font-medium text-amber-700">{nextFollowUp}</p>
-              {canManageTask && <Button size="sm" variant="outline" onClick={openAddTask} className="mt-2 text-xs">
+              {canCreateTask && <Button size="sm" variant="outline" onClick={openAddTask} className="mt-2 text-xs">
                 + Add Task
               </Button>}
             </div>
@@ -694,34 +1015,13 @@ export default function ClientsPage() {
               <div className="space-y-6">
                 <Card className="space-y-4">
                   <h3 className="font-bold text-slate-900">Deals Overview</h3>
-                  <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                  {dealsLoading ? <div className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Loading deal summary" aria-busy="true">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : dealsError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{dealsError}</p> : <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                     <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Open Deals</p><p className="mt-1 text-lg font-bold text-slate-900">{activePipelineDeals.length}</p><p className="text-xs text-slate-500">Deals in progress</p></div>
                     <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Potential Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(activePipelineValue, settings.currency)}</p><p className="text-xs text-slate-500">Total value of open deals</p></div>
                     <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Expected Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(weightedForecast, settings.currency)}</p><p className="text-xs text-slate-500">Based on deal probability</p></div>
                     <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Won Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(wonValue, settings.currency)}</p><p className="text-xs text-slate-500">Successfully closed deals</p></div>
-                  </div>
+                  </div>}
                 </Card>
-                <Card className="space-y-4">
-                  <h3 className="font-bold text-slate-900">Recent Notes</h3>
-                  <div className="space-y-3">
-                    {clientNotesLoading ? <p className="text-xs text-slate-400">Loading notes…</p> : clientNotesError ? <p className="text-xs text-red-600">{clientNotesError}</p> : clientNotes.map(note => (
-                      <div key={note.id} className="p-3 bg-slate-50 border border-slate-100 rounded-xl space-y-1">
-                        <p className="text-sm text-slate-800">{note.content}</p>
-                        <div className="flex justify-between text-[10px] text-slate-400">
-                          <span>By {note.author}</span>
-                          <span>{new Date(note.createdAt).toLocaleString()}</span>
-                        </div>
-                      </div>
-                    ))}
-                    {!clientNotesLoading && !clientNotesError && clientNotes.length === 0 && (
-                      <p className="text-xs text-slate-400">No notes recorded yet.</p>
-                    )}
-                  {canManage && <Button variant="outline" size="sm" onClick={() => setShowAddNoteModal(true)} className="w-full gap-2 mt-2">
-                    <Plus size={14} /> Add Note
-                    </Button>}
-                  </div>
-                </Card>
-
               </div>
             )}
 
@@ -729,11 +1029,11 @@ export default function ClientsPage() {
               <div className="space-y-4">
                 <Card className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900">Client Deals</h3><div className="flex flex-wrap gap-2">{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedDeals((current) => !current); if (!showArchivedDeals) void loadArchivedRecords(); }}>{showArchivedDeals ? 'Active Deals' : 'Archived Deals'}</Button></div></div>
-                  {clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center"><p className="text-sm text-slate-500">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-slate-200"><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">
+                  {dealsLoading ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">Loading deals…</p> : dealsError ? <p className="rounded-xl bg-red-50 p-8 text-center text-sm text-red-700" role="alert">{dealsError}</p> : clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center"><p className="text-sm text-slate-500">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-slate-200"><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">
                   {clientDeals.map(deal => {
-                    const openTaskCount = tasks.filter((task) => task.relatedTo?.type === 'Deal' && task.relatedTo.id === deal.id && task.status === 'Pending').length;
+                    const openTaskCount = pendingDealTaskCounts.get(deal.id) || 0;
                     return (
-                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-slate-900 hover:text-blue-600">{deal.title}</button></td><td className="px-3 py-3 text-sm text-slate-600">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-slate-600">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-slate-900">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-slate-600">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-slate-600">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right">{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</td></tr>
+                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-slate-900 hover:text-blue-600">{deal.title}</button></td><td className="px-3 py-3 text-sm text-slate-600">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-slate-600">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-slate-900">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-slate-600">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-slate-600">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right">{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" disabled={detailConfirmBusy} onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</td></tr>
                     );
                   })}
                   </tbody></table></div>}
@@ -746,43 +1046,34 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Tasks & Follow-ups</h3>
-                  <div className="flex flex-wrap gap-2">{canManageTask && <Button size="sm" onClick={openAddTask} className="gap-2"><Plus size={14} /> Add Task</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedTasks((current) => !current); if (!showArchivedTasks) void loadArchivedRecords(); }}>{showArchivedTasks ? 'Active Tasks' : 'Archived Tasks'}</Button></div>
+                  <div className="flex flex-wrap gap-2">{canCreateTask && <Button size="sm" onClick={openAddTask} className="gap-2"><Plus size={14} /> Add Task</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedTasks((current) => !current); if (!showArchivedTasks) void loadArchivedRecords(); }}>{showArchivedTasks ? 'Active Tasks' : 'Archived Tasks'}</Button></div>
                 </div>
-                {(() => {
-                  const clientTasks = tasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId);
-                  const openTasks = sortOpenTasks(clientTasks.filter((task) => task.status === 'Pending'), currentTime);
-                  const completedTasks = clientTasks.filter((task) => task.status === 'Completed').sort((left, right) => (right.updatedAt || right.dueDate).localeCompare(left.updatedAt || left.dueDate));
-                  const nextFollowUp = getNextFollowUp(clientTasks, currentTime);
-                  return <>
-                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{openTasks.length} Open Tasks</p>{nextFollowUp && <p className="text-xs text-slate-500">Next: {nextFollowUp.title}</p>}</div>
+                  <>
+                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{openClientTasks.length} Open Tasks</p>{nextTask && <p className="text-xs text-slate-500">Next: {nextTask.title}</p>}</div>
                     <div className="space-y-3">
-                      {openTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onToggle={(taskId) => void handleCompleteTask(taskId)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}
-                      {openTasks.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No open tasks for this client.</p>}
+                      {openClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}
+                      {openClientTasks.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No open tasks for this client.</p>}
                     </div>
-                    {completedTasks.length > 0 && <details className="rounded-xl border border-slate-100 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-600">Completed ({completedTasks.length})</summary><div className="mt-3 space-y-3">{completedTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onToggle={(taskId) => void handleCompleteTask(taskId)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}</div></details>}
+                    {completedClientTasks.length > 0 && <details className="rounded-xl border border-slate-100 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-600">Completed ({completedClientTasks.length})</summary><div className="mt-3 space-y-3">{completedClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}</div></details>}
                     {showArchivedTasks && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Tasks</p>{archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived tasks.</p> : archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).map((task) => { const taskCanManage = canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid); return <div key={task.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{task.title}</p><p className="text-xs text-slate-500">{task.status} · {formatTaskDueDate(task.dueDate, settings.timezone)}</p></div>{taskCanManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Task" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'restore', id: task.id, name: task.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Task permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'delete', id: task.id, name: task.title })} /></div>}</div>; })}</div>}
-                  </>;
-                })()}
+                  </>
               </Card>
             )}
 
             {activeTab === 'activity' && (
               <Card className="space-y-4">
-                <h3 className="font-bold text-slate-900">Activity History</h3>
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900">Activity History</h3><select aria-label="Activity filter" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as typeof activityFilter)}><option>All</option><option>Deals</option><option>Tasks</option><option>Notes</option></select></div>
                 <div className="space-y-3">
-                  {activities.filter((activity) => (
-                    (activity.entityType === 'Client' && activity.entityId === selectedClientId)
-                    || (activity.entityType === 'Lead' && activity.entityId === selectedClient.sourceLeadId)
-                    || activity.metadata?.clientId === selectedClientId
-                  )).map(act => (
+                  {clientActivitiesLoading ? <p className="text-sm text-slate-500">Loading activity history…</p> : clientActivitiesError ? <div className="space-y-2"><p className="text-sm text-red-600">{clientActivitiesError}</p><Button size="sm" variant="outline" onClick={refreshClientActivity}>Retry</Button></div> : clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).map(act => (
                     <div key={act.id} className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
                       <div className="w-2 h-2 mt-1.5 rounded-full bg-blue-600 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-900">{act.description}</p>
+                        <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-900">{act.description}</p><span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">{act.entityType || 'Activity'}</span></div>
                         <span className="text-[10px] text-slate-400">Created by {act.createdBy || 'Unknown user'}</span>
                       </div>
                     </div>
                   ))}
+                  {!clientActivitiesLoading && !clientActivitiesError && clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).length === 0 && <p className="text-sm text-slate-500">No activity history for this Client{activityFilter === 'All' ? '' : ` in ${activityFilter.toLowerCase()}`}.</p>}
                 </div>
               </Card>
             )}
@@ -791,14 +1082,14 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-bold text-slate-900">Client Notes</h3>
-                  <div className="flex flex-wrap gap-2">{canManage && <Button size="sm" onClick={() => setShowAddNoteModal(true)} className="gap-2"><Plus size={14} /> Add Note</Button>}<Button size="sm" variant="outline" onClick={() => setShowArchivedNotes((current) => !current)}>{showArchivedNotes ? 'Active Notes' : 'Archived Notes'}</Button></div>
+                  <div className="flex flex-wrap gap-2">{canManage && <Button size="sm" disabled={savingNote} onClick={() => setShowAddNoteModal(true)} className="gap-2"><Plus size={14} /> Add Note</Button>}<Button size="sm" variant="outline" onClick={() => setShowArchivedNotes((current) => !current)}>{showArchivedNotes ? 'Active Notes' : 'Archived Notes'}</Button></div>
                 </div>
                 <div className="space-y-3">
                   {clientNotesLoading ? <p className="text-xs text-slate-400">Loading notes…</p> : clientNotesError ? <p className="text-xs text-red-600">{clientNotesError}</p> : clientNotes.map(note => (
                     <div key={note.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4"><div className="min-w-0 space-y-2"><p className="text-sm text-slate-800">{note.content}</p><div className="flex justify-between gap-3 text-xs text-slate-400">
                         <span>Author: {note.author}</span>
                         <span>{new Date(note.createdAt).toLocaleString()}</span>
-                      </div></div>{canManage && <IconActionButton icon={<Archive size={15} />} label="Archive Note" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'archive', id: note.id, name: note.content.slice(0, 40) || 'Note' })} />}</div>
+                      </div></div>{canManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<Edit size={15} />} label="Edit Note" onClick={() => openEditNote(note.id, note.content)} /><IconActionButton icon={<Archive size={15} />} label="Archive Note" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'archive', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /></div>}</div>
                   ))}
                   {!clientNotesLoading && clientNotesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientNotes()} disabled={clientNotesLoading}>Load More</Button></div>}
                   {showArchivedNotes && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Notes</p>{archivedClientNotes.filter((note) => note.clientId === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived notes.</p> : archivedClientNotes.filter((note) => note.clientId === selectedClientId).map((note) => <div key={note.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="min-w-0 text-sm text-slate-700">{note.content}</p>{canManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Note" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'restore', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Note permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'delete', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /></div>}</div>)}</div>}
@@ -829,7 +1120,7 @@ export default function ClientsPage() {
       ) : (
         /* Client List View */
         <div className="space-y-6">
-          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}{canManage && <Button onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} />
+          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}<Button variant="outline" onClick={toggleTrash}>{showTrash ? 'Active Clients' : 'Trash'}</Button>{canManage && <Button disabled={showArchived || showTrash} onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} />
 
           <Card className="flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
             <div className="relative min-w-0 flex-1 md:min-w-[240px]">
@@ -839,11 +1130,11 @@ export default function ClientsPage() {
                 placeholder="Search clients by name, company, or email..."
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
+                onChange={(event) => handleClientSearchChange(event.target.value)}
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              <select aria-label="Client quick filter" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={clientQuickFilter} onChange={(event) => setClientQuickFilter(event.target.value as ClientQuickFilter)}>
+              <select aria-label="Client quick filter" className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50" value={clientQuickFilter} onChange={(event) => handleClientQuickFilterChange(event.target.value as ClientQuickFilter)}>
                 <option>All</option>
                 <option>Active Deals</option>
                 <option>No Active Deals</option>
@@ -854,52 +1145,60 @@ export default function ClientsPage() {
               <Button variant="outline" onClick={() => void refreshClients()} disabled={clientsLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button>
             </div>
             {showClientFilters && <div className="flex w-full flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
-              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-slate-500">Company<input type="text" value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Client since<input type="date" value={clientSinceFrom} onChange={(event) => setClientSinceFrom(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Through<input type="date" value={clientSinceTo} onChange={(event) => setClientSinceTo(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
-              <Button variant="ghost" onClick={() => { setClientQuickFilter('All'); setCompanyFilter(''); setClientSinceFrom(''); setClientSinceTo(''); }}>Clear filters</Button>
+              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-slate-500">Company<input type="text" value={companyFilter} onChange={(event) => handleCompanyFilterChange(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Client since<input type="date" value={clientSinceFrom} onChange={(event) => handleClientSinceFromChange(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Through<input type="date" value={clientSinceTo} onChange={(event) => handleClientSinceToChange(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
+              <Button variant="ghost" onClick={clearClientTableFilters}>Clear filters</Button>
             </div>}
           </Card>
 
-          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Client permanently" variant="danger" onClick={() => setConfirmAction({ kind: "delete", id: client.id, name: client.name })} /></div></div>)}</div>}{archivedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedClients()}>Load More</Button></div>}</Card>}
+          {canManage && <BulkActionToolbar selectedCount={selectedMatchingClientIds.length} matchingCount={selectableClientRows.length} action={bulkClientAction} actions={clientBulkActions} processing={bulkClientBusy} onSelectAllMatching={selectAllMatchingClients} onActionChange={(action) => setBulkClientAction(action as BulkLifecycleAction)} onApply={() => void runBulkClientPreview()} onClear={() => setSelectedClientIds(new Set())} />}
+          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Move Client to Trash" variant="danger" onClick={() => void requestClientLifecycleAction('trash', client)} />}</div></div>)}</div>}{archivedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedClients()}>Load More</Button></div>}</Card>}
+          {showTrash && <Card className="p-0"><div className="border-b bg-red-50 px-6 py-3 text-sm font-semibold text-red-800">Client Trash</div>{trashedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">Trash is empty.</p> : <div className="divide-y divide-slate-100">{trashedClients.map((client) => { const decision = trashDecisions[client.id]; const blocked = decision?.outcome === 'BLOCKED'; const blockingCount = decision ? Object.values(decision.blockingRecords).reduce((total, count) => total + count, 0) : 0; return <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-slate-900">{client.name}</p><p className={`text-sm ${blocked ? 'text-red-700' : 'text-slate-500'}`}>{blocked ? `Deletion blocked — ${blockingCount} related record${blockingCount === 1 ? '' : 's'}.` : decision?.outcome === 'ALLOWED_WITH_WARNING' ? 'Ready to delete with cleanup warning.' : 'Deletion status will be checked before confirmation.'}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client from Trash" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label={blocked ? 'View deletion block' : decision ? 'Delete Client permanently' : 'Check deletion'} variant="danger" disabled={confirmBusy} onClick={() => void handlePermanentDelete(client)} />}</div></div>; })}</div>}{trashedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreTrashedClients()}>Load More</Button></div>}</Card>}
 
           {/* Client Table */}
-          <Card className="p-0 overflow-hidden">
-            {clientsLoading ? <p className="p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-slate-400">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Client</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Company</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Contact</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Client Since</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Active Deals</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Total Sales</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase">Next Follow-up</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 uppercase text-right">Actions</th>
+          {!showArchived && !showTrash && <Card className="overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-none">
+            {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-slate-400">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
+              <table className="w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
+                <colgroup>
+                  <col style={{ width: '3%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '17%' }} />
+                  <col style={{ width: '20%' }} />
+                  <col style={{ width: '16%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '10%' }} />
+                  <col style={{ width: '6%' }} />
+                </colgroup>
+                <thead className="bg-slate-50">
+                  <tr className="border-b border-slate-200 bg-slate-50">
+                    <th scope="col" className="w-10 px-2 py-2.5"><input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-blue-600" checked={allVisibleClientsSelected} ref={(element) => { if (element) element.indeterminate = someVisibleClientsSelected; }} onChange={toggleAllVisibleClients} aria-checked={someVisibleClientsSelected ? "mixed" : allVisibleClientsSelected} aria-label="Select all visible Clients" /></th>
+                    <SortableColumnHeader label="Client" direction={clientSort?.key === 'client' ? clientSort.direction : undefined} onSort={() => handleClientSort('client')} compact fullWidth />
+                    <SortableColumnHeader label="Company" direction={clientSort?.key === 'company' ? clientSort.direction : undefined} onSort={() => handleClientSort('company')} compact fullWidth />
+                    <SortableColumnHeader label="Contact" direction={clientSort?.key === 'contact' ? clientSort.direction : undefined} onSort={() => handleClientSort('contact')} compact fullWidth />
+                    <SortableColumnHeader label="Client Since" direction={clientSort?.key === 'clientSince' ? clientSort.direction : undefined} onSort={() => handleClientSort('clientSince')} compact fullWidth />
+                    <SortableColumnHeader label="Active Deals" direction={clientSort?.key === 'activeDeals' ? clientSort.direction : undefined} onSort={() => handleClientSort('activeDeals')} align="center" compact fullWidth />
+                    <SortableColumnHeader label="Total Sales" direction={clientSort?.key === 'totalSales' ? clientSort.direction : undefined} onSort={() => handleClientSort('totalSales')} align="right" compact fullWidth />
+                    <th scope="col" className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase text-slate-500"><span>Action</span></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredClientRows.map(({ client, activeDeals, totalSales, nextFollowUp: nextFU, nextFollowUpIsOverdue }) => {
+                <tbody className="divide-y divide-slate-200/80">
+                  {sortedClientRows.slice((safeClientPage - 1) * clientPageSize, safeClientPage * clientPageSize).map(({ client, activeDeals, totalSales }) => {
                     return (
-                      <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedClientId(client.id); }} className="cursor-pointer transition-colors hover:bg-slate-50">
-                        <td className="px-6 py-4 font-semibold text-slate-900">
-                          <button onClick={() => setSelectedClientId(client.id)} className="hover:text-blue-600 text-left">
-                            {client.name}
-                          </button>
+                      <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) setSelectedClientId(client.id); }} className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${selectedClientIds.has(client.id) ? 'bg-blue-50/40' : ''}`}>
+                        <td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} className="h-4 w-4 rounded border-slate-300 accent-blue-600" /></td>
+                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="block max-w-full truncate text-left font-semibold leading-5 text-slate-900 hover:text-blue-600">{client.name}</button></td>
+                        <td className="px-4 py-2 align-middle text-sm leading-5 text-slate-600"><span className="line-clamp-2 break-words">{client.company || 'Private'}</span></td>
+                        <td className="min-w-0 pl-4 pr-2 py-2 align-middle text-xs leading-4 text-slate-500">
+                          <div className="flex min-w-0 items-center gap-1"><Mail className="shrink-0" size={12}/><span className="truncate">{client.email}</span></div>
+                          <div className="mt-0 flex min-w-0 items-center gap-1"><Phone className="shrink-0" size={12}/><span className="truncate">{client.phone || '—'}</span></div>
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-600">{client.company || 'Private'}</td>
-                        <td className="px-6 py-4 text-xs text-slate-500">
-                          <div className="flex items-center gap-1"><Mail size={12}/> {client.email}</div>
-                          <div className="flex items-center gap-1 mt-0.5"><Phone size={12}/> {client.phone}</div>
+                        <td className="pl-2 pr-4 py-2 align-middle text-sm text-slate-600">{new Date(client.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                        <td className="px-2 py-2 text-center align-middle">
+                          {activeDeals > 0 ? <span className="inline-flex"><Badge variant="purple">{activeDeals} Active</Badge></span> : <span className="text-sm text-slate-400">—</span>}
                         </td>
-                        <td className="px-6 py-4 text-sm text-slate-600">{new Date(client.createdAt).toLocaleDateString()}</td>
-                        <td className="px-6 py-4">
-                          {activeDeals > 0 ? <Badge variant="purple">{activeDeals} Active</Badge> : <span className="text-sm text-slate-500">0</span>}
-                        </td>
-                        <td className={`px-6 py-4 text-sm font-semibold ${totalSales > 0 ? 'text-green-600' : 'text-slate-500'}`}>{formatCurrency(totalSales, settings.currency)}</td>
-                        <td className={`px-6 py-4 text-xs ${nextFollowUpIsOverdue ? 'font-medium text-amber-700' : nextFU === 'No pending follow-ups' ? 'text-slate-400' : 'text-slate-500'}`}>{nextFU}</td>
-                        <td className="px-6 py-4 text-right">
+                        <td className={`px-2 py-2 text-right align-middle text-sm font-semibold ${totalSales > 0 ? 'text-green-600' : 'text-slate-400'}`}>{totalSales > 0 ? formatCurrency(totalSales, settings.currency) : '—'}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
                           <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => setSelectedClientId(client.id)} />
                         </td>
                       </tr>
@@ -908,8 +1207,9 @@ export default function ClientsPage() {
                 </tbody>
               </table>
             </div>}
-          </Card>
-          {!showArchived && clientsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreClients()} disabled={clientsLoading}>{clientsLoading ? 'Loading…' : 'Load More Clients'}</Button></div>}
+            {!showArchived && !showTrash && <TablePagination page={safeClientPage} pageSize={clientPageSize} totalCount={filteredClientRows.length} hasMore={clientsHasMore} onPageChange={setClientPage} onPageSizeChange={(nextPageSize) => { setClientPageSize(nextPageSize); setClientPage(1); }} />}
+          </Card>}
+          {!showArchived && !showTrash && clientsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreClients()} disabled={clientsLoading}>{clientsLoading ? 'Loading…' : 'Load More Clients'}</Button></div>}
         </div>
       )}
 
@@ -975,7 +1275,7 @@ export default function ClientsPage() {
           </div>
         )}
 
-        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingClient} tasks={tasks} canAddTask={canManageTask} onAddTask={async (task) => { await addTask(task); refreshSelectedClientTabCounts(); }} onCompleteTask={handleCompleteTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingClient(true); try { await updateDeal(selectedDeal.id, input); refreshSelectedClientTabCounts(); } finally { setSavingClient(false); } }} />}
+        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingDeal} tasks={tasks} canAddTask={canCreateTask} onAddTask={async (task) => { await addTask(task); refreshClientActivity(); }} onCompleteTask={handleCompleteTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingDeal(true); try { await updateDeal(selectedDeal.id, input); refreshClientActivity(); } finally { setSavingDeal(false); } }} />}
 
         {showEditModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -1097,7 +1397,7 @@ export default function ClientsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowAddDealModal(false)}>Cancel</Button>
-                <Button type="submit" disabled={savingClient || !defaultDealStage}>{savingClient ? 'Saving…' : 'Create Deal'}</Button>
+                <Button type="submit" disabled={savingDeal || !defaultDealStage}>{savingDeal ? 'Saving…' : 'Create Deal'}</Button>
               </div>
             </form>
           </div>
@@ -1160,6 +1460,20 @@ export default function ClientsPage() {
           </div>
         )}
 
+        {editingTask && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <form onSubmit={handleEditTask} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-slate-900">Edit Task</h3>
+              <p className="text-sm text-slate-500">Related to: {selectedClient?.name || 'Client'}</p>
+              <input required className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.title} onChange={(event) => setEditTaskForm({ ...editTaskForm, title: event.target.value })} placeholder="Task title" />
+              <div className="grid grid-cols-2 gap-4"><input required type="datetime-local" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.dueDate} onChange={(event) => setEditTaskForm({ ...editTaskForm, dueDate: event.target.value })} /><select className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm" value={editTaskForm.priority} onChange={(event) => setEditTaskForm({ ...editTaskForm, priority: event.target.value as typeof editTaskForm.priority })}><option>Low</option><option>Medium</option><option>High</option></select></div>
+              <select className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm" value={editTaskForm.type} onChange={(event) => setEditTaskForm({ ...editTaskForm, type: event.target.value as typeof editTaskForm.type })}><option>Follow-up</option><option>Task</option></select>
+              <textarea rows={4} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.description} onChange={(event) => setEditTaskForm({ ...editTaskForm, description: event.target.value })} placeholder="Description" />
+              <div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={() => setEditingTask(null)}>Cancel</Button><Button type="submit" disabled={savingTaskEdit}>{savingTaskEdit ? 'Saving…' : 'Save Changes'}</Button></div>
+            </form>
+          </div>
+        )}
+
         {showAddNoteModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <form onSubmit={handleCreateNote} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
@@ -1176,14 +1490,25 @@ export default function ClientsPage() {
               </div>
               <div className="flex justify-end gap-3 pt-4">
                 <Button type="button" variant="outline" onClick={() => setShowAddNoteModal(false)}>Cancel</Button>
-                <Button type="submit">Save Note</Button>
+                <Button type="submit" disabled={savingNote}>{savingNote ? 'Saving…' : 'Save Note'}</Button>
               </div>
             </form>
           </div>
         )}
 
+        {editingNoteId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <form onSubmit={handleEditNote} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl">
+              <h3 className="text-lg font-bold text-slate-900">Edit Note</h3>
+              <textarea required rows={5} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editNoteContent} onChange={(event) => setEditNoteContent(event.target.value)} />
+              <div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={() => setEditingNoteId(null)}>Cancel</Button><Button type="submit" disabled={savingNoteEdit}>{savingNoteEdit ? 'Saving…' : 'Save Changes'}</Button></div>
+            </form>
+          </div>
+        )}
+
       </AnimatePresence>
-      {confirmAction && <ConfirmActionDialog open title={`${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.kind === 'archive' ? 'This client will be moved to Archived and can be restored later.' : confirmAction.kind === 'restore' ? 'This client will be restored to the active list.' : 'This action cannot be undone. This archived client will be permanently deleted.'} confirmLabel={confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={confirmAction.kind === 'delete' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
+      {confirmAction && <ConfirmActionDialog open title={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Permanent deletion blocked' : `${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.decision ? `${confirmAction.decision.reason} ${Object.entries(confirmAction.decision.cleanupRecords).map(([label, count]) => `${count} ${label}`).join(', ')} ${Object.entries(confirmAction.decision.preservedRecords).map(([label, value]) => `${label}${typeof value === 'number' ? ` (${value})` : ` “${value}”`}`).join(', ')} ${confirmAction.decision.recommendedAction}` : confirmAction.kind === 'restore' ? 'This Client will be restored without changing the state of its related records.' : 'This action cannot be undone.'} confirmLabel={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Unavailable' : confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} confirmDisabled={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED'} variant={confirmAction.kind === 'delete' || confirmAction.kind === 'trash' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
+      {bulkClientConfirmation && <ConfirmActionDialog open title={(bulkClientConfirmation.action === 'permanent-delete' ? 'Permanently delete' : bulkClientConfirmation.action === 'restore' ? 'Restore' : bulkClientConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive') + ' ' + bulkClientConfirmation.ids.length + ' Clients?'} description={'Preview: ' + (bulkClientConfirmation.ids.length - bulkClientBlocked) + ' ready, ' + bulkClientBlocked + ' blocked or unavailable. ' + bulkClientPreviewDescription + (bulkClientConfirmation.action === 'permanent-delete' && bulkClientAffected > 0 ? ` Total eligible related records: ${bulkClientAffected}.` : '')} confirmLabel={bulkClientConfirmation.action === 'permanent-delete' ? 'Delete Permanently' : bulkClientConfirmation.action === 'restore' ? 'Restore' : bulkClientConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive'} variant={bulkClientConfirmation.action === 'permanent-delete' || bulkClientConfirmation.action === 'trash' ? 'danger' : bulkClientConfirmation.action === 'archive' ? 'warning' : 'default'} loading={bulkClientBusy} onCancel={() => setBulkClientConfirmation(null)} onConfirm={() => void executeBulkClientAction()} />}
       {detailConfirmAction && <ConfirmActionDialog open title={`${detailConfirmAction.kind === 'archive' ? 'Archive' : detailConfirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${detailConfirmAction.name}”${detailConfirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={detailConfirmAction.kind === 'archive' ? `This ${detailConfirmAction.entity.toLowerCase()} will be moved to Archived and can be restored later.` : detailConfirmAction.kind === 'restore' ? `This ${detailConfirmAction.entity.toLowerCase()} will be restored to the active list.` : `This action cannot be undone. This archived ${detailConfirmAction.entity.toLowerCase()} will be permanently deleted.`} confirmLabel={detailConfirmAction.kind === 'archive' ? 'Archive' : detailConfirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={detailConfirmAction.kind === 'delete' ? 'danger' : detailConfirmAction.kind === 'archive' ? 'warning' : 'default'} loading={detailConfirmBusy} onCancel={() => setDetailConfirmAction(null)} onConfirm={() => void executeDetailConfirmedAction()} />}
     </div>
   );

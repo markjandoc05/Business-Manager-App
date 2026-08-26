@@ -97,6 +97,14 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
     }
 
+    function organizationCanCreateTask(organizationId) {
+      return organizationCanManageWrite(organizationId)
+        || (organizationCanWrite(organizationId)
+          && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'USER'
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.assignedToUid == request.auth.uid);
+    }
+
     function organizationCanAssign(organizationId, userId) {
       return organizationCanView(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId))
@@ -167,6 +175,12 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status == 'ARCHIVED';
     }
 
+    function activityRestoresClient(organizationId, clientId) {
+      return activityUpdatesClient(organizationId, clientId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status == 'ARCHIVED'
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)).data.status == 'ACTIVE';
+    }
+
     function activityConvertsLead(organizationId, leadId, clientId) {
       return exists(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/leads/$(leadId)).data.status != 'Client'
@@ -202,12 +216,81 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.status == 'Lost';
     }
 
+    function activityReopensDeal(organizationId, dealId) {
+      return activityChangesDealStage(organizationId, dealId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.status in ['Won', 'Lost']
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.status == 'Active';
+    }
+
+    function activityArchivesDeal(organizationId, dealId) {
+      return activityUpdatesDeal(organizationId, dealId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.archived != true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.archived == true;
+    }
+
+    function activityRestoresDeal(organizationId, dealId) {
+      return activityUpdatesDeal(organizationId, dealId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.archived == true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(dealId)).data.archived == false;
+    }
+
+    function activityCreatesTask(organizationId, taskId) {
+      return !exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.createdBy == request.auth.uid;
+    }
+
+    function activityUpdatesTask(organizationId, taskId) {
+      return exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedBy == request.auth.uid
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedAt == request.time;
+    }
+
     function activityCompletesTask(organizationId, taskId) {
       return exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status != 'Completed'
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Completed'
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedBy == request.auth.uid
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedAt == request.time;
+    }
+
+    function activityReopensTask(organizationId, taskId) {
+      return activityUpdatesTask(organizationId, taskId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Completed'
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Pending';
+    }
+
+    function activityArchivesTask(organizationId, taskId) {
+      return activityUpdatesTask(organizationId, taskId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived != true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == true;
+    }
+
+    function activityRestoresTask(organizationId, taskId) {
+      return activityUpdatesTask(organizationId, taskId)
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == false;
+    }
+
+    function activityCreatesNote(organizationId, clientId, noteId) {
+      return !exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId))
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.createdByUid == request.auth.uid;
+    }
+
+    function activityUpdatesNote(organizationId, clientId, noteId) {
+      return exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId))
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.content != get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.content;
+    }
+
+    function activityArchivesNote(organizationId, clientId, noteId) {
+      return exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.archived != true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.archived == true;
+    }
+
+    function activityRestoresNote(organizationId, clientId, noteId) {
+      return exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId))
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.archived == true
+        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId)/notes/$(noteId)).data.archived == false;
     }
 
     function activityUpdatesSettings(organizationId) {
@@ -362,11 +445,12 @@ service cloud.firestore {
     match /organizations/{organizationId}/clients/{clientId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'assignedTo', 'assignedToUid', 'assignedToName', 'status', 'archived', 'archivedAt', 'archivedBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'sourceLeadId'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'assignedTo', 'assignedToUid', 'assignedToName', 'status', 'archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'sourceLeadId'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status == 'ACTIVE'
         && request.resource.data.archived == false
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed == false)
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && request.resource.data.assignedToName is string;
@@ -375,11 +459,17 @@ service cloud.firestore {
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && (!request.resource.data.keys().hasAny(['archived']) || request.resource.data.archived is bool)
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed is bool)
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed != true
+          || (request.resource.data.archived == true
+            && request.resource.data.status == 'ARCHIVED'
+            && request.resource.data.trashedAt is timestamp
+            && request.resource.data.trashedBy == request.auth.uid))
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && ((!resource.data.keys().hasAny(['sourceLeadId']) && !request.resource.data.keys().hasAny(['sourceLeadId']))
           || request.resource.data.sourceLeadId == resource.data.sourceLeadId);
-      allow delete: if organizationCanManageWrite(organizationId) && (resource.data.archived == true || resource.data.status == 'ARCHIVED');
+      allow delete: if false;
     }
 
     match /organizations/{organizationId}/clients/{clientId}/notes/{noteId} {
@@ -396,13 +486,20 @@ service cloud.firestore {
         && request.resource.data.archivedBy == null
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(clientId));
       allow update: if organizationCanManageWrite(organizationId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'archivedAt', 'archivedBy'])
-        && ((request.resource.data.archived == true
-          && request.resource.data.archivedAt is timestamp
-          && request.resource.data.archivedBy == request.auth.uid)
-          || (request.resource.data.archived == false
-          && request.resource.data.archivedAt == null
-          && request.resource.data.archivedBy == null));
+        && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content'])
+          && request.resource.data.content is string
+          && request.resource.data.content != ''
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'archivedAt', 'archivedBy'])
+          && (
+            request.resource.data.archived == true
+            && request.resource.data.archivedAt is timestamp
+            && request.resource.data.archivedBy == request.auth.uid
+            || request.resource.data.archived == false
+            && request.resource.data.archivedAt == null
+            && request.resource.data.archivedBy == null
+          )
+        );
       allow delete: if false;
     }
 
@@ -444,11 +541,12 @@ service cloud.firestore {
       allow read: if organizationCanManage(organizationId)
         || (organizationCanView(organizationId) && resource.data.assignedToUid == request.auth.uid);
       allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy', 'convertedClientId', 'nextScheduledActivityAt', 'nextScheduledActivityType', 'nextScheduledActivityId', 'lastActivityAt', 'lastActivityType'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'convertedClientId', 'nextScheduledActivityAt', 'nextScheduledActivityType', 'nextScheduledActivityId', 'lastActivityAt', 'lastActivityType'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.status == 'New'
         && request.resource.data.archived == false
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed == false)
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && request.resource.data.assignedToName is string;
@@ -457,11 +555,16 @@ service cloud.firestore {
         || (organizationCanView(organizationId)
           && resource.data.assignedToUid == request.auth.uid
           && request.resource.data.assignedToUid == resource.data.assignedToUid))
-        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy', 'convertedClientId', 'nextScheduledActivityAt', 'nextScheduledActivityType', 'nextScheduledActivityId', 'lastActivityAt', 'lastActivityType'])
+        && request.resource.data.keys().hasOnly(['name', 'company', 'email', 'phone', 'source', 'status', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'convertedClientId', 'nextScheduledActivityAt', 'nextScheduledActivityType', 'nextScheduledActivityId', 'lastActivityAt', 'lastActivityType'])
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.assignedToUid is string
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed is bool)
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed != true
+          || (request.resource.data.archived == true
+            && request.resource.data.trashedAt is timestamp
+            && request.resource.data.trashedBy == request.auth.uid))
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && (!request.resource.data.keys().hasAny(['nextScheduledActivityAt']) || request.resource.data.nextScheduledActivityAt == null || request.resource.data.nextScheduledActivityAt is timestamp)
         && (!request.resource.data.keys().hasAny(['nextScheduledActivityType']) || request.resource.data.nextScheduledActivityType == null || request.resource.data.nextScheduledActivityType in ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other'])
@@ -474,7 +577,7 @@ service cloud.firestore {
             && request.resource.data.source == resource.data.source
           : request.resource.data.status != 'Client'
             || (request.resource.data.keys().hasAll(['convertedClientId']) && request.resource.data.convertedClientId is string));
-      allow delete: if organizationCanManageWrite(organizationId) && resource.data.archived == true;
+      allow delete: if false;
     }
 
     match /organizations/{organizationId}/leads/{leadId}/timeline/{entryId} {
@@ -590,7 +693,7 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/tasks/{taskId} {
       allow read: if organizationCanViewTask(organizationId);
-      allow create: if organizationCanManageWrite(organizationId)
+      allow create: if organizationCanCreateTask(organizationId)
         && request.resource.data.keys().hasOnly(['title', 'description', 'type', 'dueDate', 'status', 'priority', 'relatedTo', 'assignedTo', 'assignedToUid', 'assignedToName', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
         && request.resource.data.title is string
         && request.resource.data.status == 'Pending'
@@ -641,15 +744,16 @@ service cloud.firestore {
       allow create: if organizationCanWrite(organizationId)
         && request.resource.data.keys().hasOnly(['type', 'description', 'entityType', 'entityId', 'createdAt', 'createdBy', 'metadata'])
         && request.resource.data.type in [
-          'lead_creation', 'client_conversion', 'client_creation', 'client_update',
-          'client_archive', 'deal_creation', 'deal_update', 'stage_change', 'deal_won', 'deal_lost',
-          'task_completion', 'settings_update'
+          'lead_creation', 'client_conversion', 'client_creation', 'client_update', 'client_archive', 'client_restore',
+          'deal_creation', 'deal_update', 'stage_change', 'deal_won', 'deal_lost', 'deal_reopened', 'deal_archive', 'deal_restore',
+          'task_creation', 'task_update', 'task_completion', 'task_reopened', 'task_archive', 'task_restore',
+          'note_creation', 'note_update', 'note_archive', 'note_restore', 'settings_update'
         ]
         && request.resource.data.description is string
         && request.resource.data.createdAt is timestamp
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.keys().hasAll(['entityType'])
-        && request.resource.data.entityType in ['Lead', 'Client', 'Deal', 'Task', 'Settings']
+        && request.resource.data.entityType in ['Lead', 'Client', 'Deal', 'Task', 'Note', 'Settings']
         && (!request.resource.data.keys().hasAny(['metadata']) || request.resource.data.metadata is map)
         && ((request.resource.data.type == 'lead_creation'
           && request.resource.data.entityType == 'Lead'
@@ -673,30 +777,118 @@ service cloud.firestore {
             && request.resource.data.entityType == 'Client'
             && request.resource.data.entityId is string
             && activityArchivesClient(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'client_restore'
+            && request.resource.data.entityType == 'Client'
+            && request.resource.data.entityId is string
+            && activityRestoresClient(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'deal_creation'
             && request.resource.data.entityType == 'Deal'
             && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityCreatesDeal(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'deal_update'
             && request.resource.data.entityType == 'Deal'
             && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityUpdatesDeal(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'stage_change'
             && request.resource.data.entityType == 'Deal'
             && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityChangesDealStage(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'deal_won'
             && request.resource.data.entityType == 'Deal'
             && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityWinsDeal(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'deal_lost'
             && request.resource.data.entityType == 'Deal'
             && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityLosesDeal(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'deal_reopened'
+            && request.resource.data.entityType == 'Deal'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
+            && activityReopensDeal(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'deal_archive'
+            && request.resource.data.entityType == 'Deal'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
+            && activityArchivesDeal(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'deal_restore'
+            && request.resource.data.entityType == 'Deal'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
+            && activityRestoresDeal(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'task_creation'
+            && request.resource.data.entityType == 'Task'
+            && request.resource.data.entityId is string
+            && activityCreatesTask(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'task_update'
+            && request.resource.data.entityType == 'Task'
+            && request.resource.data.entityId is string
+            && activityUpdatesTask(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'task_completion'
             && request.resource.data.entityType == 'Task'
             && request.resource.data.entityId is string
             && activityCompletesTask(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'task_reopened'
+            && request.resource.data.entityType == 'Task'
+            && request.resource.data.entityId is string
+            && activityReopensTask(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'task_archive'
+            && request.resource.data.entityType == 'Task'
+            && request.resource.data.entityId is string
+            && activityArchivesTask(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'task_restore'
+            && request.resource.data.entityType == 'Task'
+            && request.resource.data.entityId is string
+            && activityRestoresTask(organizationId, request.resource.data.entityId))
+          || (request.resource.data.type == 'note_creation'
+            && request.resource.data.entityType == 'Note'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && request.resource.data.metadata.noteId == request.resource.data.entityId
+            && activityCreatesNote(organizationId, request.resource.data.metadata.clientId, request.resource.data.entityId))
+          || (request.resource.data.type == 'note_update'
+            && request.resource.data.entityType == 'Note'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && request.resource.data.metadata.noteId == request.resource.data.entityId
+            && activityUpdatesNote(organizationId, request.resource.data.metadata.clientId, request.resource.data.entityId))
+          || (request.resource.data.type == 'note_archive'
+            && request.resource.data.entityType == 'Note'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && request.resource.data.metadata.noteId == request.resource.data.entityId
+            && activityArchivesNote(organizationId, request.resource.data.metadata.clientId, request.resource.data.entityId))
+          || (request.resource.data.type == 'note_restore'
+            && request.resource.data.entityType == 'Note'
+            && request.resource.data.entityId is string
+            && request.resource.data.keys().hasAll(['metadata'])
+            && request.resource.data.metadata.clientId is string
+            && request.resource.data.metadata.noteId == request.resource.data.entityId
+            && activityRestoresNote(organizationId, request.resource.data.metadata.clientId, request.resource.data.entityId))
           || (request.resource.data.type == 'settings_update'
             && request.resource.data.entityType == 'Settings'
             && !request.resource.data.keys().hasAny(['entityId'])

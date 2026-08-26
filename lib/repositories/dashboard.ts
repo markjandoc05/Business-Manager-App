@@ -21,6 +21,8 @@ export type DashboardMetrics = {
   lostDeals: number;
   pendingTasks: number;
   overdueTasks: number;
+  pendingFollowUps: number;
+  overdueFollowUps: number;
   pipelineValue: number;
   salesThisMonth: number;
   pipelineByStage: Record<string, { count: number; value: number }>;
@@ -43,7 +45,7 @@ async function loadDashboardMetricsUncached(user: AppUser | null, organizationId
   const assignedTask = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
   const assignedLead = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
 
-  const [leadTotals, activeLeadTotals, convertedLeadTotals, clientTotals, wonDealTotals, lostDealTotals, pendingTaskTotals, overdueTaskTotals, salesTotals, pipelineStageTotals] = await Promise.all([
+  const [leadTotals, activeLeadTotals, convertedLeadTotals, clientTotals, wonDealTotals, lostDealTotals, pendingTaskTotals, overdueTaskTotals, pendingFollowUpTotals, overdueFollowUpTotals, salesTotals, pipelineStageTotals] = await Promise.all([
     getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead), { count: count() }),
     getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead, where('status', 'in', ['New', 'Follow-up', 'Opportunity'])), { count: count() }),
     getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead, where('status', '==', 'Client')), { count: count() }),
@@ -52,6 +54,8 @@ async function loadDashboardMetricsUncached(user: AppUser | null, organizationId
     getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('status', '==', 'Lost')), { count: count() }),
     getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending')), { count: count() }),
     getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), where('dueDate', '<=', now)), { count: count() }),
+    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), where('type', '==', 'Follow-up')), { count: count() }),
+    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), where('dueDate', '<=', now)), { count: count() }),
     getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('status', '==', 'Won'), where('wonAt', '>=', monthStart), where('wonAt', '<', nextMonth)), { value: sum('value') }),
     Promise.all(DEAL_STAGES.map((stage) => getAggregateFromServer(
       query(deals, where('archived', '==', false), ...assignedDeal, where('stage', '==', stage)),
@@ -73,6 +77,8 @@ async function loadDashboardMetricsUncached(user: AppUser | null, organizationId
     lostDeals: lostDealTotals.data().count,
     pendingTasks: pendingTaskTotals.data().count,
     overdueTasks: overdueTaskTotals.data().count,
+    pendingFollowUps: pendingFollowUpTotals.data().count,
+    overdueFollowUps: overdueFollowUpTotals.data().count,
     pipelineValue,
     salesThisMonth: salesTotals.data().value || 0,
     pipelineByStage: Object.fromEntries(DEAL_STAGES.map((stage, index) => [stage, {
@@ -87,4 +93,5 @@ export function invalidateDashboardMetrics(organizationId: string) {
   // globally also prevents a later user switch from observing a prior user's cached metrics.
   void organizationId;
   invalidateCachedRequest('dashboard-metrics:');
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('bsm-dashboard-metrics-invalidated'));
 }

@@ -54,6 +54,11 @@ export default function ReportsPage() {
     const csvContent = "data:text/csv;charset=utf-8," + 
       "Metric,Value\n" +
       `Total Leads,${reportData?.totalLeads || 0}\n` +
+      `Clients,${reportData?.clients || 0}\n` +
+      `Converted Leads,${reportData?.convertedLeads || 0}\n` +
+      `Active Deals,${reportData?.activeDeals || 0}\n` +
+      `Won Deals,${reportData?.wonDeals || 0}\n` +
+      `Lost Deals,${reportData?.lostDeals || 0}\n` +
       `Won Sales,${reportData?.totalWonSales || 0}\n` +
       `Pipeline Value,${reportData?.pipelineValue || 0}`;
     const encodedUri = encodeURI(csvContent);
@@ -79,11 +84,16 @@ export default function ReportsPage() {
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-slate-500">Loading organization-wide report data…</p>}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
         <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Total Leads</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.totalLeads || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Clients</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.clients || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Converted Leads</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.convertedLeads || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Active Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.activeDeals || 0}</p></Card>
         <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Sales</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(reportData?.totalWonSales || 0, settings.currency)}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.wonDeals || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Lost Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.lostDeals || 0}</p></Card>
         <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Pipeline Value</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(reportData?.pipelineValue || 0, settings.currency)}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Conversion Rate</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData && reportData.totalLeads > 0 ? (reportData.wonDeals / reportData.totalLeads * 100).toFixed(1) : 0}%</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Conversion Rate</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData && reportData.totalLeads > 0 ? (reportData.convertedLeads / reportData.totalLeads * 100).toFixed(1) : 0}%</p></Card>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

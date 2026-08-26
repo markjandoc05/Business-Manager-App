@@ -5,6 +5,8 @@ import type { BusinessType, Settings } from '@/types';
 import { defaultSettings } from '@/lib/repositories/settings';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
 import { DEFAULT_LICENSE_FEATURES, DEFAULT_TRIAL_DAYS, DEFAULT_TRIAL_MAX_USERS } from '@/lib/licensing/config';
+import { cachedRequest } from '@/lib/repositories/requestCache';
+import { finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 
 const organizationStatuses: OrganizationStatus[] = ['trial', 'active', 'expired', 'suspended'];
 const membershipStatuses: MembershipStatus[] = ['pending', 'active', 'inactive', 'suspended', 'archived'];
@@ -27,16 +29,21 @@ function mapOrganization(id: string, data: Record<string, unknown>): Organizatio
   return { id, name: data.name, slug: data.slug, businessType: typeof data.businessType === 'string' ? data.businessType : 'Small Business', status, plan: typeof data.plan === 'string' ? data.plan : 'trial', subscriptionStatus: typeof data.subscriptionStatus === 'string' ? data.subscriptionStatus : 'trial', subscriptionStart: toIsoDate(data.subscriptionStart), subscriptionEnd: toIsoDate(data.subscriptionEnd), maxUsers: typeof data.maxUsers === 'number' ? data.maxUsers : 1, gracePeriodEnd: toIsoDate(data.gracePeriodEnd), createdAt: toIsoDate(data.createdAt), updatedAt: toIsoDate(data.updatedAt), licenseStatus: ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.licenseStatus as string) ? data.licenseStatus as Organization['licenseStatus'] : undefined, licenseWriteEnabled: typeof data.licenseWriteEnabled === 'boolean' ? data.licenseWriteEnabled : undefined, licenseExpiresAt: toIsoDate(data.licenseExpiresAt) };
 }
 
-export async function listUserMemberships(user: AppUser | null) {
+export async function listUserMemberships(user: Pick<AppUser, 'uid'> | null) {
   if (!user) return [];
-  const snapshot = await getDocs(query(
-    collectionGroup(db, 'members'),
-    where('userId', '==', user.uid),
-    where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
-    where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
-    limit(100),
-  ));
-  return snapshot.docs.map((membershipDoc) => mapMembership(membershipDoc.data(), membershipDoc.ref.parent.parent?.id || '')).filter((membership): membership is OrganizationMembership => membership !== null);
+  return cachedRequest(`workspace-memberships:${user.uid}`, 5_000, async () => {
+    startStartupStage('membership-query');
+    const snapshot = await getDocs(query(
+      collectionGroup(db, 'members'),
+      where('userId', '==', user.uid),
+      where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
+      where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
+      limit(100),
+    ));
+    finishStartupStage('membership-query');
+    markStartup('membership-complete');
+    return snapshot.docs.map((membershipDoc) => mapMembership(membershipDoc.data(), membershipDoc.ref.parent.parent?.id || '')).filter((membership): membership is OrganizationMembership => membership !== null);
+  });
 }
 
 export async function getOrganization(organizationId: string) {

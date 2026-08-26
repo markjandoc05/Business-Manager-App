@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, startAfter, updateDoc, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, startAfter, updateDoc, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Client, Lead, LeadStatus } from '@/types';
@@ -8,6 +8,7 @@ import { systemTimelineData, systemTimelineRef } from '@/lib/repositories/leadTi
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import { organizationCollection, organizationDocumentInCollection, organizationSubcollection } from '@/lib/organizations/paths';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
+import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositories/lifecycle';
 
 export const LEAD_PAGE_SIZE = 25;
 export type LeadViewFilter = 'All' | 'Active' | 'Converted' | 'Lost';
@@ -57,6 +58,9 @@ function mapLead(id: string, data: Record<string, unknown>): Lead {
     updatedAt: toIsoDate(data.updatedAt),
     archivedAt: toIsoDate(data.archivedAt, ''),
     archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
+    trashed: data.trashed === true,
+    trashedAt: toIsoDate(data.trashedAt, ''),
+    trashedBy: typeof data.trashedBy === 'string' ? data.trashedBy : undefined,
   };
 }
 
@@ -85,7 +89,6 @@ function leadFilterConstraints(filters: LeadListFilters = {}): QueryConstraint[]
 }
 
 export async function listLeadsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = LEAD_PAGE_SIZE, filters: LeadListFilters = {}): Promise<PageResult<Lead>> {
-  await requireActiveUser(user, organizationId);
   const { membership } = await requireOrganizationAccess(user, organizationId);
   const leadsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'leads');
   const constraints: QueryConstraint[] = membership.role === 'USER'
@@ -97,7 +100,7 @@ export async function listLeadsPage(user: AppUser | null, organizationId: string
   const snapshot = await getDocs(leadsQuery);
   const items = snapshot.docs
     .map((leadDoc) => mapLead(leadDoc.id, leadDoc.data()))
-    .filter((lead) => !lead.archived);
+    .filter((lead) => !lead.archived && !lead.trashed);
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
@@ -111,6 +114,7 @@ export async function getLeadById(user: AppUser | null, organizationId: string, 
   const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
   if (!snapshot.exists()) throw new Error('The lead could not be found.');
   const data = snapshot.data();
+  if (data.trashed === true) throw new Error('The lead could not be found.');
   if (membership.role === 'USER' && data.assignedToUid !== user?.uid) throw new Error('The lead could not be found.');
   return mapLead(snapshot.id, data);
 }
@@ -131,6 +135,7 @@ export async function createLead(user: AppUser | null, organizationId: string, i
     ...assignment,
     status: 'New' as const,
     archived: false,
+    trashed: false,
     createdAt: now,
     createdBy: user.uid,
     updatedAt: now,
@@ -191,14 +196,14 @@ export async function updateLeadStatus(user: AppUser | null, organizationId: str
 }
 
 export async function archiveLead(user: AppUser | null, organizationId: string, leadId: string) {
-  await requireLeadEditor(user, organizationId);
+  await requireOrganizationAccess(user, organizationId);
   if (!user) throw new Error('You must be signed in to archive a lead.');
   const { membership } = await requireOrganizationAccess(user, organizationId);
-  if (membership.role === 'USER') {
-    const existing = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
-    if (!existing.exists() || existing.data().assignedToUid !== user.uid) throw new Error('You can only archive Leads assigned to you.');
-  }
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  const existing = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
+  if (!existing.exists() || (membership.role === 'USER' && existing.data().assignedToUid !== user.uid)) throw new Error('You can only archive Leads assigned to you.');
+  const decision = await getLifecycleDecision(user, organizationId, 'Lead', 'archive', leadId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: true, trashed: false, trashedAt: null, trashedBy: null, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
 }
 
 export async function listArchivedLeadsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = LEAD_PAGE_SIZE): Promise<PageResult<Lead>> {
@@ -212,7 +217,7 @@ export async function listArchivedLeadsPage(user: AppUser | null, organizationId
     ? query(leadsCollection, ...constraints, startAfter(cursor), limit(pageSize))
     : query(leadsCollection, ...constraints, limit(pageSize));
   const snapshot = await getDocs(leadsQuery);
-  const items = snapshot.docs.map((leadDoc) => mapLead(leadDoc.id, leadDoc.data())).filter((lead) => lead.archived);
+  const items = snapshot.docs.map((leadDoc) => mapLead(leadDoc.id, leadDoc.data())).filter((lead) => lead.archived && !lead.trashed);
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
@@ -220,29 +225,40 @@ export async function listArchivedLeads(user: AppUser | null, organizationId: st
   return (await listArchivedLeadsPage(user, organizationId)).items;
 }
 
+export async function listTrashedLeadsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = LEAD_PAGE_SIZE): Promise<PageResult<Lead>> {
+  await requireActiveUser(user, organizationId);
+  const leadsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'leads');
+  const leadsQuery = cursor
+    ? query(leadsCollection, where('trashed', '==', true), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
+    : query(leadsCollection, where('trashed', '==', true), orderBy('createdAt', 'desc'), limit(pageSize));
+  const snapshot = await getDocs(leadsQuery);
+  const items = snapshot.docs.map((leadDoc) => mapLead(leadDoc.id, leadDoc.data())).filter((lead) => lead.trashed);
+  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+}
+
 export async function restoreLead(user: AppUser | null, organizationId: string, leadId: string) {
-  await requireLeadEditor(user, organizationId);
+  await requireOrganizationAccess(user, organizationId);
   if (!user) throw new Error('You must be signed in to restore a lead.');
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const existing = await getDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId));
+  if (!existing.exists() || (membership.role === 'USER' && existing.data().assignedToUid !== user.uid)) throw new Error('You can only restore Leads assigned to you.');
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: false, trashed: false, trashedAt: null, trashedBy: null, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+}
+
+export async function trashLead(user: AppUser | null, organizationId: string, leadId: string) {
+  await requireLeadManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to move a lead to Trash.');
+  const decision = await getLifecycleDecision(user, organizationId, 'Lead', 'trash', leadId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
+  await updateDoc(organizationDocumentInCollection(db, organizationId, 'leads', leadId), { archived: true, trashed: true, trashedAt: serverTimestamp(), trashedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
 }
 
 export async function permanentlyDeleteLead(user: AppUser | null, organizationId: string, leadId: string) {
   await requireLeadManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to delete a lead.');
-  const leadRef = organizationDocumentInCollection(db, organizationId, 'leads', leadId);
-  const snapshot = await getDoc(leadRef);
-  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived leads can be permanently deleted.');
-  if (snapshot.data().convertedClientId) throw new Error('This lead cannot be deleted after conversion because its client relationship must be preserved.');
-  const [timeline, tasks, activities] = await Promise.all([
-    getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'leads', leadId, 'timeline'), limit(1))),
-    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'), where('relatedTo.id', '==', leadId), limit(1))),
-    getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'activities'), where('entityType', '==', 'Lead'), where('entityId', '==', leadId), limit(1))),
-  ]);
-  const hasHistory = timeline.size > 0
-    || tasks.docs.some((item) => { const related = item.data().relatedTo as { type?: string; id?: string } | undefined; return related?.type === 'Lead' && related.id === leadId; })
-    || activities.docs.some((item) => item.data().entityType === 'Lead' && item.data().entityId === leadId);
-  if (hasHistory) throw new Error('This lead cannot be deleted while related timeline, task, or activity history exists.');
-  await deleteDoc(leadRef);
+  const decision = await getLifecycleDecision(user, organizationId, 'Lead', 'permanent-delete', leadId);
+  if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
+  await permanentlyDeleteRecord(user, organizationId, 'Lead', leadId);
 }
 
 export async function convertLeadToClient(user: AppUser | null, organizationId: string, lead: Lead) {
@@ -279,6 +295,7 @@ export async function convertLeadToClient(user: AppUser | null, organizationId: 
       ...assignment,
       status: 'ACTIVE',
       archived: false,
+      trashed: false,
       sourceLeadId: lead.id,
       createdAt: now,
       createdBy: user.uid,

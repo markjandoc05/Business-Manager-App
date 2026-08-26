@@ -360,7 +360,7 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Plan</label>
-                    <p className="font-medium bg-slate-100 p-2 rounded text-sm">{licenseState.plan}</p>
+                    <p className="font-medium bg-slate-100 p-2 rounded text-sm">{licenseState.plan || 'Unknown'}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Status</label>
@@ -370,7 +370,7 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">Expiration</label>
-                    <p className="text-sm">{formatLicenseDate(licenseState.status === 'TRIAL' ? license?.trialEndsAt : license?.subscriptionEndsAt)}</p>
+                    <p className="text-sm">{licenseState.status === 'TRIAL' ? formatLicenseDate(license?.trialEndsAt) : licenseState.status === 'ACTIVE' ? formatLicenseDate(license?.subscriptionEndsAt) : 'Not available'}</p>
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-slate-500 uppercase">User limit</label>

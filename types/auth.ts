@@ -5,6 +5,7 @@ export type MembershipStatus = 'pending' | 'active' | 'inactive' | 'suspended' |
 export type PlatformRole = 'PLATFORM_ADMIN';
 export type LicensePlan = 'TRIAL' | 'STARTER' | 'TEAM' | 'LEGACY';
 export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED';
+export type LicenseEffectiveStatus = LicenseStatus | 'UNKNOWN';
 
 export interface License {
   plan: LicensePlan;
@@ -22,8 +23,9 @@ export interface License {
 
 export interface ResolvedLicenseState {
   license: License | null;
-  plan: LicensePlan;
-  status: LicenseStatus;
+  plan: LicensePlan | null;
+  status: LicenseEffectiveStatus;
+  canRead: boolean;
   canWrite: boolean;
   isReadOnly: boolean;
   daysRemaining: number | null;

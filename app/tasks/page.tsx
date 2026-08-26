@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
@@ -49,6 +49,7 @@ export default function TasksPage() {
   const { tasks, tasksLoading, tasksError, refreshTasks, loadMoreTasks, tasksHasMore, addTask, updateTask, completeTask, archiveTask, archivedTasks, loadArchivedRecords, loadMoreArchivedTasks, archivedTasksHasMore, restoreTask, permanentlyDeleteTask, leads, clients, deals, users, usersLoading } = useApp();
   const { membership, canWrite } = useWorkspace();
   const canManage = canManageTasks(membership) && canWrite;
+  const canCreateTask = canWrite && (canManage || membership?.role === 'USER');
   const [activeTab, setActiveTab] = useState<TaskTab>('Today');
   const [showModal, setShowModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -59,11 +60,22 @@ export default function TasksPage() {
   const [showArchived, setShowArchived] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
-  const [currentTime] = useState(() => Date.now());
+  const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const displayedError = actionError || tasksError;
   const canActOnTask = (task: Task) => canManage || (membership?.role === 'USER' && task.assignedToUid === user?.uid);
+
+  const getTaskFilters = useCallback(() => {
+    const status = activeTab === 'Completed' ? 'Completed' : activeTab === 'All' || activeTab === 'Follow-ups' ? 'All' : 'Pending';
+    const due = activeTab === 'Today' || activeTab === 'Upcoming' || activeTab === 'Overdue' ? activeTab : 'All';
+    return { status, due, type: activeTab === 'Follow-ups' ? 'Follow-up' : 'All' } as const;
+  }, [activeTab]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   React.useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -71,7 +83,7 @@ export default function TasksPage() {
       const selectedTask = taskId ? tasks.find((task) => task.id === taskId) : undefined;
       setSelectedTaskId(selectedTask?.id || null);
       if (selectedTask) setActiveTab('All');
-      if (searchParams.get('action') === 'create') {
+      if (searchParams.get('action') === 'create' && canCreateTask) {
         setEditingTask(null);
         setForm({ ...emptyForm, dueDate: currentDateTimeInput(), ...(user ? getDefaultAssignment(user) : {}) });
         setActionError(null);
@@ -79,7 +91,7 @@ export default function TasksPage() {
       }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [searchParams, tasks, user]);
+  }, [canCreateTask, searchParams, tasks, user]);
 
   const filteredTasks = useMemo(() => tasks.filter((task) => {
     const dueDate = new Date(task.dueDate);
@@ -106,7 +118,7 @@ export default function TasksPage() {
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!canManage || !form.title.trim() || !form.dueDate) return;
+    if (!canCreateTask || !form.title.trim() || !form.dueDate) return;
     setSaving(true); setActionError(null);
     try { if (editingTask) await updateTask(editingTask.id, form); else await addTask(form); setShowModal(false); }
     catch (error) { console.error('Unable to save task', error); setActionError(error instanceof Error ? error.message : 'Unable to save the task. Please try again.'); }
@@ -142,13 +154,11 @@ export default function TasksPage() {
 
   const tabs: TaskTab[] = ['Today', 'Upcoming', 'Overdue', 'Completed', 'Follow-ups', 'All'];
   useEffect(() => {
-    const status = activeTab === 'Completed' ? 'Completed' : activeTab === 'All' || activeTab === 'Follow-ups' ? 'All' : 'Pending';
-    const due = activeTab === 'Today' || activeTab === 'Upcoming' || activeTab === 'Overdue' ? activeTab : 'All';
-    void refreshTasks({ status, due, type: activeTab === 'Follow-ups' ? 'Follow-up' : 'All' });
-  }, [activeTab, refreshTasks]);
+    void refreshTasks(getTaskFilters());
+  }, [getTaskFilters, refreshTasks]);
   return <div className="space-y-6">
     {displayedError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{displayedError}</p>}
-    <PageHeader title="Tasks & Follow-ups" subtitle="Track operational follow-ups and due dates." actions={<><Button variant="outline" onClick={() => void refreshTasks()} disabled={tasksLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button><Button variant="outline" onClick={() => { const next = !showArchived; setShowArchived(next); if (next && archivedTasks.length === 0) void loadArchivedRecords(); }}>{showArchived ? 'Active Tasks' : 'Archived Tasks'}</Button>{canManage && <Button onClick={openCreate} className="gap-2"><Plus size={18} /> Add Task</Button>}</>} />
+    <PageHeader title="Tasks & Follow-ups" subtitle="Track operational follow-ups and due dates." actions={<><Button variant="outline" onClick={() => void refreshTasks(getTaskFilters())} disabled={tasksLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button><Button variant="outline" onClick={() => { const next = !showArchived; setShowArchived(next); if (next && archivedTasks.length === 0) void loadArchivedRecords(); }}>{showArchived ? 'Active Tasks' : 'Archived Tasks'}</Button>{canCreateTask && <Button onClick={openCreate} className="gap-2"><Plus size={18} /> Add Task</Button>}</>} />
     <div className="flex gap-6 border-b border-slate-200">{tabs.map((tab) => <button key={tab} onClick={() => setActiveTab(tab)} className={`border-b-2 pb-3 text-sm font-semibold ${activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-500'}`}>{tab}</button>)}</div>
     <Card className="overflow-hidden p-0">{tasksLoading ? <p className="p-10 text-center text-sm text-slate-500">Loading tasks…</p> : filteredTasks.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{tasksError ? 'Tasks could not be loaded.' : <>No tasks yet.<span className="mt-1 block text-xs font-normal text-slate-400">Add a task to track your next action.</span></>}</p> : <div className="overflow-x-auto"><table className="w-full min-w-[950px] text-left"><thead><tr className="border-b bg-slate-50"><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Task</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Related</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Assigned To</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Due Date</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Priority</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Status</th><th className="px-6 py-4 text-right text-xs font-bold uppercase text-slate-500">Action</th></tr></thead><tbody className="divide-y divide-slate-100">{filteredTasks.map((task) => { const dueTime = Date.parse(task.dueDate); const validDueDate = Number.isFinite(dueTime); const label = task.status === 'Completed' ? 'Completed' : validDueDate ? dueTime > currentTime ? 'Scheduled' : 'Overdue' : 'Pending'; return <tr key={task.id} className={selectedTaskId === task.id ? 'bg-blue-50 hover:bg-blue-50' : 'hover:bg-slate-50'}><td className="px-6 py-4"><div className="font-semibold text-slate-900">{task.title}</div><div className="text-xs text-slate-500">{task.description || '—'}</div></td><td className="px-6 py-4 text-sm text-slate-600">{getRelatedName(task)}</td><td className="px-6 py-4 text-sm text-slate-600">{task.assignedToName || task.assignedTo || 'Unassigned'}</td><td className="px-6 py-4 text-sm text-slate-600">{formatTaskDueDate(task.dueDate)}</td><td className="px-6 py-4"><Badge variant={task.priority === 'High' ? 'red' : task.priority === 'Medium' ? 'orange' : 'gray'}>{task.priority}</Badge></td><td className="px-6 py-4"><Badge variant={label === 'Completed' ? 'green' : label === 'Overdue' ? 'red' : 'blue'}>{label}</Badge></td><td className="px-6 py-4"><div className="flex justify-end gap-2">{canActOnTask(task) && <>{task.status !== 'Completed' && <IconActionButton icon={<Check size={15} />} label="Complete Task" variant="success" disabled={busyTaskId === task.id} onClick={() => void handleComplete(task)} />}{task.status === 'Completed' && <IconActionButton icon={<RotateCcw size={15} />} label="Reopen Task" disabled={busyTaskId === task.id} onClick={() => void handleComplete(task)} />}</>}{canActOnTask(task) && <><IconActionButton icon={<Pencil size={15} />} label="Edit Task" onClick={() => openEdit(task)} /><IconActionButton icon={<Trash2 size={15} />} label="Archive Task" variant="danger" disabled={busyTaskId === task.id} onClick={() => void handleArchive(task)} /></>}</div></td></tr>; })}</tbody></table></div>}</Card>
     {tasksHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreTasks()} disabled={tasksLoading}>{tasksLoading ? 'Loading…' : 'Load More Tasks'}</Button></div>}

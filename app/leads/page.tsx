@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Card, Button, Badge } from '@/components/ui/core';
+import { Card, Button } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { Search, Filter, Plus, Mail, Phone, Edit, Archive, RefreshCw, UserPlus, ExternalLink, RotateCcw, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -15,15 +15,27 @@ import { LeadDetailsModal } from '@/components/LeadDetailsModal';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { IconActionButton } from '@/components/IconActionButton';
+import { getLifecycleDecision } from '@/lib/repositories/lifecycle';
+import type { LifecycleDecision } from '@/lib/record-lifecycle';
+import { classifyLeads } from '@/lib/lead-lifecycle';
+import { previewBulkLifecycle } from '@/lib/repositories/lifecycle';
+import type { BulkLifecycleAction, BulkLifecycleResult } from '@/lib/repositories/lifecycle';
+import { BulkActionToolbar } from '@/components/BulkActionToolbar';
+import { TablePagination } from '@/components/TablePagination';
+import { SortableColumnHeader } from '@/components/SortableColumnHeader';
+import { compareNumber, compareText, type SortDirection } from '@/lib/table-sorting';
 
 const statuses: LeadStatus[] = ['New', 'Follow-up', 'Opportunity', 'Lost'];
+type LeadColumn = 'select' | 'name' | 'company' | 'contact' | 'source' | 'status' | 'action';
+type LeadSortKey = Exclude<LeadColumn, 'select' | 'action'>;
+type LeadSort = { key: LeadSortKey; direction: SortDirection } | null;
 
 type LeadForm = { name: string; email: string; phone: string; company: string; source: string; assignedToUid: string; assignedToName: string };
 const emptyForm: LeadForm = { name: '', email: '', phone: '', company: '', source: 'Website', assignedToUid: '', assignedToName: '' };
 
 export default function LeadsPage() {
   const { user } = useAuth();
-  const { leads, leadsLoading, leadsError, refreshLeads, loadMoreLeads, leadsHasMore, convertLeadToClient, addLead, updateLead, updateLeadStatus, archiveLead, addTask, leadTasks, leadTasksLoading, leadTasksError, loadLeadTasks, completeTask, users, usersLoading, settings, archivedLeads, loadArchivedRecords, loadMoreArchivedLeads, archivedLeadsHasMore, restoreLead, permanentlyDeleteLead } = useApp();
+  const { leads, leadsLoading, leadsError, refreshLeads, loadMoreLeads, leadsHasMore, convertLeadToClient, addLead, updateLead, updateLeadStatus, archiveLead, trashLead, addTask, leadTasks, leadTasksLoading, leadTasksError, loadLeadTasks, completeTask, users, usersLoading, settings, archivedLeads, trashedLeads, loadArchivedRecords, loadTrashRecords, loadMoreArchivedLeads, loadMoreTrashedLeads, archivedLeadsHasMore, trashedLeadsHasMore, restoreLead, permanentlyDeleteLead, executeBulkLifecycleAction } = useApp();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
@@ -46,8 +58,17 @@ export default function LeadsPage() {
   const [leadView, setLeadView] = useState<'All' | 'Active' | 'Converted' | 'Lost'>('All');
   const [showDetails, setShowDetails] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
-  const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'restore' | 'delete'; id: string; name: string } | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<{ kind: 'archive' | 'trash' | 'restore' | 'delete'; id: string; name: string; decision?: LifecycleDecision } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [trashDecisions, setTrashDecisions] = useState<Record<string, LifecycleDecision>>({});
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Set<string>>(new Set());
+  const [bulkLeadAction, setBulkLeadAction] = useState<BulkLifecycleAction | ''>('');
+  const [bulkLeadBusy, setBulkLeadBusy] = useState(false);
+  const [bulkLeadConfirmation, setBulkLeadConfirmation] = useState<{ action: BulkLifecycleAction; ids: string[]; results: BulkLifecycleResult[] } | null>(null);
+  const [leadPage, setLeadPage] = useState(1);
+  const [leadPageSize, setLeadPageSize] = useState(25);
+  const [leadSort, setLeadSort] = useState<LeadSort>(null);
   const leadLookupRequestRef = useRef(0);
 
   useEffect(() => {
@@ -116,28 +137,154 @@ export default function LeadsPage() {
   }, [currentOrganizationId, searchParams, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
-    if (showArchived || !workspaceReady || !currentOrganizationId) return;
+    if (showArchived || showTrash || !workspaceReady || !currentOrganizationId) return;
     void refreshLeads({ view: leadView, status: statusFilter, source: sourceFilter });
-  }, [currentOrganizationId, leadView, refreshLeads, showArchived, sourceFilter, statusFilter, workspaceReady]);
+  }, [currentOrganizationId, leadView, refreshLeads, showArchived, showTrash, sourceFilter, statusFilter, workspaceReady]);
 
   const refresh = async () => {
     setActionError(null);
     await refreshLeads();
   };
 
-  const visibleLeads = leads.filter((lead) => !lead.archived);
+  const visibleLeads = useMemo(() => classifyLeads(leads).active, [leads]);
+  const displayedArchivedLeads = useMemo(() => classifyLeads(archivedLeads).archived, [archivedLeads]);
+  const displayedTrashedLeads = useMemo(() => classifyLeads(trashedLeads).trashed, [trashedLeads]);
   const activeSources = settings.leadSources.filter((source) => source.isActive).map((source) => source.name);
-  const filteredLeads = visibleLeads.filter((lead) => {
+  const filteredLeads = useMemo(() => visibleLeads.filter((lead) => {
     const query = searchTerm.toLowerCase();
     const matchesView = leadView === 'Active' ? ['New', 'Follow-up', 'Opportunity'].includes(lead.status) : leadView === 'Converted' ? lead.status === 'Client' : leadView === 'Lost' ? lead.status === 'Lost' : true;
     return matchesView && (!query || [lead.name, lead.email, lead.phone, lead.company || ''].some((value) => value.toLowerCase().includes(query)))
       && (statusFilter === 'All' || lead.status === statusFilter)
       && (sourceFilter === 'All' || lead.source === sourceFilter);
-  });
+  }), [leadView, searchTerm, sourceFilter, statusFilter, visibleLeads]);
+  const sortedFilteredLeads = useMemo(() => {
+    if (!leadSort) return filteredLeads;
+    const sorted = [...filteredLeads];
+    sorted.sort((left, right) => {
+      switch (leadSort.key) {
+        case 'name': return compareText(left.name, right.name, leadSort.direction);
+        case 'company': return compareText(left.company, right.company, leadSort.direction);
+        case 'contact': return compareText(left.email || left.phone, right.email || right.phone, leadSort.direction);
+        case 'source': return compareText(left.source, right.source, leadSort.direction);
+        case 'status': {
+          const statusOrder = [...statuses, 'Client' as const];
+          const leftIndex = statusOrder.indexOf(left.status);
+          const rightIndex = statusOrder.indexOf(right.status);
+          return compareNumber(leftIndex < 0 ? null : leftIndex, rightIndex < 0 ? null : rightIndex, leadSort.direction);
+        }
+      }
+    });
+    return sorted;
+  }, [filteredLeads, leadSort]);
+  const selectableLeadRows = showArchived ? displayedArchivedLeads : showTrash ? displayedTrashedLeads : filteredLeads;
+  const leadPageCount = Math.max(1, Math.ceil(filteredLeads.length / leadPageSize));
+  const safeLeadPage = Math.min(leadPage, leadPageCount);
+  const currentPageLeadRows = showArchived || showTrash ? selectableLeadRows : sortedFilteredLeads.slice((safeLeadPage - 1) * leadPageSize, safeLeadPage * leadPageSize);
+  const selectedMatchingLeadIds = selectableLeadRows.filter((lead) => selectedLeadIds.has(lead.id)).map((lead) => lead.id);
+  const selectedVisibleLeadIds = currentPageLeadRows.filter((lead) => selectedLeadIds.has(lead.id)).map((lead) => lead.id);
+  const allVisibleLeadsSelected = currentPageLeadRows.length > 0 && selectedVisibleLeadIds.length === currentPageLeadRows.length;
+  const someVisibleLeadsSelected = selectedVisibleLeadIds.length > 0 && !allVisibleLeadsSelected;
+  const leadBulkActions = showTrash
+    ? [{ value: 'restore', label: 'Restore' }, { value: 'permanent-delete', label: 'Delete permanently' }]
+    : showArchived
+      ? [{ value: 'restore', label: 'Restore' }, { value: 'trash', label: 'Move to Trash' }]
+      : [{ value: 'archive', label: 'Archive' }, { value: 'trash', label: 'Move to Trash' }];
+  const bulkLeadBlocked = bulkLeadConfirmation?.results.filter((result) => !result.ok || result.decision?.outcome === 'BLOCKED').length || 0;
+  const bulkLeadAffected = bulkLeadConfirmation?.results.reduce((total, result) => total + Object.values(result.decision?.cleanupRecords || {}).reduce((sum, count) => sum + count, 0), 0) || 0;
+  const bulkLeadPreviewDescription = bulkLeadConfirmation
+    ? bulkLeadConfirmation.results.map((result) => {
+      const name = [...leads, ...displayedArchivedLeads, ...displayedTrashedLeads].find((lead) => lead.id === result.id)?.name || result.id;
+      const cleanup = Object.entries(result.decision?.cleanupRecords || {}).map(([label, count]) => `${count} ${label}`).join(', ');
+      return `${name}: ${result.ok ? cleanup || 'no eligible related records' : result.error || 'unavailable'}.`;
+    }).join(' ')
+    : '';
   const toggleArchived = () => {
     const next = !showArchived;
+    setLeadPage(1);
     setShowArchived(next);
-    if (next && archivedLeads.length === 0) void loadArchivedRecords();
+    setShowTrash(false);
+    setSelectedLeadIds(new Set());
+    setBulkLeadAction('');
+    if (next && displayedArchivedLeads.length === 0) void loadArchivedRecords();
+  };
+
+  const toggleTrash = () => {
+    const next = !showTrash;
+    setLeadPage(1);
+    setShowTrash(next);
+    setShowArchived(false);
+    setSelectedLeadIds(new Set());
+    setBulkLeadAction('');
+    if (next && displayedTrashedLeads.length === 0) void loadTrashRecords();
+  };
+
+  const toggleLeadSelection = (leadId: string) => {
+    setSelectedLeadIds((current) => {
+      const next = new Set(current);
+      if (next.has(leadId)) next.delete(leadId); else next.add(leadId);
+      return next;
+    });
+  };
+
+  const toggleAllVisibleLeads = () => {
+    setSelectedLeadIds((current) => {
+      const next = new Set(current);
+      if (allVisibleLeadsSelected) currentPageLeadRows.forEach((lead) => next.delete(lead.id));
+      else currentPageLeadRows.forEach((lead) => next.add(lead.id));
+      return next;
+    });
+  };
+
+  const selectAllMatchingLeads = () => setSelectedLeadIds((current) => new Set([...current, ...selectableLeadRows.map((lead) => lead.id)]));
+
+  const resetLeadTableContext = () => {
+    setLeadPage(1);
+    setSelectedLeadIds(new Set());
+  };
+  const handleLeadSearchChange = (value: string) => { resetLeadTableContext(); setSearchTerm(value); };
+  const handleLeadViewChange = (value: typeof leadView) => { resetLeadTableContext(); setLeadView(value); };
+  const handleLeadStatusFilterChange = (value: LeadStatus | 'All') => { resetLeadTableContext(); setStatusFilter(value); };
+  const handleLeadSourceFilterChange = (value: string) => { resetLeadTableContext(); setSourceFilter(value); };
+  const handleLeadSort = (key: LeadSortKey) => {
+    setLeadSort((current) => current?.key === key
+      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, direction: 'asc' });
+    setLeadPage(1);
+  };
+  const runBulkLeadPreview = async () => {
+    if (!user || !currentOrganizationId || !bulkLeadAction || selectedLeadIds.size === 0) return;
+    setBulkLeadBusy(true);
+    setActionError(null);
+    try {
+      const ids = selectedMatchingLeadIds;
+      const results = await previewBulkLifecycle(user, currentOrganizationId, 'Lead', bulkLeadAction, ids);
+      setBulkLeadConfirmation({ action: bulkLeadAction, ids, results });
+    } catch (error) {
+      console.error('Unable to preview bulk Lead action', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to preview the bulk Lead action. Please try again.');
+    } finally {
+      setBulkLeadBusy(false);
+    }
+  };
+
+  const executeBulkLeadAction = async () => {
+    if (!bulkLeadConfirmation || bulkLeadBusy) return;
+    setBulkLeadBusy(true);
+    setActionError(null);
+    try {
+      const results = await executeBulkLifecycleAction('Lead', bulkLeadConfirmation.action, bulkLeadConfirmation.ids);
+      const failed = results.filter((result) => !result.ok);
+      const succeeded = results.filter((result) => result.ok);
+      setSelectedLeadIds((current) => new Set([...current].filter((id) => failed.some((result) => result.id === id))));
+      setBulkLeadConfirmation(null);
+      if (failed.length > 0) setActionError(`${succeeded.length} Lead${succeeded.length === 1 ? '' : 's'} processed. ${failed.length} failed: ${failed.map((result) => result.error || result.id).join(' ')}`);
+    } catch (error) {
+      console.error('Unable to execute bulk Lead action', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to complete the bulk Lead action. Please try again.');
+    } finally {
+      setBulkLeadBusy(false);
+      setBulkLeadAction('');
+    }
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -191,20 +338,66 @@ export default function LeadsPage() {
 
   const handleArchive = async (lead: Lead) => {
     if (!user || !currentOrganizationId || !canEditLead(lead) || busyLeadId) return;
-    setConfirmAction({ kind: 'archive', id: lead.id, name: lead.name });
+    setBusyLeadId(lead.id);
+    setActionError(null);
+    try {
+      const decision = await getLifecycleDecision(user, currentOrganizationId, 'Lead', 'archive', lead.id);
+      if (decision.outcome === 'BLOCKED') { setActionError(`${decision.reason} ${decision.recommendedAction}`); return; }
+      setConfirmAction({ kind: 'archive', id: lead.id, name: lead.name, decision });
+    } catch (error) {
+      console.error('Unable to evaluate lead archive', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to evaluate lead archive. Please try again.');
+    } finally {
+      setBusyLeadId(null);
+    }
+  };
+
+  const handleTrash = async (lead: Lead) => {
+    if (!user || !currentOrganizationId || !canEditLead(lead) || busyLeadId) return;
+    setBusyLeadId(lead.id);
+    setActionError(null);
+    try {
+      const decision = await getLifecycleDecision(user, currentOrganizationId, 'Lead', 'trash', lead.id);
+      if (decision.outcome === 'BLOCKED') { setActionError(`${decision.reason} ${decision.recommendedAction}`); return; }
+      setConfirmAction({ kind: 'trash', id: lead.id, name: lead.name, decision });
+    } catch (error) {
+      console.error('Unable to evaluate lead trash', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to evaluate lead trash. Please try again.');
+    } finally {
+      setBusyLeadId(null);
+    }
+  };
+
+  const handlePermanentDelete = async (lead: Lead) => {
+    if (!user || !currentOrganizationId || !canManage || busyLeadId) return;
+    setBusyLeadId(lead.id);
+    setActionError(null);
+    try {
+      const decision = await getLifecycleDecision(user, currentOrganizationId, 'Lead', 'permanent-delete', lead.id);
+      setTrashDecisions((current) => ({ ...current, [lead.id]: decision }));
+      setConfirmAction({ kind: 'delete', id: lead.id, name: lead.name, decision });
+    } catch (error) {
+      console.error('Unable to evaluate lead deletion', error);
+      setActionError(error instanceof Error ? error.message : 'Unable to evaluate lead deletion. Please try again.');
+    } finally {
+      setBusyLeadId(null);
+    }
   };
 
   const executeConfirmedAction = async () => {
     if (!confirmAction || confirmBusy || !user || !currentOrganizationId) return;
+    const actionLeadId = confirmAction.id;
     setConfirmBusy(true);
+    setBusyLeadId(actionLeadId);
     setActionError(null);
     try {
       if (confirmAction.kind === 'archive') {
         await archiveLead(confirmAction.id);
-        await refreshLeads();
+      } else if (confirmAction.kind === 'trash') {
+        await trashLead(confirmAction.id);
       } else if (confirmAction.kind === 'restore') {
         await restoreLead(confirmAction.id);
-      } else {
+      } else if (confirmAction.decision?.outcome !== 'BLOCKED') {
         await permanentlyDeleteLead(confirmAction.id);
       }
       setConfirmAction(null);
@@ -212,6 +405,7 @@ export default function LeadsPage() {
       console.error('Unable to complete lead lifecycle action', error);
       setActionError(error instanceof Error ? error.message : 'Unable to complete the lead action. Please try again.');
     } finally {
+      setBusyLeadId(null);
       setConfirmBusy(false);
     }
   };
@@ -232,16 +426,20 @@ export default function LeadsPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${selectedMatchingLeadIds.length > 0 ? 'pb-24' : ''}`}>
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{error}</p>}
-      <PageHeader title="Leads & Prospects" subtitle="Track potential customers and sales opportunities." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Leads' : 'Archived Leads'}</Button>}{canManage && <Button disabled={!workspaceReady} onClick={openCreate} className="gap-2"><Plus size={18} /> Add Lead</Button>}</>} />
-      <Card className="flex flex-col gap-4 p-4 md:flex-row md:items-center"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} /><input type="text" placeholder="Search leads..." className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} /></div><div className="flex flex-wrap gap-2"><select aria-label="Lead view" className="rounded-lg border px-3 py-2 text-sm" value={leadView} onChange={(event) => setLeadView(event.target.value as typeof leadView)}><option>All</option><option>Active</option><option>Converted</option><option>Lost</option></select><Button variant="outline" onClick={() => setShowFilters((current) => !current)} className="gap-2"><Filter size={18} /> Filter</Button><Button variant="outline" onClick={() => void refresh()} disabled={loading} className="gap-2"><RefreshCw size={16} /> Refresh</Button></div>{showFilters && <div className="flex flex-wrap gap-2"><select className="rounded-lg border px-3 py-2 text-sm" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as LeadStatus | 'All')}><option value="All">All statuses</option>{[...statuses, 'Client' as const].map((status) => <option key={status} value={status}>{status}</option>)}</select><select className="rounded-lg border px-3 py-2 text-sm" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}><option value="All">All sources</option>{activeSources.map((source) => <option key={source} value={source}>{source}</option>)}</select></div>}</Card>
-      <Card className="overflow-hidden p-0">
-        {(!workspaceReady || leadsLoading) ? <p className="p-10 text-center text-sm text-slate-500">{workspaceLoading ? 'Workspace is still loading…' : currentOrganizationId ? 'Loading leads…' : 'No active organization is available for Leads.'}</p> : filteredLeads.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{error ? 'Leads could not be loaded.' : searchTerm || leadView !== 'All' || statusFilter !== 'All' || sourceFilter !== 'All' ? 'No leads match your search or filters.' : <>No leads yet.<span className="mt-1 block text-xs font-normal text-slate-400">Add your first lead to start tracking prospects.</span></>}</p> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] border-collapse text-left"><thead><tr className="border-b border-slate-200 bg-slate-50"><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Lead Name</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Status</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Company</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Source</th><th className="px-6 py-4 text-xs font-bold uppercase text-slate-500">Created</th><th className="px-6 py-4 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">{filteredLeads.map((lead) => <tr key={lead.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) openDetails(lead); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-6 py-4"><p className="font-semibold text-slate-900">{lead.name}</p><div className="mt-1 flex items-center gap-3"><span className="flex items-center gap-1 text-xs text-slate-500"><Mail size={12} /> {lead.email}</span><span className="flex items-center gap-1 text-xs text-slate-500"><Phone size={12} /> {lead.phone}</span><span className="text-xs text-slate-400">Assigned: {lead.assignedToName || lead.assignedTo || "Unassigned"}</span></div></td><td className="px-6 py-4">{lead.status === 'Client' ? <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Converted</span> : <select aria-label={`Status for ${lead.name}`} value={lead.status} disabled={!canEditLead(lead) || busyLeadId === lead.id} onChange={(event) => void handleStatusChange(lead, event.target.value as LeadStatus)} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select>}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.company || '-'}</td><td className="px-6 py-4 text-sm text-slate-600">{lead.source}</td><td className="px-6 py-4 text-sm text-slate-600">{new Date(lead.createdAt).toLocaleDateString()}</td><td className="px-6 py-4 text-right"><div className="flex justify-end gap-2">{canEditLead(lead) && lead.status !== 'Client' && <IconActionButton icon={<Edit size={15} />} label="Edit Lead" onClick={() => { setSelectedLead(lead); setEditForm({ name: lead.name, email: lead.email, phone: lead.phone, company: lead.company || "", source: lead.source, assignedToUid: lead.assignedToUid || lead.assignedTo || "", assignedToName: lead.assignedToName || "" }); setShowEditModal(true); }} />}{canEditLead(lead) && <IconActionButton icon={<Archive size={15} />} label="Archive Lead" variant="danger" disabled={busyLeadId === lead.id} onClick={() => void handleArchive(lead)} />}{lead.status === 'Client' && lead.convertedClientId && <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => openConvertedClient(lead)} />}{lead.status !== 'Client' && canManage && <IconActionButton icon={<UserPlus size={15} />} label="Convert to Client" variant="success" onClick={() => void handleStatusChange(lead, "Client")} />}</div></td></tr>)}</tbody></table></div>}
+      <PageHeader title="Leads & Prospects" subtitle="Track potential customers and sales opportunities." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Leads' : 'Archived Leads'}</Button>}<Button variant="outline" onClick={toggleTrash}>{showTrash ? 'Active Leads' : 'Trash'}</Button>{canManage && <Button disabled={!workspaceReady || showArchived || showTrash} onClick={openCreate} className="gap-2"><Plus size={18} /> Add Lead</Button>}</>} />
+      <Card className="flex flex-col gap-4 p-4 md:flex-row md:items-center"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} /><input type="text" placeholder="Search leads..." className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500" value={searchTerm} onChange={(event) => handleLeadSearchChange(event.target.value)} /></div><div className="flex flex-wrap gap-2"><select aria-label="Lead view" className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50" value={leadView} onChange={(event) => handleLeadViewChange(event.target.value as typeof leadView)}><option>All</option><option>Active</option><option>Converted</option><option>Lost</option></select><Button variant="outline" onClick={() => setShowFilters((current) => !current)} className="gap-2"><Filter size={18} /> Filter</Button><Button variant="outline" onClick={() => void refresh()} disabled={loading} className="gap-2"><RefreshCw size={16} /> Refresh</Button></div>{showFilters && <div className="flex flex-wrap gap-2"><select className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50" value={statusFilter} onChange={(event) => handleLeadStatusFilterChange(event.target.value as LeadStatus | 'All')}><option value="All">All statuses</option>{[...statuses, 'Client' as const].map((status) => <option key={status} value={status}>{status}</option>)}</select><select className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50" value={sourceFilter} onChange={(event) => handleLeadSourceFilterChange(event.target.value)}><option value="All">All sources</option>{activeSources.map((source) => <option key={source} value={source}>{source}</option>)}</select></div>}</Card>
+      {canManage && <BulkActionToolbar selectedCount={selectedMatchingLeadIds.length} matchingCount={selectableLeadRows.length} action={bulkLeadAction} actions={leadBulkActions} processing={bulkLeadBusy} onSelectAllMatching={selectAllMatchingLeads} onActionChange={(action) => setBulkLeadAction(action as BulkLifecycleAction)} onApply={() => void runBulkLeadPreview()} onClear={() => setSelectedLeadIds(new Set())} />}
+      <Card className="overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-none">
+        {(!workspaceReady || leadsLoading) ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-slate-500">{workspaceLoading ? 'Workspace is still loading…' : currentOrganizationId ? 'Loading leads…' : 'No active organization is available for Leads.'}</p> : filteredLeads.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{error ? 'Leads could not be loaded.' : searchTerm || leadView !== 'All' || statusFilter !== 'All' || sourceFilter !== 'All' ? 'No leads match your search or filters.' : <>No leads yet.<span className="mt-1 block text-xs font-normal text-slate-400">Add your first lead to start tracking prospects.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain"><table className="w-full min-w-[900px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left"><colgroup><col style={{ width: '3%' }} /><col style={{ width: '20%' }} /><col style={{ width: '18%' }} /><col style={{ width: '24%' }} /><col style={{ width: '12%' }} /><col style={{ width: '13%' }} /><col style={{ width: '10%' }} /></colgroup><thead className="bg-slate-50"><tr className="border-b border-slate-200 bg-slate-50"><th scope="col" className="w-10 px-2 py-2.5"><input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-blue-600" checked={allVisibleLeadsSelected} ref={(element) => { if (element) element.indeterminate = someVisibleLeadsSelected; }} onChange={toggleAllVisibleLeads} aria-checked={someVisibleLeadsSelected ? "mixed" : allVisibleLeadsSelected} aria-label="Select all visible Leads" /></th><SortableColumnHeader label="Lead Name" direction={leadSort?.key === 'name' ? leadSort.direction : undefined} onSort={() => handleLeadSort('name')} fullWidth /><SortableColumnHeader label="Company" direction={leadSort?.key === 'company' ? leadSort.direction : undefined} onSort={() => handleLeadSort('company')} fullWidth /><SortableColumnHeader label="Contact" direction={leadSort?.key === 'contact' ? leadSort.direction : undefined} onSort={() => handleLeadSort('contact')} fullWidth /><SortableColumnHeader label="Source" direction={leadSort?.key === 'source' ? leadSort.direction : undefined} onSort={() => handleLeadSort('source')} fullWidth /><SortableColumnHeader label="Status" direction={leadSort?.key === 'status' ? leadSort.direction : undefined} onSort={() => handleLeadSort('status')} fullWidth /><th scope="col" className="whitespace-nowrap px-4 py-4 text-right text-xs font-bold uppercase text-slate-500"><span>Action</span></th></tr></thead><tbody className="divide-y divide-slate-200/80">{currentPageLeadRows.map((lead) => <tr key={lead.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) openDetails(lead); }} className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${selectedLeadIds.has(lead.id) ? 'bg-blue-50/40' : ''}`}><td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedLeadIds.has(lead.id)} onChange={() => toggleLeadSelection(lead.id)} aria-label={`Select ${lead.name}`} className="h-4 w-4 rounded border-slate-300 accent-blue-600" /></td><td className="min-w-0 px-4 py-2.5 align-middle"><p className="truncate font-semibold leading-5 text-slate-900">{lead.name}</p></td><td className="min-w-0 px-4 py-2.5 align-middle text-sm leading-5 text-slate-600"><span className="line-clamp-2 break-words">{lead.company || '—'}</span></td><td className="min-w-0 pl-4 pr-2 py-2.5 align-middle text-xs leading-4 text-slate-500"><div className="flex min-w-0 items-center gap-1"><Mail className="shrink-0" size={12} /><span className="truncate">{lead.email}</span></div><div className="mt-0 flex min-w-0 items-center gap-1"><Phone className="shrink-0" size={12} /><span className="truncate">{lead.phone || '—'}</span></div></td><td className="min-w-0 pl-2 pr-4 py-2.5 align-middle text-sm text-slate-600"><span className="block truncate">{lead.source || '—'}</span></td><td className="px-4 py-2.5 align-middle">{lead.status === 'Client' ? <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">Converted</span> : <select aria-label={`Status for ${lead.name}`} value={lead.status} disabled={!canEditLead(lead) || busyLeadId === lead.id} onChange={(event) => void handleStatusChange(lead, event.target.value as LeadStatus)} className="h-8 min-w-[100px] max-w-[124px] rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50 disabled:cursor-not-allowed disabled:bg-slate-100">{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select>}</td><td className="whitespace-nowrap px-4 py-2.5 text-right align-middle"><div className="flex justify-end gap-0.5">{canEditLead(lead) && lead.status !== 'Client' && <IconActionButton icon={<Edit size={15} />} label="Edit Lead" onClick={() => { setSelectedLead(lead); setEditForm({ name: lead.name, email: lead.email, phone: lead.phone, company: lead.company || "", source: lead.source, assignedToUid: lead.assignedToUid || lead.assignedTo || "", assignedToName: lead.assignedToName || "" }); setShowEditModal(true); }} />}{canEditLead(lead) && <IconActionButton icon={<Archive size={15} />} label="Archive Lead" variant="danger" disabled={busyLeadId === lead.id} onClick={() => void handleArchive(lead)} />}{lead.status === 'Client' && lead.convertedClientId && <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => openConvertedClient(lead)} />}{lead.status !== 'Client' && canManage && <IconActionButton icon={<UserPlus size={15} />} label="Convert to Client" variant="success" onClick={() => void handleStatusChange(lead, "Client")} />}</div></td></tr>)}</tbody></table></div>}
+        {!showArchived && !showTrash && <TablePagination page={safeLeadPage} pageSize={leadPageSize} totalCount={filteredLeads.length} hasMore={leadsHasMore} onPageChange={setLeadPage} onPageSizeChange={(nextPageSize) => { setLeadPageSize(nextPageSize); setLeadPage(1); }} />}
       </Card>
-      {!showArchived && leadsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreLeads()} disabled={leadsLoading}>{leadsLoading ? 'Loading…' : 'Load More Leads'}</Button></div>}
-      {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Leads</div>{archivedLeads.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived leads.</p> : <div className="divide-y divide-slate-100">{archivedLeads.map((lead) => <div key={lead.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-sm text-slate-500">{lead.company || lead.email}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Lead" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: lead.id, name: lead.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Delete Lead permanently" variant="danger" onClick={() => setConfirmAction({ kind: "delete", id: lead.id, name: lead.name })} />}</div></div>)}</div>}{archivedLeadsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedLeads()}>Load More</Button></div>}</Card>}
-      {confirmAction && <ConfirmActionDialog open title={`${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.kind === 'archive' ? 'This lead will be moved to Archived and can be restored later.' : confirmAction.kind === 'restore' ? 'This lead will be restored to the active list.' : 'This action cannot be undone. This archived lead will be permanently deleted.'} confirmLabel={confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={confirmAction.kind === 'delete' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
+      {!showArchived && !showTrash && leadsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreLeads()} disabled={leadsLoading}>{leadsLoading ? 'Loading…' : 'Load More Leads'}</Button></div>}
+      {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Leads</div>{displayedArchivedLeads.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived leads.</p> : <div className="divide-y divide-slate-100">{displayedArchivedLeads.map((lead) => <div key={lead.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className="text-sm text-slate-500">{lead.company || lead.email}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Lead" variant="success" disabled={busyLeadId === lead.id} onClick={() => setConfirmAction({ kind: "restore", id: lead.id, name: lead.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Move Lead to Trash" variant="danger" disabled={busyLeadId === lead.id} onClick={() => void handleTrash(lead)} />}</div></div>)}</div>}{archivedLeadsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedLeads()}>Load More</Button></div>}</Card>}
+      {showTrash && <Card className="p-0"><div className="border-b bg-red-50 px-6 py-3 text-sm font-semibold text-red-800">Lead Trash</div>{displayedTrashedLeads.length === 0 ? <p className="p-6 text-sm text-slate-500">Trash is empty.</p> : <div className="divide-y divide-slate-100">{displayedTrashedLeads.map((lead) => { const decision = trashDecisions[lead.id]; const blocked = decision?.outcome === 'BLOCKED'; const blockers = decision ? Object.entries(decision.blockingRecords).map(([label, count]) => `${count} ${label}`).join(', ') : ''; return <div key={lead.id} className="flex items-center justify-between px-6 py-4"><div><p className="font-semibold text-slate-900">{lead.name}</p><p className={`text-sm ${blocked ? 'text-red-700' : 'text-slate-500'}`}>{blocked ? `Deletion blocked — ${blockers}.` : decision?.outcome === 'ALLOWED_WITH_WARNING' ? 'Ready to delete with cleanup warning.' : 'Deletion status will be checked before confirmation.'}</p></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Lead from Trash" variant="success" disabled={busyLeadId === lead.id} onClick={() => setConfirmAction({ kind: "restore", id: lead.id, name: lead.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label={blocked ? 'View deletion block' : decision ? 'Delete Lead permanently' : 'Check deletion'} variant="danger" disabled={busyLeadId === lead.id} onClick={() => void handlePermanentDelete(lead)} />}</div></div>; })}</div>}{trashedLeadsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreTrashedLeads()}>Load More</Button></div>}</Card>}
+      {confirmAction && <ConfirmActionDialog open title={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Permanent deletion blocked' : `${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.decision ? `${confirmAction.decision.reason} ${Object.entries(confirmAction.decision.blockingRecords).map(([label, count]) => `Blocking: ${count} ${label}`).join(', ')} ${Object.entries(confirmAction.decision.cleanupRecords).map(([label, count]) => `${count} ${label}`).join(', ')} ${Object.entries(confirmAction.decision.preservedRecords).map(([label, value]) => `${label}${typeof value === 'number' ? ` (${value})` : ` “${value}”`}`).join(', ')} ${confirmAction.decision.recommendedAction}` : confirmAction.kind === 'restore' ? 'This lead will be restored to the active list without changing related record state.' : 'This action cannot be undone.'} confirmLabel={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Unavailable' : confirmBusy ? confirmAction.kind === 'archive' ? 'Archiving' : confirmAction.kind === 'trash' ? 'Moving to Trash' : confirmAction.kind === 'restore' ? 'Restoring' : 'Deleting' : confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} confirmDisabled={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED'} variant={confirmAction.kind === 'delete' || confirmAction.kind === 'trash' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
+      {bulkLeadConfirmation && <ConfirmActionDialog open title={(bulkLeadConfirmation.action === 'permanent-delete' ? 'Permanently delete' : bulkLeadConfirmation.action === 'restore' ? 'Restore' : bulkLeadConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive') + ' ' + bulkLeadConfirmation.ids.length + ' Leads?'} description={'Preview: ' + (bulkLeadConfirmation.ids.length - bulkLeadBlocked) + ' ready, ' + bulkLeadBlocked + ' blocked or unavailable. ' + bulkLeadPreviewDescription + (bulkLeadConfirmation.action === 'permanent-delete' && bulkLeadAffected > 0 ? ` Total eligible related records: ${bulkLeadAffected}.` : '')} confirmLabel={bulkLeadConfirmation.action === 'permanent-delete' ? 'Delete Permanently' : bulkLeadConfirmation.action === 'restore' ? 'Restore' : bulkLeadConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive'} variant={bulkLeadConfirmation.action === 'permanent-delete' || bulkLeadConfirmation.action === 'trash' ? 'danger' : bulkLeadConfirmation.action === 'archive' ? 'warning' : 'default'} loading={bulkLeadBusy} onCancel={() => setBulkLeadConfirmation(null)} onConfirm={() => void executeBulkLeadAction()} />}
       {showAddModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><form onSubmit={handleSubmit} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl"><h3 className="text-lg font-bold text-slate-900">Add New Lead</h3><LeadFields form={form} setForm={setForm} users={users} usersLoading={usersLoading} /><div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Lead'}</Button></div></form></div>}
       {showEditModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"><form onSubmit={handleEdit} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl"><h3 className="text-lg font-bold text-slate-900">Edit Lead</h3><LeadFields form={editForm} setForm={setEditForm} users={users} usersLoading={usersLoading} /><div className="flex justify-end gap-3 pt-4"><Button type="button" variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Update Lead'}</Button></div></form></div>}
       {showDetails && selectedLead && user && currentOrganizationId && <LeadDetailsModal key={selectedLead.id} lead={selectedLead} user={user} organizationId={currentOrganizationId} canWrite={canWrite} tasks={leadTasks} tasksLoading={leadTasksLoading} tasksError={leadTasksError} onLoadTasks={loadLeadTasks} onAddTask={async (task) => { await addTask(task); await loadLeadTasks(selectedLead.id); }} onCompleteTask={completeTask} timezone={settings.timezone} onClose={closeDetails} />}

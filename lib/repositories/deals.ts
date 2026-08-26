@@ -1,8 +1,8 @@
-import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, updateDoc, where, writeBatch, type DocumentData } from 'firebase/firestore';
+import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where, writeBatch, type DocumentData } from 'firebase/firestore';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
 import { db } from '@/lib/firebase/client';
-import type { AppUser } from '@/types/auth';
+import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Deal } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { DEAL_ACTIVE_STAGES, getDealStatusForStage } from '@/lib/deal-workflow';
@@ -65,10 +65,10 @@ async function requireActiveUser(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId);
 }
 
-async function requireDealManager(user: AppUser | null, organizationId: string, deal?: Deal) {
+async function requireDealManager(user: AppUser | null, organizationId: string, deal?: Deal): Promise<OrganizationMembership> {
   const { membership } = await requireOrganizationAccess(user, organizationId);
-  if (['ADMIN', 'MANAGER'].includes(membership.role)) return;
-  if (membership.role === 'USER' && deal?.assignedToUid === user?.uid) return;
+  if (['ADMIN', 'MANAGER'].includes(membership.role)) return membership;
+  if (membership.role === 'USER' && deal?.assignedToUid === user?.uid) return membership;
   throw new Error('You do not have permission to manage this deal.');
 }
 
@@ -84,6 +84,12 @@ async function requireExistingClient(organizationId: string, clientId: string) {
   if (!clientSnapshot.exists() || clientSnapshot.data().status === 'ARCHIVED') throw new Error('The selected client is not available.');
 }
 
+async function getDealById(organizationId: string, dealId: string) {
+  const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId));
+  if (!snapshot.exists()) throw new Error('The deal was not found.');
+  return mapDeal(snapshot.id, snapshot.data());
+}
+
 export async function listDeals(user: AppUser | null, organizationId: string, pageSize = PIPELINE_DEAL_LIMIT) {
   const { membership } = await requireOrganizationAccess(user, organizationId);
   try {
@@ -97,7 +103,7 @@ export async function listDeals(user: AppUser | null, organizationId: string, pa
 }
 
 export async function createDeal(user: AppUser | null, organizationId: string, input: DealInput) {
-  await requireDealManager(user, organizationId);
+  const membership = await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a deal.');
   if (!input.title.trim() || !input.clientId || !Number.isFinite(input.value) || input.value < 0) throw new Error('Deal details are incomplete.');
   validateDealState(input.stage, 'Active');
@@ -108,7 +114,7 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
     throw error;
   }
 
-  const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName);
+  const assignment = await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName, membership);
   let dealRef;
   let dealPath = '';
   let timelinePath = '';
@@ -134,7 +140,7 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
     const batch = writeBatch(db);
     batch.set(dealRef, dealData);
     batch.set(dealSystemTimelineRef(organizationId, dealRef.id, 'system-created'), dealSystemTimelineData(user, 'Deal created.'));
-    addActivityToBatch(batch, organizationId, user, { type: 'deal_creation', description: `New deal created: ${input.title}`, entityType: 'Deal', entityId: dealRef.id });
+    addActivityToBatch(batch, organizationId, user, { type: 'deal_creation', description: `New deal created: ${input.title}`, entityType: 'Deal', entityId: dealRef.id, metadata: { clientId: input.clientId, dealId: dealRef.id } });
     await batch.commit();
   } catch (error) {
     reportFirestoreFailure('create', error, {
@@ -182,18 +188,23 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
       updatedAt: serverTimestamp(),
       updatedBy: user.uid,
     });
+    const dealWasTerminal = deal.status === 'Won' || deal.status === 'Lost';
     if (deal.stage !== input.stage) {
       const stageKey = `system-stage-${encodeURIComponent(deal.stage)}-to-${encodeURIComponent(input.stage)}`;
-      const description = nextStatus === 'Won'
-        ? 'Deal won.'
-        : nextStatus === 'Lost'
-          ? `Deal lost. Reason: ${nextLossReason}`
-          : `Stage changed: ${deal.stage} → ${input.stage}`;
+      const isReopened = dealWasTerminal && nextStatus === 'Active';
+      const description = isReopened
+        ? `Deal reopened: ${deal.stage} → ${input.stage}`
+        : nextStatus === 'Won'
+          ? `Deal won: ${input.title} — ${input.value}`
+          : nextStatus === 'Lost'
+            ? `Deal lost: ${input.title}. Reason: ${nextLossReason}`
+            : `Stage changed: ${deal.stage} → ${input.stage}`;
       batch.set(dealSystemTimelineRef(organizationId, deal.id, stageKey), dealSystemTimelineData(user, description));
-      const activityType = nextStatus === 'Won' ? 'deal_won' : nextStatus === 'Lost' ? 'deal_lost' : 'stage_change';
-      addActivityToBatch(batch, organizationId, user, { type: activityType, description, entityType: 'Deal', entityId: deal.id, ...(nextStatus === 'Lost' ? { metadata: { reason: nextLossReason } } : {}) });
+      const activityType = isReopened ? 'deal_reopened' : nextStatus === 'Won' ? 'deal_won' : nextStatus === 'Lost' ? 'deal_lost' : 'stage_change';
+      addActivityToBatch(batch, organizationId, user, { type: activityType, description, entityType: 'Deal', entityId: deal.id, metadata: { clientId: deal.clientId, dealId: deal.id, ...(nextStatus === 'Lost' ? { reason: nextLossReason } : {}) } });
     } else {
-      addActivityToBatch(batch, organizationId, user, { type: nextStatus === 'Won' ? 'deal_won' : nextStatus === 'Lost' ? 'deal_lost' : 'deal_update', description: `Deal "${input.title}" updated`, entityType: 'Deal', entityId: deal.id });
+      batch.set(dealSystemTimelineRef(organizationId, deal.id, `edit-${Date.now()}`), dealSystemTimelineData(user, `Deal edited: ${input.title}`));
+      addActivityToBatch(batch, organizationId, user, { type: 'deal_update', description: `Deal edited: ${input.title}`, entityType: 'Deal', entityId: deal.id, metadata: { clientId: deal.clientId, dealId: deal.id } });
     }
     await batch.commit();
   } catch (error) {
@@ -218,10 +229,15 @@ export async function updateDealStage(user: AppUser | null, organizationId: stri
 }
 
 export async function archiveDeal(user: AppUser | null, organizationId: string, dealId: string) {
-  await requireDealManager(user, organizationId);
+  const deal = await getDealById(organizationId, dealId);
+  await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to archive a deal.');
   try {
-    await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    const batch = writeBatch(db);
+    batch.update(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    batch.set(dealSystemTimelineRef(organizationId, dealId, 'archived'), dealSystemTimelineData(user, `Deal archived: ${deal.title}`));
+    addActivityToBatch(batch, organizationId, user, { type: 'deal_archive', description: `Deal archived: ${deal.title}`, entityType: 'Deal', entityId: dealId, metadata: { clientId: deal.clientId, dealId } });
+    await batch.commit();
   } catch (error) {
     reportFirestoreFailure('archive', error);
     throw error;
@@ -244,15 +260,20 @@ export async function listArchivedDeals(user: AppUser | null, organizationId: st
 
 export async function countActiveDeals(user: AppUser | null, organizationId: string) {
   const { membership } = await requireOrganizationAccess(user, organizationId);
-  const constraints = [where('archived', '==', false), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [])] as const;
+  const constraints = [where('archived', '==', false), where('status', '==', 'Active'), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [])] as const;
   const snapshot = await getAggregateFromServer(query(organizationCollection<DocumentData>(db, organizationId, 'deals'), ...constraints), { count: count() });
   return snapshot.data().count;
 }
 
 export async function restoreDeal(user: AppUser | null, organizationId: string, dealId: string) {
-  await requireDealManager(user, organizationId);
+  const deal = await getDealById(organizationId, dealId);
+  await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to restore a deal.');
-  await updateDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  const batch = writeBatch(db);
+  batch.update(organizationDocumentInCollection(db, organizationId, 'deals', dealId), { archived: false, archivedAt: null, archivedBy: null, updatedAt: serverTimestamp(), updatedBy: user.uid });
+  batch.set(dealSystemTimelineRef(organizationId, dealId, 'restored'), dealSystemTimelineData(user, `Deal restored: ${deal.title}`));
+  addActivityToBatch(batch, organizationId, user, { type: 'deal_restore', description: `Deal restored: ${deal.title}`, entityType: 'Deal', entityId: dealId, metadata: { clientId: deal.clientId, dealId } });
+  await batch.commit();
 }
 
 export async function permanentlyDeleteDeal(user: AppUser | null, organizationId: string, dealId: string) {

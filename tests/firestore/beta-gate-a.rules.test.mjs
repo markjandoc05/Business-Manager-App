@@ -87,7 +87,7 @@ test('matching atomic Deal transition and system activity is allowed', async () 
   const batch = writeBatch(db);
   batch.update(doc(db, `organizations/${ORG_A}/deals/deal-a`), { stage: 'Won', status: 'Won', wonAt: serverTimestamp(), lostAt: null, lossReason: null, updatedAt: serverTimestamp(), updatedBy: ADMIN });
   batch.set(doc(db, `organizations/${ORG_A}/activities/deal-won`), {
-    type: 'deal_won', description: 'Deal won.', entityType: 'Deal', entityId: 'deal-a', createdAt: serverTimestamp(), createdBy: ADMIN,
+    type: 'deal_won', description: 'Deal won.', entityType: 'Deal', entityId: 'deal-a', metadata: { clientId: 'client-a', dealId: 'deal-a' }, createdAt: serverTimestamp(), createdBy: ADMIN,
   });
   await assertSucceeds(batch.commit());
 });
