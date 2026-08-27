@@ -4,6 +4,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
+import { MobileQuickActionMenu } from '@/components/MobileQuickActionMenu';
+import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { useApp } from '@/context/AppContext';
 import { 
   Search, 
@@ -927,7 +929,7 @@ export default function ClientsPage() {
       {selectedClient ? (
         <div className={`space-y-6 ${selectedMatchingClientIds.length > 0 ? 'pb-24' : ''}`}>
           {/* Back Button & Header */}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="relative flex flex-col gap-4 pr-12 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0">
               <Button variant="ghost" onClick={() => setSelectedClientId(null)} className="-ml-2 mb-2 w-fit gap-2 px-2 text-slate-500">
                 <ArrowLeft size={16} /> Back to Clients
@@ -956,6 +958,7 @@ export default function ClientsPage() {
                 <Plus size={16} /> Add Deal
               </Button>}
             </div>
+            <div className="absolute right-0 top-0"><ModalCloseButton onClose={() => setSelectedClientId(null)} /></div>
           </div>
 
           {/* Client Summary Banner */}
@@ -985,7 +988,7 @@ export default function ClientsPage() {
           </Card>
 
           {/* Profile Navigation Tabs */}
-          <div className="flex border-b border-slate-200 gap-6" aria-busy={clientTabCountsLoading}>
+          <div className="client-profile-tabs flex border-b border-slate-200 gap-6" aria-busy={clientTabCountsLoading}>
             {[
               { id: 'overview', label: 'Overview' },
                 { id: 'deals', label: `Deals (${displayedClientTabCounts ? displayedClientTabCounts.deals : '—'})` },
@@ -997,7 +1000,7 @@ export default function ClientsPage() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`pb-3 font-semibold text-sm transition-colors border-b-2 -mb-px ${
+                className={`client-profile-tab whitespace-nowrap pb-3 font-semibold text-sm transition-colors border-b-2 -mb-px ${
                   activeTab === tab.id 
                     ? 'border-blue-600 text-blue-600' 
                     : 'border-transparent text-slate-500 hover:text-slate-800'
@@ -1120,9 +1123,9 @@ export default function ClientsPage() {
       ) : (
         /* Client List View */
         <div className="space-y-6">
-          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}<Button variant="outline" onClick={toggleTrash}>{showTrash ? 'Active Clients' : 'Trash'}</Button>{canManage && <Button disabled={showArchived || showTrash} onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} />
+          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}<Button variant="outline" onClick={toggleTrash}>{showTrash ? 'Active Clients' : 'Trash'}</Button>{canManage && <Button onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} mobileQuickActions={<MobileQuickActionMenu items={[{ label: 'Add Client', onSelect: openAddClient, disabled: !canManage }, { label: 'Archived', onSelect: toggleArchived }, { label: 'Trash', onSelect: toggleTrash }]} />} />
 
-          <Card className="flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
+          <Card className="page-filter-panel flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
             <div className="relative min-w-0 flex-1 md:min-w-[240px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
               <input
@@ -1159,7 +1162,7 @@ export default function ClientsPage() {
           {/* Client Table */}
           {!showArchived && !showTrash && <Card className="overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-none">
             {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-slate-400">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
-              <table className="w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
+              <table className="clients-data-table w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
                 <colgroup>
                   <col style={{ width: '3%' }} />
                   <col style={{ width: '18%' }} />
@@ -1187,7 +1190,7 @@ export default function ClientsPage() {
                     return (
                       <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) setSelectedClientId(client.id); }} className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${selectedClientIds.has(client.id) ? 'bg-blue-50/40' : ''}`}>
                         <td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} className="h-4 w-4 rounded border-slate-300 accent-blue-600" /></td>
-                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="block max-w-full truncate text-left font-semibold leading-5 text-slate-900 hover:text-blue-600">{client.name}</button></td>
+                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="block max-w-full truncate text-left font-normal leading-5 text-slate-900 hover:text-blue-600">{client.name}</button></td>
                         <td className="px-4 py-2 align-middle text-sm leading-5 text-slate-600"><span className="line-clamp-2 break-words">{client.company || 'Private'}</span></td>
                         <td className="min-w-0 pl-4 pr-2 py-2 align-middle text-xs leading-4 text-slate-500">
                           <div className="flex min-w-0 items-center gap-1"><Mail className="shrink-0" size={12}/><span className="truncate">{client.email}</span></div>
@@ -1218,7 +1221,7 @@ export default function ClientsPage() {
         {showAddModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <form onSubmit={handleCreateClient} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Add New Client</h3>
+              <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-900">Add New Client</h3><ModalCloseButton onClose={() => setShowAddModal(false)} /></div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-500 uppercase">Client Name</label>
                 <input 

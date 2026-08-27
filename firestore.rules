@@ -357,6 +357,13 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Feedback is written by the authenticated server endpoint so it can
+    // safely enrich submissions and record email delivery status. Browser
+    // clients have no direct read, update, or delete access.
+    match /organizations/{organizationId}/feedback/{feedbackId} {
+      allow read, write: if false;
+    }
+
     match /organizations/{organizationId}/license/{licenseId} {
       allow read: if licenseId == 'current' && organizationCanView(organizationId);
       allow create: if licenseId == 'current'

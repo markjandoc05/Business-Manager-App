@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, type FormEvent } from 'react';
-import { Loader2, NotebookPen, Phone, X } from 'lucide-react';
+import { Loader2, NotebookPen, Phone } from 'lucide-react';
 import { Button, Card, Badge } from '@/components/ui/core';
+import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { TaskCard } from '@/components/TaskCard';
 import { completeLeadTimelineActivity, createLeadTimelineEntry, listLeadTimeline, type LeadTimelineCursor } from '@/lib/repositories/leadTimeline';
 import type { AppUser } from '@/types/auth';
@@ -152,9 +153,9 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, tasks, 
 
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" role="dialog" aria-modal="true" aria-label={`Lead details for ${lead.name}`}>
     <Card className="max-h-[90vh] w-full max-w-2xl overflow-y-auto p-0">
-      <div className="flex flex-col gap-2 border-b border-slate-200 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
-        <div><h3 className="text-xl font-bold text-slate-900">{lead.name}</h3><p className="text-sm text-slate-500">Lead Details</p></div>
-        <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close lead details"><X size={18} /></Button>
+      <div className="flex items-start justify-between gap-3 border-b border-slate-200 p-4 sm:p-5">
+        <div className="min-w-0"><h3 className="break-words text-xl font-bold text-slate-900">{lead.name}</h3><p className="text-sm text-slate-500">Lead Details</p></div>
+        <ModalCloseButton onClose={onClose} />
       </div>
       <div className="space-y-5 p-5">
         <div className="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-4 text-sm sm:grid-cols-4">

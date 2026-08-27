@@ -4,11 +4,11 @@ import React from 'react';
 import { Menu } from 'lucide-react';
 import { useMobileNavigation } from '@/components/MobileNavigationContext';
 
-export function PageHeader({ title, subtitle, actions }: { title: string; subtitle: string; actions?: React.ReactNode }) {
+export function PageHeader({ title, subtitle, actions, mobileQuickActions }: { title: string; subtitle: string; actions?: React.ReactNode; mobileQuickActions?: React.ReactNode }) {
   const mobileNavigation = useMobileNavigation();
 
   return (
-    <header className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <header className={`page-header flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between${mobileQuickActions ? ' page-header-with-mobile-actions' : ''}`}>
       <div className="flex min-w-0 items-start gap-2">
         {mobileNavigation && <button
           id="mobile-navigation-trigger"
@@ -26,7 +26,8 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
           <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
         </div>
       </div>
-      {actions && <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto">{actions}</div>}
+      {actions && <div className={`page-header-actions flex w-full flex-wrap items-center gap-2 sm:w-auto${mobileQuickActions ? ' page-header-actions-with-mobile-menu' : ''}`}>{actions}</div>}
+      {mobileQuickActions}
     </header>
   );
 }

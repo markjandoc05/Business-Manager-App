@@ -26,9 +26,9 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageClients, canManageLeads, canManageTasks } from '@/lib/permissions';
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
-import { getDashboardLeadTotal, loadDashboardMetrics, type DashboardMetrics } from '@/lib/repositories/dashboard';
+import { loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { IconActionButton } from '@/components/IconActionButton';
-import { isToday } from 'date-fns';
+import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
 import { emitStartupTiming, markStartup, observeStartupLcp } from '@/lib/startupTiming';
 
 type DashboardFollowUpItem =
@@ -37,16 +37,43 @@ type DashboardFollowUpItem =
 type PrimaryDashboardCard = 'pipeline' | 'followups';
 type SecondaryDashboardCard = 'leads' | 'clients' | 'deals' | 'activity';
 type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
+type DashboardRangePreset = '7' | '28' | '60' | '365' | 'custom';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
 const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
+const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: string; days?: number }> = [
+  { value: '7', label: '7 Days', days: 7 },
+  { value: '28', label: '28 Days', days: 28 },
+  { value: '60', label: '60 Days', days: 60 },
+  { value: '365', label: '365 Days', days: 365 },
+  { value: 'custom', label: 'Custom' },
+];
 
 function DashboardCurrencyValue({ value, currency }: { value: number; currency: string }) {
+  const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : 'USD';
+  const compactValue = Math.abs(value) >= 1_000_000
+    ? new Intl.NumberFormat(undefined, { style: 'currency', currency: safeCurrency, notation: 'compact', maximumFractionDigits: 2 }).format(value)
+    : null;
+  if (compactValue) return <span className="mt-3 inline-block max-w-full truncate text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]" title={formatCurrency(value, currency)}>{compactValue}</span>;
   const parts = formatCurrencyParts(value, currency);
-  return <span className="mt-3 inline-flex whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">
+  return <span className="mt-3 inline-flex max-w-full whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">
     <span>{parts.beforeDecimal}</span>
     {parts.decimal && <span className="text-[18px] font-semibold align-baseline">{parts.decimal}</span>}
     {parts.afterDecimal && <span>{parts.afterDecimal}</span>}
   </span>;
+}
+
+function getDashboardDateRange(preset: DashboardRangePreset, customStartDate: string, customEndDate: string): DashboardDateRange | null {
+  if (preset === 'custom') {
+    if (!customStartDate || !customEndDate) return null;
+    const start = startOfDay(new Date(`${customStartDate}T00:00:00`));
+    const end = endOfDay(new Date(`${customEndDate}T00:00:00`));
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return null;
+    return { start, end };
+  }
+
+  const days = DASHBOARD_RANGE_OPTIONS.find((option) => option.value === preset)?.days || 28;
+  const end = endOfDay(new Date());
+  return { start: startOfDay(subDays(end, days - 1)), end };
 }
 
 function getDashboardLayoutPreference() {
@@ -72,13 +99,35 @@ export default function DashboardPage() {
   const canManageClientsAction = canManageClients(membership) && canWrite;
   const canManageTasksAction = canManageTasks(membership) && canWrite;
   const [currentTime, setCurrentTime] = useState(() => Date.now());
+  const [rangePreset, setRangePreset] = useState<DashboardRangePreset>('28');
+  const [customStartDate, setCustomStartDate] = useState(() => format(subDays(new Date(), 27), 'yyyy-MM-dd'));
+  const [customEndDate, setCustomEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
   const [kpiCardOrder, setKpiCardOrder] = useState<KpiDashboardCard[]>(() => getDashboardLayoutPreference().kpis);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
   const [dashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const quickActionsMenuRef = useRef<HTMLDivElement>(null);
   const dashboardPaintMeasured = useRef(false);
+  const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
+
+  useEffect(() => {
+    if (!quickActionsOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!quickActionsMenuRef.current?.contains(event.target as Node)) setQuickActionsOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setQuickActionsOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [quickActionsOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
@@ -89,9 +138,14 @@ export default function DashboardPage() {
       setDashboardMetrics(null);
       return;
     }
+    if (!dashboardDateRange) {
+      setDashboardMetrics(null);
+      setDashboardMetricsError('Select a valid custom date range to load Dashboard metrics.');
+      return;
+    }
     setDashboardMetricsError(null);
     try {
-      const metrics = await loadDashboardMetrics(user, currentOrganizationId);
+      const metrics = await loadDashboardMetrics(user, currentOrganizationId, dashboardDateRange);
       setDashboardMetrics(metrics);
       markStartup('dashboard-data-ready');
       emitStartupTiming();
@@ -101,7 +155,7 @@ export default function DashboardPage() {
       setDashboardMetricsError('Dashboard metrics could not be loaded. Please refresh and try again.');
     } finally {
     }
-  }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
+  }, [currentOrganizationId, dashboardDateRange, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -168,22 +222,29 @@ export default function DashboardPage() {
     }
   };
 
+  const openQuickAction = (modal: 'lead' | 'client' | 'task') => {
+    setQuickActionsOpen(false);
+    if (modal === 'lead') setLeadError(null);
+    setActiveModal(modal);
+  };
+
   // KPI Calculations
-  const totalLeads = getDashboardLeadTotal(dashboardMetrics);
+  const isWithinDashboardRange = (value?: string) => {
+    if (!dashboardDateRange || !value) return false;
+    const time = Date.parse(value);
+    return Number.isFinite(time) && time >= dashboardDateRange.start.getTime() && time <= dashboardDateRange.end.getTime();
+  };
+  const totalLeads = dashboardMetrics?.totalLeads ?? leads.filter((lead) => !lead.archived && isWithinDashboardRange(lead.createdAt)).length;
   const openDealStages = new Set(['New', 'Qualified', 'Proposal', 'Negotiation']);
-  const openDeals = deals.filter((deal) => openDealStages.has(deal.stage));
+  const openDeals = deals.filter((deal) => !deal.archived && openDealStages.has(deal.stage) && isWithinDashboardRange(deal.createdAt));
   const activeOpportunities = dashboardMetrics?.activeDeals ?? openDeals.length;
-  const wonDealsCount = dashboardMetrics?.wonDeals ?? deals.filter(d => d.status === 'Won').length;
+  const wonDealsCount = dashboardMetrics?.wonDeals ?? deals.filter((deal) => deal.status === 'Won' && isWithinDashboardRange(deal.wonAt)).length;
   const pipelineValue = dashboardMetrics?.pipelineValue ?? openDeals.reduce((sum, d) => sum + d.value, 0);
 
-  const currentDate = new Date();
   const salesThisMonthFromLoadedDeals = deals
     .filter((deal) => {
       if (deal.status !== 'Won') return false;
-      const createdAt = new Date(deal.createdAt);
-      return !Number.isNaN(createdAt.getTime())
-        && createdAt.getFullYear() === currentDate.getFullYear()
-        && createdAt.getMonth() === currentDate.getMonth();
+      return isWithinDashboardRange(deal.wonAt);
     })
     .reduce((sum, deal) => sum + deal.value, 0);
   const salesThisMonth = dashboardMetrics?.salesThisMonth ?? salesThisMonthFromLoadedDeals;
@@ -242,7 +303,7 @@ export default function DashboardPage() {
     }
   };
 
-  const followUpsDue = dashboardMetrics?.pendingFollowUps ?? followUpItems.length;
+  const followUpsDue = dashboardMetrics?.pendingFollowUps ?? followUpItems.filter((item) => isWithinDashboardRange(item.scheduledAt)).length;
   const sourceBadgeVariant = (source: DashboardFollowUpItem['source']) => source === 'LEAD' ? 'blue' : source === 'CLIENT' ? 'green' : source === 'DEAL' ? 'purple' : 'gray';
 
   const handleCreateLead = async (e: React.FormEvent) => {
@@ -304,54 +365,110 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="space-y-6 pb-8">
-      <PageHeader
-        title="Dashboard"
-        subtitle="Overview of your sales, follow-ups, and activity."
-        actions={<>
-          {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
-          <Button variant="outline" disabled={!canManageClientsAction} onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
-          <Button variant="outline" disabled={!canManageTasksAction} onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
-        </>}
-      />
+    <div className="dashboard-page space-y-3 pb-8 sm:space-y-6">
+      <div className="dashboard-top">
+        <PageHeader
+          title="Dashboard"
+          subtitle="Overview of your sales, follow-ups, and activity."
+          actions={<>
+            <div className="dashboard-desktop-actions hidden w-full gap-2 sm:flex sm:w-auto">
+              {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
+              <Button variant="outline" disabled={!canManageClientsAction} onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
+              <Button variant="outline" disabled={!canManageTasksAction} onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
+            </div>
+            <div ref={quickActionsMenuRef} className="dashboard-mobile-quick-action hidden">
+              <button
+                type="button"
+                aria-label="Quick actions"
+                aria-controls="dashboard-quick-actions-menu"
+                aria-expanded={quickActionsOpen}
+                aria-haspopup="menu"
+                onClick={() => setQuickActionsOpen((open) => !open)}
+                className="dashboard-mobile-quick-action-trigger flex items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+              >
+                <Plus size={20} />
+              </button>
+              {quickActionsOpen && <div id="dashboard-quick-actions-menu" role="menu" aria-label="Quick actions menu" className="dashboard-quick-actions-menu">
+                <button type="button" role="menuitem" onClick={() => openQuickAction('lead')} disabled={!canManage || !workspaceReady}>Add Lead</button>
+                <button type="button" role="menuitem" onClick={() => openQuickAction('client')} disabled={!canManageClientsAction}>Add Client</button>
+                <button type="button" role="menuitem" onClick={() => openQuickAction('task')} disabled={!canManageTasksAction}>Add Task</button>
+              </div>}
+            </div>
+          </>}
+        />
+      </div>
 
       {/* KPI Cards Grid (6 cards required) */}
-      <div data-startup-lcp="dashboard-kpi" className="-mx-1 overflow-x-auto px-1 pb-1">
-        <div className="grid min-w-[1120px] grid-cols-6 gap-3">
+      <div className="space-y-3">
+        <div className="dashboard-key-metrics-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="dashboard-key-metrics-title">
+            <h2 className="text-sm font-semibold text-slate-800">Key Metrics</h2>
+            <p className="text-xs text-slate-500">{dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid date range'}</p>
+          </div>
+          <div className="dashboard-range-selector -mx-1 overflow-x-auto px-1 pb-1" role="group" aria-label="Dashboard time range">
+            <div className="dashboard-range-selector-inner flex min-w-max gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+              {DASHBOARD_RANGE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={rangePreset === option.value}
+                  onClick={() => setRangePreset(option.value)}
+                  className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30', rangePreset === option.value ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50')}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {rangePreset === 'custom' && (
+          <div className="dashboard-custom-date-range flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-end">
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-slate-600">
+              Start Date
+              <input type="date" value={customStartDate} onChange={(event) => setCustomStartDate(event.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+            </label>
+            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-slate-600">
+              End Date
+              <input type="date" value={customEndDate} onChange={(event) => setCustomEndDate(event.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+            </label>
+          </div>
+        )}
+      </div>
+      <div data-startup-lcp="dashboard-kpi" className="dashboard-kpi-grid grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-6">
         <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Users size={14} /></span><span>Leads</span></div>
-          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{totalLeads}</span>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{totalLeads}</span>
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Potential customers</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="openDealsKpi" order={kpiCardOrder.indexOf('openDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('openDealsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-indigo-50 p-1 text-indigo-600"><TrendingUp size={14} /></span><span>Open Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{activeOpportunities}</span>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{activeOpportunities}</span>
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Deals currently in progress</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="followupsKpi" order={kpiCardOrder.indexOf('followupsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followupsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-orange-50 p-1 text-orange-600"><Clock size={14} /></span><span>Follow-ups Due</span></div>
-          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{followUpsDue}</span>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{followUpsDue}</span>
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Tasks needing your attention</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="wonDealsKpi" order={kpiCardOrder.indexOf('wonDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('wonDealsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-green-50 p-1 text-green-600"><CheckCircle2 size={14} /></span><span>Won Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-[28px] font-semibold leading-none tracking-tight text-slate-900 tabular-nums">{wonDealsCount}</span>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{wonDealsCount}</span>
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Successfully closed deals</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="potentialSalesKpi" order={kpiCardOrder.indexOf('potentialSalesKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('potentialSalesKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-purple-50 p-1 text-purple-600"><DollarSign size={14} /></span><span>Potential Sales</span></div>
           <DashboardCurrencyValue value={pipelineValue} currency={settings.currency} />
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Total value of open deals</p>
@@ -359,13 +476,12 @@ export default function DashboardPage() {
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="salesMonthKpi" order={kpiCardOrder.indexOf('salesMonthKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('salesMonthKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[128px] flex-col rounded-[14px] p-3.5 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:p-4">
+        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
           <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Briefcase size={14} /></span><span>Sales This Month</span></div>
           <DashboardCurrencyValue value={salesThisMonth} currency={settings.currency} />
           <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Sales closed this month</p>
         </Card>
         </MovableDashboardCard>
-        </div>
       </div>
 
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}

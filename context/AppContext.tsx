@@ -925,7 +925,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!workspaceReady || !currentOrganizationId) throw new Error('No active organization is available. Please contact an administrator.');
     const newLead = await createLeadRepository(user, currentOrganizationId, { ...leadData, assignedToUid: leadData.assignedToUid || '', assignedToName: leadData.assignedToName || '' });
     invalidateDashboardMetrics(currentOrganizationId);
-    setLeads(prev => [newLead, ...prev]);
+    setLeads(prev => dedupeLeadsById([newLead, ...prev]).filter(isActiveLead));
     setLeadsOrganizationId(currentOrganizationId);
   };
 

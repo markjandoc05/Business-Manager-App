@@ -11,6 +11,7 @@ import {
   CheckSquare, 
   BarChart3, 
   Settings,
+  MessageCircleQuestion,
   PanelLeftClose,
   PanelLeftOpen,
   Briefcase,
@@ -18,6 +19,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { MobileNavigationProvider } from '@/components/MobileNavigationContext';
+import { SecurityTrustFooter } from '@/components/SecurityTrustFooter';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { canManageSettings } from '@/lib/permissions';
@@ -31,6 +33,7 @@ const baseSidebarItems = [
   { section: 'SALES', name: 'Tasks', icon: CheckSquare, href: '/tasks' },
   { section: 'INSIGHTS', name: 'Reports', icon: BarChart3, href: '/reports' },
   { section: 'WORKSPACE', name: 'Settings', icon: Settings, href: '/settings' },
+  { section: 'WORKSPACE', name: 'Feedback & Support', icon: MessageCircleQuestion, href: '/feedback' },
 ];
 
 const SIDEBAR_PREFERENCE_KEY = 'bsm_sidebar_collapsed';
@@ -223,11 +226,12 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
       {/* Main Content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 2xl:p-8">
+        <main className="app-main-content min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 2xl:p-8">
           <div className="mx-auto w-full min-w-0 max-w-[1536px]">
             {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
             {isReadOnly && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{licenseState.status === 'UNKNOWN' ? 'Subscription status could not be verified. This workspace is temporarily read-only.' : licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
             {children}
+            <SecurityTrustFooter />
           </div>
         </main>
       </div>
