@@ -57,18 +57,18 @@ export default function FeedbackPage() {
     <div className="space-y-5">
       <PageHeader title="Feedback & Support" subtitle="Found an issue or have a suggestion? Let us know." />
       <Card className="max-w-2xl p-4 sm:p-5">
-        <div className="mb-4 flex items-center gap-2 text-slate-900">
-          <MessageCircleQuestion size={20} className="text-blue-600" aria-hidden="true" />
+        <div className="mb-4 flex items-center gap-2 text-[var(--app-text)]">
+          <MessageCircleQuestion size={20} className="text-[var(--app-primary)]" aria-hidden="true" />
           <h2 className="text-base font-semibold">Send feedback</h2>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label htmlFor="feedback-type" className="text-sm font-medium text-slate-700">Type <span className="text-red-500" aria-hidden="true">*</span></label>
+            <label htmlFor="feedback-type" className="text-sm font-medium text-[var(--app-text)]">Type <span className="text-[var(--app-danger)]" aria-hidden="true">*</span></label>
             <select
               id="feedback-type"
               value={type}
               onChange={(event) => setType(event.target.value as FeedbackType)}
-              className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition-colors focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
+              className="h-9 w-full rounded-md border border-[var(--app-border)] bg-white px-3 text-sm text-[var(--app-text)] outline-none transition-colors focus:border-[var(--app-primary)] focus:ring-2 focus:ring-[var(--app-primary)]/20"
               required
               disabled={isSubmitting}
             >
@@ -76,21 +76,21 @@ export default function FeedbackPage() {
             </select>
           </div>
           <div className="space-y-1.5">
-            <label htmlFor="feedback-message" className="text-sm font-medium text-slate-700">Message <span className="text-red-500" aria-hidden="true">*</span></label>
+            <label htmlFor="feedback-message" className="text-sm font-medium text-[var(--app-text)]">Message <span className="text-[var(--app-danger)]" aria-hidden="true">*</span></label>
             <textarea
               id="feedback-message"
               value={message}
               onChange={(event) => setMessage(event.target.value)}
-              className="min-h-32 w-full resize-y rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition-colors placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20"
+              className="min-h-32 w-full resize-y rounded-md border border-[var(--app-border)] bg-white px-3 py-2 text-sm text-[var(--app-text)] outline-none transition-colors placeholder:text-[var(--app-tertiary)] focus:border-[var(--app-primary)] focus:ring-2 focus:ring-[var(--app-primary)]/20"
               placeholder="Tell us how we can help."
               maxLength={5000}
               required
               disabled={isSubmitting}
             />
           </div>
-          {notice && <p className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700" role="status">{notice}</p>}
-          {emailWarning && <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800" role="status">{emailWarning}</p>}
-          {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p>}
+          {notice && <p className="rounded-md bg-[var(--app-accent-soft)] px-3 py-2 text-sm text-[var(--app-primary)]" role="status">{notice}</p>}
+          {emailWarning && <p className="rounded-md bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] px-3 py-2 text-sm text-[var(--app-text)]" role="status">{emailWarning}</p>}
+          {error && <p className="rounded-md bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] px-3 py-2 text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
           <Button type="submit" disabled={isSubmitting || !message.trim()}>{isSubmitting ? 'Submitting…' : 'Submit'}</Button>
         </form>
       </Card>

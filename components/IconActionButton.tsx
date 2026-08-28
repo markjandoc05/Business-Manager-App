@@ -58,18 +58,18 @@ export function IconActionButton({ icon, label, onClick, onPointerDown, disabled
   }, [tooltipVisible]);
 
   const variants: Record<IconActionVariant, string> = {
-    default: 'text-slate-500 hover:bg-slate-100 hover:text-slate-800',
-    primary: 'text-blue-600 hover:bg-blue-50 hover:text-blue-700',
-    danger: 'text-slate-400 hover:bg-red-50 hover:text-red-600',
-    success: 'text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700',
+    default: 'text-[var(--app-muted)] hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-text)]',
+    primary: 'text-[var(--app-primary)] hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-primary-hover)]',
+    danger: 'text-[var(--app-muted)] hover:bg-[color-mix(in_srgb,var(--app-danger)_10%,white)] hover:text-[var(--app-danger)]',
+    success: 'text-[var(--app-primary)] hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-primary-hover)]',
   };
 
   return <span className="group relative inline-flex" onMouseEnter={() => setTooltipVisible(true)} onMouseLeave={() => setTooltipVisible(false)}>
-    <button ref={buttonRef} type={type} aria-label={label} aria-describedby={tooltipVisible ? tooltipId : undefined} onFocus={() => setTooltipVisible(true)} onBlur={() => setTooltipVisible(false)} onClick={onClick} onPointerDown={onPointerDown} disabled={disabled} className={cn('inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:pointer-events-none disabled:opacity-40', variants[variant], className)}>
+    <button ref={buttonRef} type={type} aria-label={label} aria-describedby={tooltipVisible ? tooltipId : undefined} onFocus={() => setTooltipVisible(true)} onBlur={() => setTooltipVisible(false)} onClick={onClick} onPointerDown={onPointerDown} disabled={disabled} className={cn('app-icon-button inline-flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] disabled:pointer-events-none disabled:opacity-40', variants[variant], className)}>
       {icon}
     </button>
     {tooltipVisible && typeof document !== 'undefined' && createPortal(
-      <span ref={tooltipRef} id={tooltipId} role="tooltip" style={{ top: tooltipPosition.top, left: tooltipPosition.left }} className="pointer-events-none fixed z-[1000] max-w-[calc(100vw-1.5rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-md bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg">
+      <span ref={tooltipRef} id={tooltipId} role="tooltip" style={{ top: tooltipPosition.top, left: tooltipPosition.left }} className="pointer-events-none fixed z-[1000] max-w-[calc(100vw-1.5rem)] overflow-hidden text-ellipsis whitespace-nowrap rounded-[var(--app-radius-sm)] bg-[var(--app-primary)] px-2 py-1 text-[11px] font-medium text-white shadow-[var(--app-shadow-md)]">
         {label}
       </span>,
       document.body,

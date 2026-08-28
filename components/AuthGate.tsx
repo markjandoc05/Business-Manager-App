@@ -10,7 +10,7 @@ import { getNoMembershipDestination, type EntryIntent } from '@/lib/auth/entryFl
 import { emitStartupTiming, markStartup } from '@/lib/startupTiming';
 
 function LoadingScreen() {
-  return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Loading your account…</div>;
+  return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] text-sm text-[var(--app-muted)]">Loading your account…</div>;
 }
 
 function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => void }) {
@@ -31,17 +31,17 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
     }
   };
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 sm:p-6">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6">
       <Card className="w-full max-w-md space-y-6 p-6 sm:p-8">
         <div className="text-center">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--app-primary)] text-white">
             <ShieldCheck size={25} />
           </div>
-          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-blue-600">BSM</p>
-          <h1 className="mx-auto mt-3 max-w-sm text-xl font-semibold leading-7 text-slate-900 sm:text-2xl">
+          <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-[var(--app-primary)]">BSM</p>
+          <h1 className="mx-auto mt-3 max-w-sm text-xl font-semibold leading-7 text-[var(--app-text)] sm:text-2xl">
             Manage your leads, clients, and sales in one place.
           </h1>
-          <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-slate-500">
+          <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-[var(--app-muted)]">
             Keep prospects, clients, follow-ups, deals, and your sales pipeline organized in one simple workspace.
           </p>
         </div>
@@ -50,19 +50,19 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
           <Button type="button" disabled={isAuthenticating} onClick={() => void start('signin')} className="w-full gap-2" size="lg">
             {authAction === 'signin' ? 'Signing in…' : <><LogIn size={17} /> Sign In with Google</>}
           </Button>
-          <div className="flex items-center gap-3 text-xs text-slate-400" aria-hidden="true">
-            <span className="h-px flex-1 bg-slate-200" />
+          <div className="flex items-center gap-3 text-xs text-[var(--app-tertiary)]" aria-hidden="true">
+            <span className="h-px flex-1 bg-[var(--app-border)]" />
             <span>New to BSM?</span>
-            <span className="h-px flex-1 bg-slate-200" />
+            <span className="h-px flex-1 bg-[var(--app-border)]" />
           </div>
           <Button type="button" variant="outline" disabled={isAuthenticating} onClick={() => void start('create')} className="w-full" size="lg">
             {authAction === 'create-workspace' ? 'Creating workspace…' : 'Create Your Workspace'}
           </Button>
         </div>
 
-        {error && <p className="text-sm text-red-600" role="alert">{error}</p>}
-        <p className="text-center text-[11px] leading-5 text-slate-400">
-          By using BSM App, you agree to the <span className="underline decoration-slate-300 underline-offset-2">Terms of Service</span> and <span className="underline decoration-slate-300 underline-offset-2">Data Processing Agreement</span>.
+        {error && <p className="text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
+        <p className="text-center text-[11px] leading-5 text-[var(--app-tertiary)]">
+          By using BSM App, you agree to the <span className="underline decoration-[var(--app-border)] underline-offset-2">Terms of Service</span> and <span className="underline decoration-[var(--app-border)] underline-offset-2">Data Processing Agreement</span>.
         </p>
       </Card>
     </div>
@@ -71,23 +71,23 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
 
 function NoWorkspaceScreen({ onCreate }: { onCreate: () => void }) {
   const { user, signOut } = useAuth();
-  return <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 sm:p-6"><Card className="w-full max-w-md space-y-5 p-6 text-center sm:p-8"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 text-blue-700"><Building2 size={24} /></div><div><h1 className="text-xl font-semibold text-slate-900">No workspace found</h1><p className="mt-2 text-sm leading-6 text-slate-500">You don&apos;t currently belong to a BSM workspace.</p></div><Button type="button" onClick={onCreate} className="w-full">Create Your Workspace</Button><Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button><p className="break-words text-xs text-slate-400">Signed in as {user?.email}</p></Card></div>;
+  return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6"><Card className="w-full max-w-md space-y-5 p-6 text-center sm:p-8"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--app-accent-soft)] text-[var(--app-primary)]"><Building2 size={24} /></div><div><h1 className="text-xl font-semibold text-[var(--app-text)]">No workspace found</h1><p className="mt-2 text-sm leading-6 text-[var(--app-muted)]">You don&apos;t currently belong to a BSM workspace.</p></div><Button type="button" onClick={onCreate} className="w-full">Create Your Workspace</Button><Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button><p className="break-words text-xs text-[var(--app-tertiary)]">Signed in as {user?.email}</p></Card></div>;
 }
 
 function WorkspacePicker() {
   const { availableOrganizations, membershipSummaries, selectOrganization } = useWorkspace();
-  return <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 sm:p-6"><Card className="w-full max-w-lg space-y-5 p-6 sm:p-8"><div><p className="text-xs font-semibold uppercase tracking-wide text-blue-600">BSM</p><h1 className="mt-1 text-2xl font-semibold text-slate-900">Select Workspace</h1><p className="mt-2 text-sm text-slate-500">Choose the workspace you want to open.</p></div><div className="space-y-3">{availableOrganizations.map((organization) => { const membership = membershipSummaries.find((item) => item.organizationId === organization.id); return <button key={organization.id} type="button" onClick={() => selectOrganization(organization.id)} className="flex w-full items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 text-left transition hover:border-blue-300 hover:bg-blue-50/40 focus:outline-none focus:ring-2 focus:ring-blue-200"><span className="min-w-0"><span className="block truncate font-semibold text-slate-900">{organization.name}</span><span className="mt-1 block text-xs text-slate-500">{membership?.role || 'Member'} · {organization.status}</span></span><ArrowRight className="shrink-0 text-slate-400" size={18} /></button>; })}</div></Card></div>;
+  return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6"><Card className="w-full max-w-lg space-y-5 p-6 sm:p-8"><div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-primary)]">BSM</p><h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Select Workspace</h1><p className="mt-2 text-sm text-[var(--app-muted)]">Choose the workspace you want to open.</p></div><div className="space-y-3">{availableOrganizations.map((organization) => { const membership = membershipSummaries.find((item) => item.organizationId === organization.id); return <button key={organization.id} type="button" onClick={() => selectOrganization(organization.id)} className="flex w-full items-center justify-between gap-4 rounded-xl border border-[var(--app-border)] bg-white p-4 text-left transition hover:border-[var(--app-primary)] hover:bg-[var(--app-accent-soft)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"><span className="min-w-0"><span className="block truncate font-semibold text-[var(--app-text)]">{organization.name}</span><span className="mt-1 block text-xs text-[var(--app-muted)]">{membership?.role || 'Member'} · {organization.status}</span></span><ArrowRight className="shrink-0 text-[var(--app-tertiary)]" size={18} /></button>; })}</div></Card></div>;
 }
 
 function PendingScreen({ disabled = false }: { disabled?: boolean }) {
   const { user, signOut } = useAuth();
   const { refresh } = useWorkspace();
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-6">
       <Card className="w-full max-w-md space-y-5 p-8 text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-100 text-amber-700"><ShieldCheck size={28} /></div>
-        <div><h1 className="text-2xl font-bold text-slate-900">{disabled ? 'Account Disabled' : 'Pending Workspace Access'}</h1><p className="mt-2 text-sm text-slate-500">{disabled ? 'This account has been disabled at the platform level. Contact support for assistance.' : 'An organization ADMIN must activate your organization membership before you can access the dashboard.'}</p></div>
-        <div className="rounded-xl bg-slate-50 p-4 text-left text-sm"><p className="font-semibold text-slate-900">{user?.name}</p><p className="text-slate-500">{user?.email}</p><p className="mt-2 text-xs text-slate-400">Role: {user?.role}</p></div>
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--app-warning)_20%,white)] text-[var(--app-text)]"><ShieldCheck size={28} /></div>
+        <div><h1 className="text-2xl font-bold text-[var(--app-text)]">{disabled ? 'Account Disabled' : 'Pending Workspace Access'}</h1><p className="mt-2 text-sm text-[var(--app-muted)]">{disabled ? 'This account has been disabled at the platform level. Contact support for assistance.' : 'An organization ADMIN must activate your organization membership before you can access the dashboard.'}</p></div>
+        <div className="rounded-xl bg-[var(--app-surface-subtle)] p-4 text-left text-sm"><p className="font-semibold text-[var(--app-text)]">{user?.name}</p><p className="text-[var(--app-muted)]">{user?.email}</p><p className="mt-2 text-xs text-[var(--app-tertiary)]">Role: {user?.role}</p></div>
         {!disabled && <Button type="button" onClick={refresh} className="w-full">Check access again</Button>}
         <Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button>
       </Card>
@@ -98,10 +98,10 @@ function PendingScreen({ disabled = false }: { disabled?: boolean }) {
 function WorkspaceErrorScreen({ error, refresh }: { error: string; refresh: () => void }) {
   const { signOut } = useAuth();
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-6">
       <Card className="w-full max-w-md space-y-4 p-8 text-center">
-        <h1 className="text-xl font-bold text-slate-900">Unable to load workspace</h1>
-        <p className="text-sm text-slate-500">{error}</p>
+        <h1 className="text-xl font-bold text-[var(--app-text)]">Unable to load workspace</h1>
+        <p className="text-sm text-[var(--app-muted)]">{error}</p>
         <div className="flex justify-center gap-3">
           <Button type="button" onClick={refresh}>Retry</Button>
           <Button type="button" variant="outline" onClick={signOut}>Sign out</Button>

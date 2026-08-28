@@ -67,31 +67,31 @@ export default function WorkspaceOnboarding() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4 sm:p-6">
+    <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6">
       <Card className="w-full max-w-xl space-y-6 p-5 sm:p-8">
         <div className="flex items-start gap-4">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-600 text-white"><Building2 size={22} /></div>
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Step {step} of 3</p><h1 className="mt-1 text-2xl font-semibold text-slate-900">Create your workspace</h1><p className="mt-1 text-sm text-slate-500">Set up your BSM workspace to start managing your business.</p></div>
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--app-primary)] text-white"><Building2 size={22} /></div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-primary)]">Step {step} of 3</p><h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Create your workspace</h1><p className="mt-1 text-sm text-[var(--app-muted)]">Set up your BSM workspace to start managing your business.</p></div>
         </div>
 
         <div className="flex gap-2" aria-label="Onboarding progress">
-          {[1, 2, 3].map((item) => <div key={item} className={`h-1.5 flex-1 rounded-full ${item <= step ? 'bg-blue-600' : 'bg-slate-200'}`} />)}
+          {[1, 2, 3].map((item) => <div key={item} className={`h-1.5 flex-1 rounded-full ${item <= step ? 'bg-[var(--app-primary)]' : 'bg-[var(--app-border)]'}`} />)}
         </div>
 
         {step === 1 && <div className="space-y-4">
-          <div><label className="mb-1 block text-sm font-medium text-slate-700">Business Name <span className="text-red-500">*</span></label><input autoFocus value={form.name} onChange={(event) => update('name', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100" placeholder="e.g. Acme Studio" /></div>
-          <div><label className="mb-1 block text-sm font-medium text-slate-700">Business Type <span className="text-red-500">*</span></label><select value={form.businessType} onChange={(event) => update('businessType', event.target.value as BusinessType)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">{businessTypes.map((type) => <option key={type}>{type}</option>)}</select></div>
-          <div className="grid gap-4 sm:grid-cols-2"><div><label className="mb-1 block text-sm font-medium text-slate-700">Phone</label><input value={form.phone} onChange={(event) => update('phone', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" /></div><div><label className="mb-1 block text-sm font-medium text-slate-700">Website</label><input value={form.website} onChange={(event) => update('website', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm" placeholder="https://" /></div></div>
+          <div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Business Name <span className="text-[var(--app-danger)]">*</span></label><input autoFocus value={form.name} onChange={(event) => update('name', event.target.value)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm focus:border-[var(--app-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" placeholder="e.g. Acme Studio" /></div>
+          <div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Business Type <span className="text-[var(--app-danger)]">*</span></label><select value={form.businessType} onChange={(event) => update('businessType', event.target.value as BusinessType)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm focus:border-[var(--app-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]">{businessTypes.map((type) => <option key={type}>{type}</option>)}</select></div>
+          <div className="grid gap-4 sm:grid-cols-2"><div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Phone</label><input value={form.phone} onChange={(event) => update('phone', event.target.value)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm" /></div><div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Website</label><input value={form.website} onChange={(event) => update('website', event.target.value)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm" placeholder="https://" /></div></div>
         </div>}
 
         {step === 2 && <div className="space-y-4">
-          <div><label className="mb-1 block text-sm font-medium text-slate-700">Currency <span className="text-red-500">*</span></label><select value={form.currency} onChange={(event) => update('currency', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm">{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></div>
-          <div><label className="mb-1 block text-sm font-medium text-slate-700">Timezone <span className="text-red-500">*</span></label><select value={form.timezone} onChange={(event) => update('timezone', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm">{timezones.map((timezone) => <option key={timezone}>{timezone}</option>)}</select><p className="mt-1 text-xs text-slate-400">Dates and times will use this IANA timezone.</p></div>
+          <div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Currency <span className="text-[var(--app-danger)]">*</span></label><select value={form.currency} onChange={(event) => update('currency', event.target.value)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm">{currencies.map((currency) => <option key={currency}>{currency}</option>)}</select></div>
+          <div><label className="mb-1 block text-sm font-medium text-[var(--app-text)]">Timezone <span className="text-[var(--app-danger)]">*</span></label><select value={form.timezone} onChange={(event) => update('timezone', event.target.value)} className="w-full rounded-lg border border-[var(--app-border)] px-3 py-2.5 text-sm">{timezones.map((timezone) => <option key={timezone}>{timezone}</option>)}</select><p className="mt-1 text-xs text-[var(--app-tertiary)]">Dates and times will use this IANA timezone.</p></div>
         </div>}
 
-        {step === 3 && <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm"><p className="font-semibold text-slate-900">Review your workspace</p><div className="grid gap-3 sm:grid-cols-2"><Review label="Business name" value={form.name} /><Review label="Business type" value={form.businessType} /><Review label="Phone" value={form.phone || 'Not provided'} /><Review label="Website" value={form.website || 'Not provided'} /><Review label="Currency" value={form.currency} /><Review label="Timezone" value={form.timezone} /></div></div>}
+        {step === 3 && <div className="space-y-3 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-4 text-sm"><p className="font-semibold text-[var(--app-text)]">Review your workspace</p><div className="grid gap-3 sm:grid-cols-2"><Review label="Business name" value={form.name} /><Review label="Business type" value={form.businessType} /><Review label="Phone" value={form.phone || 'Not provided'} /><Review label="Website" value={form.website || 'Not provided'} /><Review label="Currency" value={form.currency} /><Review label="Timezone" value={form.timezone} /></div></div>}
 
-        {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p>}
+        {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] px-3 py-2 text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
         <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-between"><Button type="button" variant="outline" disabled={saving || step === 1} onClick={() => { setError(null); setStep((current) => current - 1); }} className="gap-2"><ChevronLeft size={16} /> Back</Button>{step < 3 ? <Button type="button" onClick={() => step === 1 ? continueToPreferences() : setStep(3)} className="gap-2">Continue <ChevronRight size={16} /></Button> : <Button type="button" onClick={() => void create()} disabled={saving} className="gap-2"><Check size={16} />{saving ? 'Creating workspace...' : 'Create Workspace'}</Button>}</div>
       </Card>
     </div>
@@ -99,5 +99,5 @@ export default function WorkspaceOnboarding() {
 }
 
 function Review({ label, value }: { label: string; value: string }) {
-  return <div><p className="text-xs text-slate-500">{label}</p><p className="mt-0.5 break-words font-medium text-slate-900">{value}</p></div>;
+  return <div><p className="text-xs text-[var(--app-muted)]">{label}</p><p className="mt-0.5 break-words font-medium text-[var(--app-text)]">{value}</p></div>;
 }

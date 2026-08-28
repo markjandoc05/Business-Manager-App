@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("bg-white border border-slate-200 rounded-lg p-4 shadow-[0_1px_2px_rgba(15,23,42,0.04)]", className)}>
+    <div className={cn("rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)] shadow-[var(--app-shadow-xs)]", className)}>
       {children}
     </div>
   );
@@ -22,24 +22,24 @@ export function Button({
   className?: string;
 } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
   const variants = {
-    primary: 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800',
-    secondary: 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 active:bg-slate-100',
-    outline: 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 active:bg-slate-100',
-    ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 active:bg-slate-200',
-    warning: 'border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100 active:bg-amber-200',
-    danger: 'bg-red-600 text-white hover:bg-red-700 active:bg-red-800',
+    primary: 'bg-[var(--app-primary)] text-white hover:bg-[var(--app-primary-hover)] active:brightness-90',
+    secondary: 'border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-accent-soft)] active:brightness-95',
+    outline: 'border border-[var(--app-border)] bg-[var(--app-surface)] text-[var(--app-text)] hover:bg-[var(--app-accent-soft)] active:brightness-95',
+    ghost: 'bg-transparent text-[var(--app-muted)] hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-text)] active:brightness-95',
+    warning: 'border border-[color-mix(in_srgb,var(--app-warning)_55%,white)] bg-[color-mix(in_srgb,var(--app-warning)_14%,white)] text-[var(--app-text)] hover:bg-[color-mix(in_srgb,var(--app-warning)_22%,white)] active:brightness-95',
+    danger: 'bg-[var(--app-danger)] text-white hover:brightness-90 active:brightness-80',
   };
 
   const sizes = {
-    sm: 'h-7.5 px-2.5 text-xs',
-    md: 'h-8.5 px-3 text-sm',
-    lg: 'h-9.5 px-3.5 text-sm',
+    sm: 'h-10 px-4 text-sm',
+    md: 'h-11 px-4 text-sm',
+    lg: 'h-11 px-5 text-sm',
   };
 
   return (
     <button 
       className={cn(
-        "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 focus-visible:ring-offset-1 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+        "app-button inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl font-medium transition-[background-color,color,border-color,filter] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
         variants[variant],
         sizes[size],
         className
@@ -53,17 +53,39 @@ export function Button({
 
 export function Badge({ children, variant = 'gray' }: { children: React.ReactNode; variant?: 'blue' | 'green' | 'orange' | 'red' | 'gray' | 'purple' }) {
   const variants = {
-    blue: 'bg-blue-50 text-blue-600 border-blue-100',
-    green: 'bg-green-50 text-green-600 border-green-100',
-    orange: 'bg-orange-50 text-orange-600 border-orange-100',
-    red: 'bg-red-50 text-red-600 border-red-100',
-    gray: 'bg-slate-50 text-slate-600 border-slate-200',
-    purple: 'bg-purple-50 text-purple-600 border-purple-100',
+    blue: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
+    green: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
+    orange: 'border-[color-mix(in_srgb,var(--app-warning)_45%,white)] bg-[color-mix(in_srgb,var(--app-warning)_14%,white)] text-[var(--app-text)]',
+    red: 'border-[color-mix(in_srgb,var(--app-danger)_35%,white)] bg-[color-mix(in_srgb,var(--app-danger)_10%,white)] text-[var(--app-danger)]',
+    gray: 'border-[var(--app-border)] bg-[var(--app-surface-subtle)] text-[var(--app-muted)]',
+    purple: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
   };
 
   return (
-    <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide border", variants[variant])}>
+    <span className={cn("inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]", variants[variant])}>
       {children}
     </span>
   );
+}
+
+export function Alert({ children, variant = 'error', className }: { children: React.ReactNode; variant?: 'error' | 'warning' | 'success' | 'info'; className?: string }) {
+  const variants = {
+    error: 'border-[color-mix(in_srgb,var(--app-danger)_35%,white)] bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] text-[var(--app-danger)]',
+    warning: 'border-[color-mix(in_srgb,var(--app-warning)_50%,white)] bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] text-[var(--app-text)]',
+    success: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
+    info: 'border-[var(--app-border)] bg-[var(--app-surface-subtle)] text-[var(--app-muted)]',
+  };
+  return <div className={cn('rounded-[var(--app-radius-control)] border px-3 py-2.5 text-sm leading-5', variants[variant], className)}>{children}</div>;
+}
+
+export function EmptyState({ title, description, action, className }: { title: string; description?: string; action?: React.ReactNode; className?: string }) {
+  return <div className={cn('flex min-h-48 flex-col items-center justify-center rounded-[var(--app-radius-card)] border border-dashed border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-8 text-center', className)}>
+    <p className="text-sm font-semibold text-[var(--app-text)]">{title}</p>
+    {description && <p className="mt-1 max-w-md text-xs leading-5 text-[var(--app-muted)]">{description}</p>}
+    {action && <div className="mt-4">{action}</div>}
+  </div>;
+}
+
+export function LoadingState({ label = 'Loading…', className }: { label?: string; className?: string }) {
+  return <div className={cn('flex min-h-48 items-center justify-center rounded-[var(--app-radius-card)] border border-[var(--app-border-subtle)] bg-[var(--app-surface)] p-8 text-sm text-[var(--app-muted)]', className)} aria-busy="true" aria-live="polite">{label}</div>;
 }

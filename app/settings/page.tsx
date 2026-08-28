@@ -165,31 +165,31 @@ export default function SettingsPage() {
   const Icon = tabs.find(t => t.id === activeTab)?.icon || SettingsIcon;
 
   if (!canManageSystemSettings) {
-    return <Card className="mx-auto max-w-xl space-y-2 p-8 text-center"><h2 className="text-xl font-bold text-slate-900">Settings access restricted</h2><p className="text-sm text-slate-500">System settings are available to ADMIN users only.</p></Card>;
+    return <Card className="mx-auto max-w-xl space-y-2 p-8 text-center"><h2 className="text-xl font-bold text-[var(--app-text)]">Settings access restricted</h2><p className="text-sm text-[var(--app-muted)]">System settings are available to ADMIN users only.</p></Card>;
   }
 
   if (settingsLoading) {
-    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><Card className="p-8 text-center text-sm text-slate-500">Loading organization settings…</Card></div>;
+    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><Card className="p-8 text-center text-sm text-[var(--app-muted)]">Loading organization settings…</Card></div>;
   }
 
   if (settingsError) {
-    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><div role="alert"><Card className="p-8 text-center text-sm text-red-700">{settingsError}</Card></div></div>;
+    return <div className="space-y-5"><PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." /><div role="alert"><Card className="p-8 text-center text-sm text-[var(--app-danger)]">{settingsError}</Card></div></div>;
   }
 
   return (
     <div className="space-y-5">
       <PageHeader title="Settings" subtitle="Manage your organization, users, and application preferences." />
-      {settingsActionError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{settingsActionError}</p>}
-      {settingsNotice && <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700" role="status">{settingsNotice}</p>}
+      {settingsActionError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{settingsActionError}</p>}
+      {settingsNotice && <p className="rounded-lg bg-[var(--app-accent-soft)] p-3 text-sm text-[var(--app-primary)]" role="status">{settingsNotice}</p>}
       
       <div className="flex flex-col gap-4 md:flex-row">
-        <aside className="w-full md:w-64 space-y-1">
+        <aside className="settings-navigation w-full space-y-1 md:w-64" aria-label="Settings sections">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => handleTabChange(tab.id as typeof activeTab)}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                activeTab === tab.id ? 'bg-slate-100 text-slate-900' : 'text-slate-600 hover:bg-slate-50'
+                activeTab === tab.id ? 'bg-[var(--app-surface-subtle)] text-[var(--app-text)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-surface-subtle)]'
               }`}
             >
               <tab.icon size={18} />
@@ -198,22 +198,22 @@ export default function SettingsPage() {
           ))}
         </aside>
         
-        <main className="flex-1">
+        <section className="min-w-0 flex-1" aria-label={`${tabs.find(t => t.id === activeTab)?.label || 'Settings'} settings`}>
           <Card className="p-4">
             <div className="mb-5 flex items-center gap-3">
-                <Icon className="text-blue-600" size={24}/>
-                <h3 className="text-base font-semibold text-slate-900">{tabs.find(t => t.id === activeTab)?.label}</h3>
+                <Icon className="text-[var(--app-primary)]" size={24}/>
+                <h3 className="text-base font-semibold text-[var(--app-text)]">{tabs.find(t => t.id === activeTab)?.label}</h3>
             </div>
             
             {activeTab === 'profile' && (
               <form onSubmit={handleSaveProfile} className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Business Name</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Business Name</label>
                     <input className="w-full p-2 border rounded-lg" value={profile.businessName} onChange={e => setProfile({...profile, businessName: e.target.value})} />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Business Type</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Business Type</label>
                     <select className="w-full p-2 border rounded-lg" value={profile.businessType} onChange={e => setProfile({...profile, businessType: e.target.value as any})}>
                       {['Solo Entrepreneur', 'Agency', 'Real Estate', 'Professional Services', 'Retail', 'Insurance', 'Freelancer/Consultant', 'Small Business', 'Other'].map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
@@ -221,32 +221,32 @@ export default function SettingsPage() {
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                     <input className="w-full p-2 border rounded-lg" value={profile.email} onChange={e => setProfile({...profile, email: e.target.value})} />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Phone</label>
                     <input className="w-full p-2 border rounded-lg" value={profile.phone} onChange={e => setProfile({...profile, phone: e.target.value})} />
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Website</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Website</label>
                   <input type="url" className="w-full p-2 border rounded-lg" value={profile.website} onChange={e => setProfile({...profile, website: e.target.value})} placeholder="https://" />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Currency</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Currency</label>
                     <select className="w-full p-2 border rounded-lg" value={profile.currency} onChange={e => setProfile({...profile, currency: e.target.value})}>
                       {['USD', 'EUR', 'GBP', 'CAD', 'AUD', 'PHP'].map(c => <option key={c} value={c}>{c}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Timezone</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Timezone</label>
                     <input className="w-full p-2 border rounded-lg" value={profile.timezone} onChange={e => setProfile({...profile, timezone: e.target.value})} />
                   </div>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Address</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Address</label>
                   <input className="w-full p-2 border rounded-lg" value={profile.address} onChange={e => setProfile({...profile, address: e.target.value})} />
                 </div>
                 <Button type="submit" disabled={isReadOnly || settingsSaving}>{settingsSaving ? 'Saving…' : 'Save Profile'}</Button>
@@ -256,36 +256,36 @@ export default function SettingsPage() {
             {activeTab === 'branding' && (
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Accent Color</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Accent Color</label>
                   <div className="flex gap-2 items-center">
                     <input type="color" disabled={isReadOnly || settingsSaving} value={accentColorDraft} onChange={e => setAccentColorDraft(e.target.value)} className="w-12 h-10 p-1 border rounded-lg cursor-pointer" />
                     <span className="text-sm font-mono">{accentColorDraft}</span>
                     <Button size="sm" variant="outline" disabled={isReadOnly || settingsSaving || accentColorDraft === (settings.accentColor || '#3b82f6')} onClick={() => void saveSettings({ accentColor: accentColorDraft }, 'Branding saved.')}>{settingsSaving ? 'Saving…' : 'Save Branding'}</Button>
                   </div>
                 </div>
-                <p className="text-sm text-slate-500">Saved branding customizations apply across all modules.</p>
+                <p className="text-sm text-[var(--app-muted)]">Saved branding customizations apply across all modules.</p>
               </div>
             )}
 
             {activeTab === 'users' && canManageSystemSettings && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-slate-500">Manage activation and roles for other users.</p></div>
+                  <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-[var(--app-muted)]">Manage activation and roles for other users.</p></div>
                   <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading || isReadOnly}>Refresh</Button>
                 </div>
-                {usersError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{usersError}</p>}
-                {usersLoading && <p className="py-8 text-center text-sm text-slate-500">Loading users…</p>}
-                {!usersLoading && !usersError && managedUsers.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-slate-500">No users found.</p>}
+                {usersError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{usersError}</p>}
+                {usersLoading && <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading users…</p>}
+                {!usersLoading && !usersError && managedUsers.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-[var(--app-muted)]">No users found.</p>}
                 {!usersLoading && managedUsers.length > 0 && (
                   <div className="overflow-x-auto rounded-xl border">
                     <table className="w-full min-w-[760px] text-left text-sm">
-                      <thead className="border-b bg-slate-50">
+                      <thead className="border-b bg-[var(--app-surface-subtle)]">
                         <tr>
-                          <th className="p-3 font-bold text-slate-500">Name</th>
-                          <th className="p-3 font-bold text-slate-500">Email</th>
-                          <th className="p-3 font-bold text-slate-500">Role</th>
-                          <th className="p-3 font-bold text-slate-500">Status</th>
-                          <th className="p-3 font-bold text-slate-500">Last login</th>
+                          <th className="p-3 font-bold text-[var(--app-muted)]">Name</th>
+                          <th className="p-3 font-bold text-[var(--app-muted)]">Email</th>
+                          <th className="p-3 font-bold text-[var(--app-muted)]">Role</th>
+                          <th className="p-3 font-bold text-[var(--app-muted)]">Status</th>
+                          <th className="p-3 font-bold text-[var(--app-muted)]">Last login</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y">
@@ -294,10 +294,10 @@ export default function SettingsPage() {
                           const isUpdating = updatingUserId === managedUser.uid;
                           return (
                             <tr key={managedUser.uid}>
-                              <td className="p-3 font-semibold text-slate-900">{managedUser.name}{isCurrentUser && <span className="ml-2 text-xs font-normal text-slate-400">(you)</span>}</td>
-                              <td className="p-3 text-slate-600">{managedUser.email}</td>
+                              <td className="p-3 font-semibold text-[var(--app-text)]">{managedUser.name}{isCurrentUser && <span className="ml-2 text-xs font-normal text-[var(--app-tertiary)]">(you)</span>}</td>
+                              <td className="p-3 text-[var(--app-muted)]">{managedUser.email}</td>
                               <td className="p-3">
-                                <select aria-label={`Role for ${managedUser.email}`} value={managedUser.role} disabled={isReadOnly || isCurrentUser || isUpdating} onChange={(event) => void updateManagedUser(managedUser.uid, { role: event.target.value as UserRole })} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-slate-100">
+                                <select aria-label={`Role for ${managedUser.email}`} value={managedUser.role} disabled={isReadOnly || isCurrentUser || isUpdating} onChange={(event) => void updateManagedUser(managedUser.uid, { role: event.target.value as UserRole })} className="rounded-lg border border-[var(--app-border)] bg-white px-2 py-1.5 text-sm disabled:cursor-not-allowed disabled:bg-[var(--app-surface-subtle)]">
                                   <option value="ADMIN">ADMIN</option><option value="MANAGER">MANAGER</option><option value="USER">USER</option>
                                 </select>
                               </td>
@@ -306,7 +306,7 @@ export default function SettingsPage() {
                                   {isUpdating ? 'Saving…' : managedUser.status === 'active' ? 'Deactivate' : 'Activate'}
                                 </Button>
                               </td>
-                              <td className="p-3 text-slate-600">{formatLastLogin(managedUser.lastLogin)}</td>
+                              <td className="p-3 text-[var(--app-muted)]">{formatLastLogin(managedUser.lastLogin)}</td>
                             </tr>
                           );
                         })}
@@ -319,12 +319,12 @@ export default function SettingsPage() {
 
             {activeTab === 'pipeline' && (
               <div className="space-y-4">
-                <div className="rounded-lg border border-blue-100 bg-blue-50 p-3 text-sm text-blue-800">
+                <div className="rounded-lg border border-[var(--app-border)] bg-[var(--app-accent-soft)] p-3 text-sm text-[var(--app-primary)]">
                   BSM uses one standard sales pipeline for every workspace. Pipeline stages are managed by the application and cannot be customized here.
                 </div>
                 <div className="space-y-2">
                   {DEAL_STAGES.map((stage) => (
-                    <div key={stage} className="flex items-center justify-between p-3 border rounded-xl bg-slate-50">
+                    <div key={stage} className="flex items-center justify-between p-3 border rounded-xl bg-[var(--app-surface-subtle)]">
                       <span className="font-medium">{stage}</span>
                       <Badge variant="green">Standard</Badge>
                     </div>
@@ -341,7 +341,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   {settings.leadSources.map((source, idx) => (
-                    <div key={source.name} className="flex items-center justify-between p-3 border rounded-xl bg-slate-50">
+                    <div key={source.name} className="flex items-center justify-between p-3 border rounded-xl bg-[var(--app-surface-subtle)]">
                       <span className="font-medium">{source.name}</span>
                       <div className="flex items-center gap-2">
                         <Badge variant={source.isActive ? 'green' : 'gray'}>{source.isActive ? 'Active' : 'Inactive'}</Badge>
@@ -359,39 +359,39 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Plan</label>
-                    <p className="font-medium bg-slate-100 p-2 rounded text-sm">{licenseState.plan || 'Unknown'}</p>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Plan</label>
+                    <p className="font-medium bg-[var(--app-surface-subtle)] p-2 rounded text-sm">{licenseState.plan || 'Unknown'}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Status</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Status</label>
                     <div><Badge variant={licenseState.isReadOnly ? 'red' : 'green'}>{licenseState.status}</Badge></div>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Expiration</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Expiration</label>
                     <p className="text-sm">{licenseState.status === 'TRIAL' ? formatLicenseDate(license?.trialEndsAt) : licenseState.status === 'ACTIVE' ? formatLicenseDate(license?.subscriptionEndsAt) : 'Not available'}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">User limit</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">User limit</label>
                     <p className="text-sm">{license?.maxUsers ?? 'Not configured'}</p>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Days remaining</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Days remaining</label>
                     <p className="text-sm">{licenseState.daysRemaining === null ? 'No expiration set' : licenseState.daysRemaining}</p>
                   </div>
                   <div className="space-y-1">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Workspace access</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Workspace access</label>
                     <p className="text-sm">{isReadOnly ? 'Read-only' : 'Writable'}</p>
                   </div>
                 </div>
-                <p className="text-xs text-slate-400 pt-2 border-t">License management is restricted to server administration.</p>
+                <p className="text-xs text-[var(--app-tertiary)] pt-2 border-t">License management is restricted to server administration.</p>
               </div>
             )}
           </Card>
-        </main>
+        </section>
       </div>
     </div>
   );

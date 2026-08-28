@@ -5,11 +5,11 @@ export function SecurityTrustFooter() {
   return (
     <footer className="security-trust-footer" aria-label="Security information">
       <div className="min-w-0">
-        <p className="security-trust-footer-title font-medium text-slate-600">
+        <p className="security-trust-footer-title font-medium text-[var(--app-muted)]">
           <Shield size={14} aria-hidden="true" />
           <span>Secure Cloud Infrastructure</span>
         </p>
-        <p className="text-xs text-slate-400">Your business data is securely managed using Google Cloud and Firebase infrastructure.</p>
+        <p className="text-xs text-[var(--app-tertiary)]">Your business data is securely managed using Google Cloud and Firebase infrastructure.</p>
       </div>
     </footer>
   );

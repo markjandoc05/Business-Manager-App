@@ -81,24 +81,24 @@ export default function ReportsPage() {
             <Button variant="outline" className="gap-2" onClick={exportCSV}><Download size={16}/> Export CSV</Button>
       </>} />
 
-      {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      {loading && <p className="text-sm text-slate-500">Loading organization-wide report data…</p>}
+      {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{error}</p>}
+      {loading && <p className="text-sm text-[var(--app-muted)]">Loading organization-wide report data…</p>}
 
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Total Leads</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.totalLeads || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Clients</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.clients || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Converted Leads</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.convertedLeads || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Active Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.activeDeals || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Sales</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(reportData?.totalWonSales || 0, settings.currency)}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Won Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.wonDeals || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Lost Deals</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData?.lostDeals || 0}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Pipeline Value</p><p className="mt-1 text-xl font-semibold text-slate-900">{formatCurrency(reportData?.pipelineValue || 0, settings.currency)}</p></Card>
-        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Conversion Rate</p><p className="mt-1 text-xl font-semibold text-slate-900">{reportData && reportData.totalLeads > 0 ? (reportData.convertedLeads / reportData.totalLeads * 100).toFixed(1) : 0}%</p></Card>
+      <div className="reports-metric-grid grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Total Leads</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.totalLeads || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Clients</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.clients || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Converted Leads</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.convertedLeads || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Active Deals</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.activeDeals || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Won Sales</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{formatCurrency(reportData?.totalWonSales || 0, settings.currency)}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Won Deals</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.wonDeals || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Lost Deals</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData?.lostDeals || 0}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Pipeline Value</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{formatCurrency(reportData?.pipelineValue || 0, settings.currency)}</p></Card>
+        <Card className="p-3.5"><p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Conversion Rate</p><p className="mt-1 text-xl font-semibold text-[var(--app-text)]">{reportData && reportData.totalLeads > 0 ? (reportData.convertedLeads / reportData.totalLeads * 100).toFixed(1) : 0}%</p></Card>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-900">Pipeline Performance (Value)</h3>
+            <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Pipeline Performance (Value)</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={DEAL_STAGES.map(stage => ({stage, value: reportData?.pipelineByStage[stage] || 0}))}>
@@ -106,19 +106,19 @@ export default function ReportsPage() {
                     <XAxis dataKey="stage" />
                     <YAxis />
                     <Tooltip />
-                    <Bar dataKey="value" fill="#3b82f6" />
+                    <Bar dataKey="value" fill="#032D20" />
                 </BarChart>
                 </ResponsiveContainer>
             </div>
         </Card>
         <Card className="p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-900">Won vs Lost Deals</h3>
+            <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Won vs Lost Deals</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                        <Pie data={[{name: 'Won', value: reportData?.wonVsLost.won || 0}, {name: 'Lost', value: reportData?.wonVsLost.lost || 0}]} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill="#8884d8" label>
-                            <Cell fill="#22c55e" />
-                            <Cell fill="#ef4444" />
+                        <Pie data={[{name: 'Won', value: reportData?.wonVsLost.won || 0}, {name: 'Lost', value: reportData?.wonVsLost.lost || 0}]} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill="#032D20" label>
+                            <Cell fill="#003B2B" />
+                            <Cell fill="#B34D3E" />
                         </Pie>
                         <Tooltip />
                         <Legend />
@@ -127,7 +127,7 @@ export default function ReportsPage() {
             </div>
         </Card>
         <Card className="p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-900">Leads by Source</h3>
+            <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Leads by Source</h3>
             <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={settings.leadSources.map(s => ({source: s.name, count: reportData?.leadsBySource[s.name] || 0}))}>
@@ -135,7 +135,7 @@ export default function ReportsPage() {
                         <XAxis dataKey="source" />
                         <YAxis />
                         <Tooltip />
-                        <Bar dataKey="count" fill="#8b5cf6" />
+                        <Bar dataKey="count" fill="#60736A" />
                     </BarChart>
                 </ResponsiveContainer>
             </div>

@@ -96,7 +96,7 @@ export function MoneyInput({ value, currency, onChange, containerClassName = '',
   };
 
   return <div className={'relative ' + containerClassName}>
-    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-slate-500" aria-hidden="true">{currencySymbol}</span>
+    <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-[var(--app-muted)]" aria-hidden="true">{currencySymbol}</span>
     <input
       {...inputProps}
       ref={inputRef}

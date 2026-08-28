@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { MobileQuickActionMenu } from '@/components/MobileQuickActionMenu';
-import { ModalCloseButton } from '@/components/ModalCloseButton';
+import { ModalCloseButton, ModalHeader } from '@/components/ModalCloseButton';
 import { useApp } from '@/context/AppContext';
 import { 
   Search, 
@@ -924,71 +924,97 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6">
-      {(actionError || clientsError) && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{actionError || clientsError}</p>}
+      {(actionError || clientsError) && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{actionError || clientsError}</p>}
       {/* If Client is Selected, Show Client Profile */}
       {selectedClient ? (
         <div className={`space-y-6 ${selectedMatchingClientIds.length > 0 ? 'pb-24' : ''}`}>
-          {/* Back Button & Header */}
-          <div className="relative flex flex-col gap-4 pr-12 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
-              <Button variant="ghost" onClick={() => setSelectedClientId(null)} className="-ml-2 mb-2 w-fit gap-2 px-2 text-slate-500">
-                <ArrowLeft size={16} /> Back to Clients
-              </Button>
-              <h2 className="break-words text-2xl font-bold tracking-tight text-slate-900">{selectedClient.name}</h2>
-              <p className="mt-1 text-sm text-slate-500">{selectedClient.company ? `${selectedClient.company} • ` : ''}Client since {formatClientSince(selectedClient.createdAt)}</p>
-            </div>
-            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-              {canManage && <Button variant="outline" onClick={() => {
-                setEditClientForm({
-                  name: selectedClient.name,
-                  email: selectedClient.email,
-                  phone: selectedClient.phone,
-                  company: selectedClient.company || '',
-                  assignedToUid: selectedClient.assignedToUid || selectedClient.assignedTo || '',
-                  assignedToName: selectedClient.assignedToName || selectedClient.assignedTo || ''
-                });
-                setShowEditModal(true);
-              }} className="gap-2">
-                <Edit size={16} /> Edit Client
-              </Button>}
-              {canManage && <Button variant="warning" onClick={() => void requestClientLifecycleAction('archive', selectedClient)} className="gap-2">
-                Archive Client
-              </Button>}
-              {canManageDeal && <Button onClick={openAddDeal} className="gap-2">
-                <Plus size={16} /> Add Deal
-              </Button>}
+          {/* Back Button & Client Profile Header */}
+          <div className="client-detail-header relative">
+            <Button variant="ghost" onClick={() => setSelectedClientId(null)} className="-ml-2 mb-3 w-fit gap-2 px-2 text-[var(--app-muted)]">
+              <ArrowLeft size={16} /> Back to Clients
+            </Button>
+            <div className="client-profile-hero overflow-hidden rounded-[var(--app-radius-panel)] bg-[var(--app-primary)] px-5 py-5 text-white shadow-[var(--app-shadow-sm)] sm:px-6 sm:py-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex min-w-0 items-center gap-4">
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white text-2xl font-semibold text-[var(--app-primary)] shadow-[var(--app-shadow-xs)] sm:h-20 sm:w-20 sm:text-3xl" aria-hidden="true">
+                    {selectedClient.name.trim().charAt(0).toUpperCase() || 'C'}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="break-words text-2xl font-semibold tracking-tight text-white sm:text-3xl">{selectedClient.name}</h2>
+                      <span className="rounded-md bg-white/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] text-white/90">
+                        {selectedClient.status === 'ARCHIVED' || selectedClient.archived ? 'Archived Client' : 'Active Client'}
+                      </span>
+                    </div>
+                    <p className="mt-1 break-words text-sm text-white/65">{selectedClient.company ? `${selectedClient.company} • ` : ''}Client since {formatClientSince(selectedClient.createdAt)}</p>
+                  </div>
+                </div>
+                <div className="client-detail-header-actions flex w-full flex-wrap items-center justify-start gap-2 lg:w-auto lg:shrink-0 lg:justify-end">
+                  {canManage && <Button variant="secondary" onClick={() => {
+                    setEditClientForm({
+                      name: selectedClient.name,
+                      email: selectedClient.email,
+                      phone: selectedClient.phone,
+                      company: selectedClient.company || '',
+                      assignedToUid: selectedClient.assignedToUid || selectedClient.assignedTo || '',
+                      assignedToName: selectedClient.assignedToName || selectedClient.assignedTo || ''
+                    });
+                    setShowEditModal(true);
+                  }} className="gap-2">
+                    <Edit size={16} /> Edit Client
+                  </Button>}
+                  {canManage && <Button variant="warning" onClick={() => void requestClientLifecycleAction('archive', selectedClient)} className="gap-2">
+                    Archive Client
+                  </Button>}
+                  {canManageDeal && <Button variant="secondary" onClick={openAddDeal} className="gap-2">
+                    <Plus size={16} /> Add Deal
+                  </Button>}
+                </div>
+              </div>
             </div>
             <div className="absolute right-0 top-0"><ModalCloseButton onClose={() => setSelectedClientId(null)} /></div>
           </div>
 
           {/* Client Summary Banner */}
-          <Card className="grid gap-4 border-slate-200 bg-white p-4 md:grid-cols-4">
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Company & Contact</p>
-              <p className="text-base font-semibold text-slate-900">{selectedClient.company || 'Independent'}</p>
-              <p className="text-xs text-slate-500">{selectedClient.email} • {selectedClient.phone}</p>
+          <Card className="grid grid-cols-2 gap-3 border-[var(--app-border)] bg-white px-[15px] py-4 sm:gap-4 sm:px-[15px] sm:py-5 md:grid-cols-4">
+            <div className="min-w-0 space-y-3">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Company & Contact</p>
+              <div className="flex min-w-0 items-center gap-2">
+                <Building2 size={16} className="shrink-0 text-[var(--app-primary)]" aria-hidden="true" />
+                <p className="min-w-0 break-words text-base font-semibold leading-5 text-[var(--app-text)]">{selectedClient.company || 'Independent'}</p>
+              </div>
+              <div className="space-y-2 text-sm text-[var(--app-muted)]">
+                <div className="flex min-w-0 items-start gap-2">
+                  <Mail size={15} className="mt-0.5 shrink-0 text-[var(--app-tertiary)]" aria-hidden="true" />
+                  <span className="min-w-0 break-all leading-5">{selectedClient.email || 'No email provided'}</span>
+                </div>
+                <div className="flex min-w-0 items-start gap-2">
+                  <Phone size={15} className="mt-0.5 shrink-0 text-[var(--app-tertiary)]" aria-hidden="true" />
+                  <span className="min-w-0 break-words leading-5">{selectedClient.phone || 'No phone provided'}</span>
+                </div>
+              </div>
             </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Total Sales / Deals</p>
-              <p className="text-base font-semibold text-emerald-700">{formatCurrency(totalSalesValue, settings.currency)}</p>
-              <p className="text-xs text-slate-500">{activeDealsCount} Active Deals / {clientDeals.length} Total</p>
+            <div className="min-w-0 space-y-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Total Sales / Deals</p>
+              <p className="text-base font-semibold text-[var(--app-primary)]">{formatCurrency(totalSalesValue, settings.currency)}</p>
+              <p className="text-xs text-[var(--app-muted)]">{activeDealsCount} Active Deals / {clientDeals.length} Total</p>
             </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Assigned To</p>
-              <p className="text-base font-semibold text-slate-900">{selectedClient.assignedToName || selectedClient.assignedTo || 'Unassigned'}</p>
-              <p className="text-xs text-slate-500">Client Since: {new Date(selectedClient.createdAt).toLocaleDateString()}</p>
+            <div className="min-w-0 space-y-1 pt-3 md:pt-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Assigned To</p>
+              <p className="text-base font-semibold text-[var(--app-text)]">{selectedClient.assignedToName || selectedClient.assignedTo || 'Unassigned'}</p>
+              <p className="text-xs text-[var(--app-muted)]">Client Since: {new Date(selectedClient.createdAt).toLocaleDateString()}</p>
             </div>
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-500">Next Follow-up</p>
-              <p className="text-sm font-medium text-amber-700">{nextFollowUp}</p>
-              {canCreateTask && <Button size="sm" variant="outline" onClick={openAddTask} className="mt-2 text-xs">
+            <div className="min-w-0 space-y-1 pt-3 md:pt-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Next Follow-up</p>
+              <p className="text-sm font-medium text-[var(--app-text)]">{nextFollowUp}</p>
+              {canCreateTask && <button type="button" onClick={openAddTask} className="mt-1 inline-flex min-h-8 items-center px-0.5 py-1 text-xs font-medium text-[var(--app-primary)] underline underline-offset-4 transition-colors hover:text-[var(--app-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] focus-visible:ring-offset-2">
                 + Add Task
-              </Button>}
+              </button>}
             </div>
           </Card>
 
           {/* Profile Navigation Tabs */}
-          <div className="client-profile-tabs flex border-b border-slate-200 gap-6" aria-busy={clientTabCountsLoading}>
+          <div className="client-profile-tabs flex border-b border-[var(--app-border)] gap-6" aria-busy={clientTabCountsLoading}>
             {[
               { id: 'overview', label: 'Overview' },
                 { id: 'deals', label: `Deals (${displayedClientTabCounts ? displayedClientTabCounts.deals : '—'})` },
@@ -1002,27 +1028,27 @@ export default function ClientsPage() {
                 onClick={() => setActiveTab(tab.id as any)}
                 className={`client-profile-tab whitespace-nowrap pb-3 font-semibold text-sm transition-colors border-b-2 -mb-px ${
                   activeTab === tab.id 
-                    ? 'border-blue-600 text-blue-600' 
-                    : 'border-transparent text-slate-500 hover:text-slate-800'
+                    ? 'border-[var(--app-primary)] text-[var(--app-primary)]'
+                    : 'border-transparent text-[var(--app-muted)] hover:text-[var(--app-text)]'
                 }`}
               >
                 {tab.label}
               </button>
             ))}
           </div>
-          {clientTabCountsError && <p className="text-xs text-slate-500" role="status">Client record counts are temporarily unavailable.</p>}
+          {clientTabCountsError && <p className="text-xs text-[var(--app-muted)]" role="status">Client record counts are temporarily unavailable.</p>}
 
           {/* Tab Content */}
           <div className="space-y-6">
             {activeTab === 'overview' && (
               <div className="space-y-6">
                 <Card className="space-y-4">
-                  <h3 className="font-bold text-slate-900">Deals Overview</h3>
-                  {dealsLoading ? <div className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Loading deal summary" aria-busy="true">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-slate-100" />)}</div> : dealsError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700" role="alert">{dealsError}</p> : <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Open Deals</p><p className="mt-1 text-lg font-bold text-slate-900">{activePipelineDeals.length}</p><p className="text-xs text-slate-500">Deals in progress</p></div>
-                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Potential Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(activePipelineValue, settings.currency)}</p><p className="text-xs text-slate-500">Total value of open deals</p></div>
-                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Expected Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(weightedForecast, settings.currency)}</p><p className="text-xs text-slate-500">Based on deal probability</p></div>
-                    <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Won Sales</p><p className="mt-1 text-lg font-bold text-slate-900">{formatCurrency(wonValue, settings.currency)}</p><p className="text-xs text-slate-500">Successfully closed deals</p></div>
+                  <h3 className="font-bold text-[var(--app-text)]">Deals Overview</h3>
+                  {dealsLoading ? <div className="grid grid-cols-2 gap-3 md:grid-cols-4" aria-label="Loading deal summary" aria-busy="true">{Array.from({ length: 4 }, (_, index) => <div key={index} className="h-24 animate-pulse rounded-xl bg-[var(--app-surface-subtle)]" />)}</div> : dealsError ? <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{dealsError}</p> : <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div className="rounded-xl bg-[var(--app-surface-subtle)] p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-tertiary)]">Open Deals</p><p className="mt-1 text-lg font-bold text-[var(--app-text)]">{activePipelineDeals.length}</p><p className="text-xs text-[var(--app-muted)]">Deals in progress</p></div>
+                    <div className="rounded-xl bg-[var(--app-surface-subtle)] p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-tertiary)]">Potential Sales</p><p className="mt-1 text-lg font-bold text-[var(--app-text)]">{formatCurrency(activePipelineValue, settings.currency)}</p><p className="text-xs text-[var(--app-muted)]">Total value of open deals</p></div>
+                    <div className="rounded-xl bg-[var(--app-surface-subtle)] p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-tertiary)]">Expected Sales</p><p className="mt-1 text-lg font-bold text-[var(--app-text)]">{formatCurrency(weightedForecast, settings.currency)}</p><p className="text-xs text-[var(--app-muted)]">Based on deal probability</p></div>
+                    <div className="rounded-xl bg-[var(--app-surface-subtle)] p-3"><p className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-tertiary)]">Won Sales</p><p className="mt-1 text-lg font-bold text-[var(--app-text)]">{formatCurrency(wonValue, settings.currency)}</p><p className="text-xs text-[var(--app-muted)]">Successfully closed deals</p></div>
                   </div>}
                 </Card>
               </div>
@@ -1031,16 +1057,16 @@ export default function ClientsPage() {
             {activeTab === 'deals' && (
               <div className="space-y-4">
                 <Card className="space-y-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900">Client Deals</h3><div className="flex flex-wrap gap-2">{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedDeals((current) => !current); if (!showArchivedDeals) void loadArchivedRecords(); }}>{showArchivedDeals ? 'Active Deals' : 'Archived Deals'}</Button></div></div>
-                  {dealsLoading ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">Loading deals…</p> : dealsError ? <p className="rounded-xl bg-red-50 p-8 text-center text-sm text-red-700" role="alert">{dealsError}</p> : clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center"><p className="text-sm text-slate-500">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-slate-200"><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-slate-500">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-slate-500">Actions</th></tr></thead><tbody className="divide-y divide-slate-100">
+                  <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[var(--app-text)]">Client Deals</h3><div className="flex flex-wrap gap-2">{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedDeals((current) => !current); if (!showArchivedDeals) void loadArchivedRecords(); }}>{showArchivedDeals ? 'Active Deals' : 'Archived Deals'}</Button></div></div>
+                  {dealsLoading ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">Loading deals…</p> : dealsError ? <p className="rounded-xl bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-8 text-center text-sm text-[var(--app-danger)]" role="alert">{dealsError}</p> : clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center"><p className="text-sm text-[var(--app-muted)]">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-[var(--app-muted)]">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">
                   {clientDeals.map(deal => {
                     const openTaskCount = pendingDealTaskCounts.get(deal.id) || 0;
                     return (
-                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-slate-50"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-slate-900 hover:text-blue-600">{deal.title}</button></td><td className="px-3 py-3 text-sm text-slate-600">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-slate-600">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-slate-900">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-slate-600">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-slate-600">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right">{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" disabled={detailConfirmBusy} onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</td></tr>
+                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-[var(--app-surface-subtle)]"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-[var(--app-text)] hover:text-[var(--app-primary)]">{deal.title}</button></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-[var(--app-text)]">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right">{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" disabled={detailConfirmBusy} onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</td></tr>
                     );
                   })}
                   </tbody></table></div>}
-                  {showArchivedDeals && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Deals</p>{archivedDeals.filter((deal) => deal.clientId === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived deals.</p> : archivedDeals.filter((deal) => deal.clientId === selectedClientId).map((deal) => <div key={deal.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{deal.title}</p><p className="text-xs text-slate-500">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>{canManageDeal && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Deal" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'restore', id: deal.id, name: deal.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Deal permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'delete', id: deal.id, name: deal.title })} /></div>}</div>)}</div>}
+                  {showArchivedDeals && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Deals</p>{archivedDeals.filter((deal) => deal.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived deals.</p> : archivedDeals.filter((deal) => deal.clientId === selectedClientId).map((deal) => <div key={deal.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{deal.title}</p><p className="text-xs text-[var(--app-muted)]">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>{canManageDeal && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Deal" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'restore', id: deal.id, name: deal.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Deal permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'delete', id: deal.id, name: deal.title })} /></div>}</div>)}</div>}
                 </Card>
               </div>
             )}
@@ -1048,35 +1074,35 @@ export default function ClientsPage() {
             {activeTab === 'tasks' && (
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-900">Client Tasks & Follow-ups</h3>
+                  <h3 className="font-bold text-[var(--app-text)]">Client Tasks & Follow-ups</h3>
                   <div className="flex flex-wrap gap-2">{canCreateTask && <Button size="sm" onClick={openAddTask} className="gap-2"><Plus size={14} /> Add Task</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedTasks((current) => !current); if (!showArchivedTasks) void loadArchivedRecords(); }}>{showArchivedTasks ? 'Active Tasks' : 'Archived Tasks'}</Button></div>
                 </div>
                   <>
-                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{openClientTasks.length} Open Tasks</p>{nextTask && <p className="text-xs text-slate-500">Next: {nextTask.title}</p>}</div>
+                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">{openClientTasks.length} Open Tasks</p>{nextTask && <p className="text-xs text-[var(--app-muted)]">Next: {nextTask.title}</p>}</div>
                     <div className="space-y-3">
                       {openClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}
-                      {openClientTasks.length === 0 && <p className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">No open tasks for this client.</p>}
+                      {openClientTasks.length === 0 && <p className="rounded-xl border border-dashed border-[var(--app-border)] p-6 text-center text-sm text-[var(--app-muted)]">No open tasks for this client.</p>}
                     </div>
-                    {completedClientTasks.length > 0 && <details className="rounded-xl border border-slate-100 p-3"><summary className="cursor-pointer text-sm font-semibold text-slate-600">Completed ({completedClientTasks.length})</summary><div className="mt-3 space-y-3">{completedClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}</div></details>}
-                    {showArchivedTasks && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Tasks</p>{archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived tasks.</p> : archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).map((task) => { const taskCanManage = canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid); return <div key={task.id} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-700">{task.title}</p><p className="text-xs text-slate-500">{task.status} · {formatTaskDueDate(task.dueDate, settings.timezone)}</p></div>{taskCanManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Task" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'restore', id: task.id, name: task.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Task permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'delete', id: task.id, name: task.title })} /></div>}</div>; })}</div>}
+                    {completedClientTasks.length > 0 && <details className="rounded-xl border border-[var(--app-border-subtle)] p-3"><summary className="cursor-pointer text-sm font-semibold text-[var(--app-muted)]">Completed ({completedClientTasks.length})</summary><div className="mt-3 space-y-3">{completedClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}</div></details>}
+                    {showArchivedTasks && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Tasks</p>{archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived tasks.</p> : archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).map((task) => { const taskCanManage = canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid); return <div key={task.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{task.title}</p><p className="text-xs text-[var(--app-muted)]">{task.status} · {formatTaskDueDate(task.dueDate, settings.timezone)}</p></div>{taskCanManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Task" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'restore', id: task.id, name: task.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Task permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'delete', id: task.id, name: task.title })} /></div>}</div>; })}</div>}
                   </>
               </Card>
             )}
 
             {activeTab === 'activity' && (
               <Card className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-slate-900">Activity History</h3><select aria-label="Activity filter" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as typeof activityFilter)}><option>All</option><option>Deals</option><option>Tasks</option><option>Notes</option></select></div>
+                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[var(--app-text)]">Activity History</h3><select aria-label="Activity filter" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as typeof activityFilter)}><option>All</option><option>Deals</option><option>Tasks</option><option>Notes</option></select></div>
                 <div className="space-y-3">
-                  {clientActivitiesLoading ? <p className="text-sm text-slate-500">Loading activity history…</p> : clientActivitiesError ? <div className="space-y-2"><p className="text-sm text-red-600">{clientActivitiesError}</p><Button size="sm" variant="outline" onClick={refreshClientActivity}>Retry</Button></div> : clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).map(act => (
-                    <div key={act.id} className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                      <div className="w-2 h-2 mt-1.5 rounded-full bg-blue-600 shrink-0" />
+                  {clientActivitiesLoading ? <p className="text-sm text-[var(--app-muted)]">Loading activity history…</p> : clientActivitiesError ? <div className="space-y-2"><p className="text-sm text-[var(--app-danger)]">{clientActivitiesError}</p><Button size="sm" variant="outline" onClick={refreshClientActivity}>Retry</Button></div> : clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).map(act => (
+                    <div key={act.id} className="flex items-start gap-3 p-3 bg-[var(--app-surface-subtle)] border border-[var(--app-border-subtle)] rounded-xl">
+                      <div className="w-2 h-2 mt-1.5 rounded-full bg-[var(--app-primary)] shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-slate-900">{act.description}</p><span className="rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">{act.entityType || 'Activity'}</span></div>
-                        <span className="text-[10px] text-slate-400">Created by {act.createdBy || 'Unknown user'}</span>
+                        <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-medium text-[var(--app-text)]">{act.description}</p><span className="rounded bg-[var(--app-border)] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[var(--app-muted)]">{act.entityType || 'Activity'}</span></div>
+                        <span className="text-[10px] text-[var(--app-tertiary)]">Created by {act.createdBy || 'Unknown user'}</span>
                       </div>
                     </div>
                   ))}
-                  {!clientActivitiesLoading && !clientActivitiesError && clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).length === 0 && <p className="text-sm text-slate-500">No activity history for this Client{activityFilter === 'All' ? '' : ` in ${activityFilter.toLowerCase()}`}.</p>}
+                  {!clientActivitiesLoading && !clientActivitiesError && clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).length === 0 && <p className="text-sm text-[var(--app-muted)]">No activity history for this Client{activityFilter === 'All' ? '' : ` in ${activityFilter.toLowerCase()}`}.</p>}
                 </div>
               </Card>
             )}
@@ -1084,18 +1110,18 @@ export default function ClientsPage() {
             {activeTab === 'notes' && (
               <Card className="space-y-4">
                 <div className="flex justify-between items-center">
-                  <h3 className="font-bold text-slate-900">Client Notes</h3>
+                  <h3 className="font-bold text-[var(--app-text)]">Client Notes</h3>
                   <div className="flex flex-wrap gap-2">{canManage && <Button size="sm" disabled={savingNote} onClick={() => setShowAddNoteModal(true)} className="gap-2"><Plus size={14} /> Add Note</Button>}<Button size="sm" variant="outline" onClick={() => setShowArchivedNotes((current) => !current)}>{showArchivedNotes ? 'Active Notes' : 'Archived Notes'}</Button></div>
                 </div>
                 <div className="space-y-3">
-                  {clientNotesLoading ? <p className="text-xs text-slate-400">Loading notes…</p> : clientNotesError ? <p className="text-xs text-red-600">{clientNotesError}</p> : clientNotes.map(note => (
-                    <div key={note.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 p-4"><div className="min-w-0 space-y-2"><p className="text-sm text-slate-800">{note.content}</p><div className="flex justify-between gap-3 text-xs text-slate-400">
+                  {clientNotesLoading ? <p className="text-xs text-[var(--app-tertiary)]">Loading notes…</p> : clientNotesError ? <p className="text-xs text-[var(--app-danger)]">{clientNotesError}</p> : clientNotes.map(note => (
+                    <div key={note.id} className="flex items-start justify-between gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-4"><div className="min-w-0 space-y-2"><p className="text-sm text-[var(--app-text)]">{note.content}</p><div className="flex justify-between gap-3 text-xs text-[var(--app-tertiary)]">
                         <span>Author: {note.author}</span>
                         <span>{new Date(note.createdAt).toLocaleString()}</span>
                       </div></div>{canManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<Edit size={15} />} label="Edit Note" onClick={() => openEditNote(note.id, note.content)} /><IconActionButton icon={<Archive size={15} />} label="Archive Note" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'archive', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /></div>}</div>
                   ))}
                   {!clientNotesLoading && clientNotesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientNotes()} disabled={clientNotesLoading}>Load More</Button></div>}
-                  {showArchivedNotes && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Notes</p>{archivedClientNotes.filter((note) => note.clientId === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived notes.</p> : archivedClientNotes.filter((note) => note.clientId === selectedClientId).map((note) => <div key={note.id} className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="min-w-0 text-sm text-slate-700">{note.content}</p>{canManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Note" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'restore', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Note permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'delete', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /></div>}</div>)}</div>}
+                  {showArchivedNotes && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Notes</p>{archivedClientNotes.filter((note) => note.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived notes.</p> : archivedClientNotes.filter((note) => note.clientId === selectedClientId).map((note) => <div key={note.id} className="flex items-start justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><p className="min-w-0 text-sm text-[var(--app-text)]">{note.content}</p>{canManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Note" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'restore', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Note permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Note', kind: 'delete', id: note.id, name: note.content.slice(0, 40) || 'Note' })} /></div>}</div>)}</div>}
                 </div>
               </Card>
             )}
@@ -1104,17 +1130,17 @@ export default function ClientsPage() {
               <Card className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h3 className="font-bold text-slate-900">Client Documents</h3>
-                    <p className="text-xs text-slate-500">Secure files stored for this client.</p>
-                    <p className="text-xs text-slate-400">Maximum file size: 1 MB</p>
+                    <h3 className="font-bold text-[var(--app-text)]">Client Documents</h3>
+                    <p className="text-xs text-[var(--app-muted)]">Secure files stored for this client.</p>
+                    <p className="text-xs text-[var(--app-tertiary)]">Maximum file size: 1 MB</p>
                   </div>
-                  <div className="flex flex-wrap gap-2">{canManage && !selectedClient.archived && <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 ${documentSaving ? 'pointer-events-none opacity-60' : ''}`}>
+                  <div className="flex flex-wrap gap-2">{canManage && !selectedClient.archived && <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[var(--app-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--app-primary-hover)] ${documentSaving ? 'pointer-events-none opacity-60' : ''}`}>
                     <Upload size={14} /> {documentSaving ? 'Uploading…' : 'Upload document'}
                     <input type="file" className="sr-only" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png" disabled={documentSaving} onChange={(event) => void handleDocumentUpload(event)} />
                   </label>}<Button size="sm" variant="outline" onClick={() => setShowArchivedDocuments((current) => !current)}>{showArchivedDocuments ? 'Active Documents' : 'Archived Documents'}</Button></div>
                 </div>
-                {clientDocumentsLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading documents…</p> : clientDocumentsError ? <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{clientDocumentsError}</p> : clientDocuments.length === 0 ? <p className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">No documents uploaded yet.</p> : <><div className="divide-y divide-slate-100 rounded-lg border border-slate-200">{clientDocuments.map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-slate-400" /><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-900">{document.name}</p><p className="text-xs text-slate-500">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)} · {document.uploadedByName || document.uploadedBy || 'Unknown user'}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <IconActionButton icon={<Archive size={15} />} label="Archive Document" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'archive', id: document.id, name: document.name })} />}</div></div>)}</div>{clientDocumentsHasMore && <div className="pt-2 text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientDocuments()} disabled={clientDocumentsLoading}>Load More</Button></div>}</>}
-                {showArchivedDocuments && <div className="space-y-2 border-t border-slate-100 pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Archived Documents</p>{archivedClientDocuments.filter((document) => document.clientId === selectedClientId).length === 0 ? <p className="text-sm text-slate-500">No archived documents.</p> : archivedClientDocuments.filter((document) => document.clientId === selectedClientId).map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-slate-400" /><div className="min-w-0"><p className="truncate text-sm font-medium text-slate-700">{document.name}</p><p className="text-xs text-slate-500">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <><IconActionButton icon={<RotateCcw size={15} />} label="Restore Document" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'restore', id: document.id, name: document.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Document permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'delete', id: document.id, name: document.name })} /></>}</div></div>)}</div>}
+                {clientDocumentsLoading ? <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading documents…</p> : clientDocumentsError ? <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{clientDocumentsError}</p> : clientDocuments.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">No documents uploaded yet.</p> : <><div className="divide-y divide-[var(--app-border-subtle)] rounded-lg border border-[var(--app-border)]">{clientDocuments.map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)} · {document.uploadedByName || document.uploadedBy || 'Unknown user'}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <IconActionButton icon={<Archive size={15} />} label="Archive Document" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'archive', id: document.id, name: document.name })} />}</div></div>)}</div>{clientDocumentsHasMore && <div className="pt-2 text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientDocuments()} disabled={clientDocumentsLoading}>Load More</Button></div>}</>}
+                {showArchivedDocuments && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Documents</p>{archivedClientDocuments.filter((document) => document.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived documents.</p> : archivedClientDocuments.filter((document) => document.clientId === selectedClientId).map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <><IconActionButton icon={<RotateCcw size={15} />} label="Restore Document" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'restore', id: document.id, name: document.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Document permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'delete', id: document.id, name: document.name })} /></>}</div></div>)}</div>}
               </Card>
             )}
 
@@ -1127,17 +1153,17 @@ export default function ClientsPage() {
 
           <Card className="page-filter-panel flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
             <div className="relative min-w-0 flex-1 md:min-w-[240px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-tertiary)]" size={20} />
               <input
                 type="text"
                 placeholder="Search clients by name, company, or email..."
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-subtle)] py-2 pl-10 pr-4 text-sm transition-all focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                 value={searchTerm}
                 onChange={(event) => handleClientSearchChange(event.target.value)}
               />
             </div>
             <div className="flex flex-wrap gap-2">
-              <select aria-label="Client quick filter" className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50" value={clientQuickFilter} onChange={(event) => handleClientQuickFilterChange(event.target.value as ClientQuickFilter)}>
+              <select aria-label="Client quick filter" className="h-9 rounded-lg border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]/50" value={clientQuickFilter} onChange={(event) => handleClientQuickFilterChange(event.target.value as ClientQuickFilter)}>
                 <option>All</option>
                 <option>Active Deals</option>
                 <option>No Active Deals</option>
@@ -1147,21 +1173,21 @@ export default function ClientsPage() {
               <Button variant="outline" onClick={() => setShowClientFilters((current) => !current)} className="gap-2"><Filter size={18} /> Filter</Button>
               <Button variant="outline" onClick={() => void refreshClients()} disabled={clientsLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button>
             </div>
-            {showClientFilters && <div className="flex w-full flex-wrap items-end gap-3 border-t border-slate-100 pt-3">
-              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-slate-500">Company<input type="text" value={companyFilter} onChange={(event) => handleCompanyFilterChange(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Client since<input type="date" value={clientSinceFrom} onChange={(event) => handleClientSinceFromChange(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-slate-500">Through<input type="date" value={clientSinceTo} onChange={(event) => handleClientSinceToChange(event.target.value)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500" /></label>
+            {showClientFilters && <div className="flex w-full flex-wrap items-end gap-3 border-t border-[var(--app-border-subtle)] pt-3">
+              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Company<input type="text" value={companyFilter} onChange={(event) => handleCompanyFilterChange(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Client since<input type="date" value={clientSinceFrom} onChange={(event) => handleClientSinceFromChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Through<input type="date" value={clientSinceTo} onChange={(event) => handleClientSinceToChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
               <Button variant="ghost" onClick={clearClientTableFilters}>Clear filters</Button>
             </div>}
           </Card>
 
           {canManage && <BulkActionToolbar selectedCount={selectedMatchingClientIds.length} matchingCount={selectableClientRows.length} action={bulkClientAction} actions={clientBulkActions} processing={bulkClientBusy} onSelectAllMatching={selectAllMatchingClients} onActionChange={(action) => setBulkClientAction(action as BulkLifecycleAction)} onApply={() => void runBulkClientPreview()} onClear={() => setSelectedClientIds(new Set())} />}
-          {showArchived && <Card className="p-0"><div className="border-b bg-slate-50 px-6 py-3 text-sm font-semibold text-slate-700">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">No archived clients.</p> : <div className="divide-y divide-slate-100">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-slate-900">{client.name}</p><p className="text-sm text-slate-500">{client.company || client.email}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Move Client to Trash" variant="danger" onClick={() => void requestClientLifecycleAction('trash', client)} />}</div></div>)}</div>}{archivedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedClients()}>Load More</Button></div>}</Card>}
-          {showTrash && <Card className="p-0"><div className="border-b bg-red-50 px-6 py-3 text-sm font-semibold text-red-800">Client Trash</div>{trashedClients.length === 0 ? <p className="p-6 text-sm text-slate-500">Trash is empty.</p> : <div className="divide-y divide-slate-100">{trashedClients.map((client) => { const decision = trashDecisions[client.id]; const blocked = decision?.outcome === 'BLOCKED'; const blockingCount = decision ? Object.values(decision.blockingRecords).reduce((total, count) => total + count, 0) : 0; return <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-slate-900">{client.name}</p><p className={`text-sm ${blocked ? 'text-red-700' : 'text-slate-500'}`}>{blocked ? `Deletion blocked — ${blockingCount} related record${blockingCount === 1 ? '' : 's'}.` : decision?.outcome === 'ALLOWED_WITH_WARNING' ? 'Ready to delete with cleanup warning.' : 'Deletion status will be checked before confirmation.'}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client from Trash" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label={blocked ? 'View deletion block' : decision ? 'Delete Client permanently' : 'Check deletion'} variant="danger" disabled={confirmBusy} onClick={() => void handlePermanentDelete(client)} />}</div></div>; })}</div>}{trashedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreTrashedClients()}>Load More</Button></div>}</Card>}
+          {showArchived && <Card className="p-0"><div className="border-b bg-[var(--app-surface-subtle)] px-6 py-3 text-sm font-semibold text-[var(--app-text)]">Archived Clients</div>{archivedClients.length === 0 ? <p className="p-6 text-sm text-[var(--app-muted)]">No archived clients.</p> : <div className="divide-y divide-[var(--app-border-subtle)]">{archivedClients.map((client) => <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-[var(--app-text)]">{client.name}</p><p className="text-sm text-[var(--app-muted)]">{client.company || client.email}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label="Move Client to Trash" variant="danger" onClick={() => void requestClientLifecycleAction('trash', client)} />}</div></div>)}</div>}{archivedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreArchivedClients()}>Load More</Button></div>}</Card>}
+          {showTrash && <Card className="p-0"><div className="border-b bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] px-6 py-3 text-sm font-semibold text-[var(--app-danger)]">Client Trash</div>{trashedClients.length === 0 ? <p className="p-6 text-sm text-[var(--app-muted)]">Trash is empty.</p> : <div className="divide-y divide-[var(--app-border-subtle)]">{trashedClients.map((client) => { const decision = trashDecisions[client.id]; const blocked = decision?.outcome === 'BLOCKED'; const blockingCount = decision ? Object.values(decision.blockingRecords).reduce((total, count) => total + count, 0) : 0; return <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-[var(--app-text)]">{client.name}</p><p className={`text-sm ${blocked ? 'text-[var(--app-danger)]' : 'text-[var(--app-muted)]'}`}>{blocked ? `Deletion blocked — ${blockingCount} related record${blockingCount === 1 ? '' : 's'}.` : decision?.outcome === 'ALLOWED_WITH_WARNING' ? 'Ready to delete with cleanup warning.' : 'Deletion status will be checked before confirmation.'}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client from Trash" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label={blocked ? 'View deletion block' : decision ? 'Delete Client permanently' : 'Check deletion'} variant="danger" disabled={confirmBusy} onClick={() => void handlePermanentDelete(client)} />}</div></div>; })}</div>}{trashedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreTrashedClients()}>Load More</Button></div>}</Card>}
 
           {/* Client Table */}
-          {!showArchived && !showTrash && <Card className="overflow-hidden rounded-xl border border-slate-200/80 bg-white p-0 shadow-none">
-            {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-slate-500">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-slate-500">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-slate-400">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
+          {!showArchived && !showTrash && <Card className="overflow-hidden rounded-xl border border-[var(--app-border)]/80 bg-white p-0 shadow-none">
+            {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-[var(--app-muted)]">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-[var(--app-muted)]">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-[var(--app-tertiary)]">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
               <table className="clients-data-table w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
                 <colgroup>
                   <col style={{ width: '3%' }} />
@@ -1173,34 +1199,34 @@ export default function ClientsPage() {
                   <col style={{ width: '10%' }} />
                   <col style={{ width: '6%' }} />
                 </colgroup>
-                <thead className="bg-slate-50">
-                  <tr className="border-b border-slate-200 bg-slate-50">
-                    <th scope="col" className="w-10 px-2 py-2.5"><input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-blue-600" checked={allVisibleClientsSelected} ref={(element) => { if (element) element.indeterminate = someVisibleClientsSelected; }} onChange={toggleAllVisibleClients} aria-checked={someVisibleClientsSelected ? "mixed" : allVisibleClientsSelected} aria-label="Select all visible Clients" /></th>
+                <thead className="bg-[var(--app-surface-subtle)]">
+                  <tr className="border-b border-[var(--app-border)] bg-[var(--app-surface-subtle)]">
+                    <th scope="col" className="w-10 px-2 py-2.5"><input type="checkbox" className="h-4 w-4 rounded border-[var(--app-border)] accent-[var(--app-primary)]" checked={allVisibleClientsSelected} ref={(element) => { if (element) element.indeterminate = someVisibleClientsSelected; }} onChange={toggleAllVisibleClients} aria-checked={someVisibleClientsSelected ? "mixed" : allVisibleClientsSelected} aria-label="Select all visible Clients" /></th>
                     <SortableColumnHeader label="Client" direction={clientSort?.key === 'client' ? clientSort.direction : undefined} onSort={() => handleClientSort('client')} compact fullWidth />
                     <SortableColumnHeader label="Company" direction={clientSort?.key === 'company' ? clientSort.direction : undefined} onSort={() => handleClientSort('company')} compact fullWidth />
                     <SortableColumnHeader label="Contact" direction={clientSort?.key === 'contact' ? clientSort.direction : undefined} onSort={() => handleClientSort('contact')} compact fullWidth />
                     <SortableColumnHeader label="Client Since" direction={clientSort?.key === 'clientSince' ? clientSort.direction : undefined} onSort={() => handleClientSort('clientSince')} compact fullWidth />
                     <SortableColumnHeader label="Active Deals" direction={clientSort?.key === 'activeDeals' ? clientSort.direction : undefined} onSort={() => handleClientSort('activeDeals')} align="center" compact fullWidth />
                     <SortableColumnHeader label="Total Sales" direction={clientSort?.key === 'totalSales' ? clientSort.direction : undefined} onSort={() => handleClientSort('totalSales')} align="right" compact fullWidth />
-                    <th scope="col" className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase text-slate-500"><span>Action</span></th>
+                    <th scope="col" className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase text-[var(--app-muted)]"><span>Action</span></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200/80">
+                <tbody className="divide-y divide-[var(--app-border)]/80">
                   {sortedClientRows.slice((safeClientPage - 1) * clientPageSize, safeClientPage * clientPageSize).map(({ client, activeDeals, totalSales }) => {
                     return (
-                      <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) setSelectedClientId(client.id); }} className={`cursor-pointer transition-colors hover:bg-slate-50/80 ${selectedClientIds.has(client.id) ? 'bg-blue-50/40' : ''}`}>
-                        <td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} className="h-4 w-4 rounded border-slate-300 accent-blue-600" /></td>
-                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="block max-w-full truncate text-left font-normal leading-5 text-slate-900 hover:text-blue-600">{client.name}</button></td>
-                        <td className="px-4 py-2 align-middle text-sm leading-5 text-slate-600"><span className="line-clamp-2 break-words">{client.company || 'Private'}</span></td>
-                        <td className="min-w-0 pl-4 pr-2 py-2 align-middle text-xs leading-4 text-slate-500">
+                      <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) setSelectedClientId(client.id); }} className={`cursor-pointer transition-colors hover:bg-[var(--app-surface-subtle)]/80 ${selectedClientIds.has(client.id) ? 'bg-[var(--app-accent-soft)]/40' : ''}`}>
+                        <td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} className="h-4 w-4 rounded border-[var(--app-border)] accent-[var(--app-primary)]" /></td>
+                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="line-clamp-2 max-w-full break-words text-left font-normal leading-5 text-[var(--app-text)] hover:text-[var(--app-primary)]">{client.name}</button></td>
+                        <td className="px-4 py-2 align-middle text-sm leading-5 text-[var(--app-muted)]"><span className="line-clamp-2 break-words">{client.company || 'Private'}</span></td>
+                        <td className="min-w-0 pl-4 pr-2 py-2 align-middle text-xs leading-4 text-[var(--app-muted)]">
                           <div className="flex min-w-0 items-center gap-1"><Mail className="shrink-0" size={12}/><span className="truncate">{client.email}</span></div>
                           <div className="mt-0 flex min-w-0 items-center gap-1"><Phone className="shrink-0" size={12}/><span className="truncate">{client.phone || '—'}</span></div>
                         </td>
-                        <td className="pl-2 pr-4 py-2 align-middle text-sm text-slate-600">{new Date(client.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                        <td className="pl-2 pr-4 py-2 align-middle text-sm text-[var(--app-muted)]">{new Date(client.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</td>
                         <td className="px-2 py-2 text-center align-middle">
-                          {activeDeals > 0 ? <span className="inline-flex"><Badge variant="purple">{activeDeals} Active</Badge></span> : <span className="text-sm text-slate-400">—</span>}
+                          {activeDeals > 0 ? <span className="inline-flex"><Badge variant="purple">{activeDeals} Active</Badge></span> : <span className="text-sm text-[var(--app-tertiary)]">—</span>}
                         </td>
-                        <td className={`px-2 py-2 text-right align-middle text-sm font-semibold ${totalSales > 0 ? 'text-green-600' : 'text-slate-400'}`}>{totalSales > 0 ? formatCurrency(totalSales, settings.currency) : '—'}</td>
+                        <td className={`px-2 py-2 text-right align-middle text-sm font-semibold ${totalSales > 0 ? 'text-[var(--app-primary)]' : 'text-[var(--app-tertiary)]'}`}>{totalSales > 0 ? formatCurrency(totalSales, settings.currency) : '—'}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
                           <IconActionButton icon={<ExternalLink size={15} />} label="View Client" variant="primary" onClick={() => setSelectedClientId(client.id)} />
                         </td>
@@ -1219,34 +1245,34 @@ export default function ClientsPage() {
       {/* Modals */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Add Client dialog">
             <form onSubmit={handleCreateClient} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <div className="flex items-center justify-between gap-3"><h3 className="text-lg font-bold text-slate-900">Add New Client</h3><ModalCloseButton onClose={() => setShowAddModal(false)} /></div>
+              <ModalHeader title="Add New Client" onClose={() => setShowAddModal(false)} />
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Client Name</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Client Name</label>
                 <input 
                   type="text" 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   value={clientForm.name}
                   onChange={e => setClientForm({...clientForm, name: e.target.value})}
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                   <input 
                     type="email" 
                     required 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={clientForm.email}
                     onChange={e => setClientForm({...clientForm, email: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Phone</label>
                   <input 
                     type="text" 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={clientForm.phone}
                     onChange={e => setClientForm({...clientForm, phone: e.target.value})}
                   />
@@ -1254,23 +1280,23 @@ export default function ClientsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Company</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Company</label>
                   <input 
                     type="text" 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={clientForm.company}
                     onChange={e => setClientForm({...clientForm, company: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Assigned To</label>
-                  <select className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={clientForm.assignedToUid} disabled={usersLoading} onChange={e => { const assignee = users.find(item => item.uid === e.target.value); setClientForm({ ...clientForm, assignedToUid: e.target.value, assignedToName: assignee?.name || '' }); }}>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Assigned To</label>
+                  <select className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" value={clientForm.assignedToUid} disabled={usersLoading} onChange={e => { const assignee = users.find(item => item.uid === e.target.value); setClientForm({ ...clientForm, assignedToUid: e.target.value, assignedToName: assignee?.name || '' }); }}>
                     <option value="">Unassigned</option>
                     {users.map(item => <option key={item.uid} value={item.uid}>{item.name} ({item.role})</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="app-modal-footer">
                 <Button type="button" variant="outline" onClick={() => setShowAddModal(false)}>Cancel</Button>
                 <Button type="submit" disabled={savingClient}>{savingClient ? 'Saving…' : 'Save Client'}</Button>
               </div>
@@ -1281,35 +1307,35 @@ export default function ClientsPage() {
         {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingDeal} tasks={tasks} canAddTask={canCreateTask} onAddTask={async (task) => { await addTask(task); refreshClientActivity(); }} onCompleteTask={handleCompleteTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingDeal(true); try { await updateDeal(selectedDeal.id, input); refreshClientActivity(); } finally { setSavingDeal(false); } }} />}
 
         {showEditModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Edit Client dialog">
             <form onSubmit={handleUpdateClient} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Edit Client</h3>
+              <ModalHeader title="Edit Client" onClose={() => setShowEditModal(false)} />
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Client Name</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Client Name</label>
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   value={editClientForm.name}
                   onChange={e => setEditClientForm({...editClientForm, name: e.target.value})}
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                   <input 
                     type="email" 
                     required 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={editClientForm.email}
                     onChange={e => setEditClientForm({...editClientForm, email: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Phone</label>
                   <input 
                     type="text" 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={editClientForm.phone}
                     onChange={e => setEditClientForm({...editClientForm, phone: e.target.value})}
                   />
@@ -1317,24 +1343,24 @@ export default function ClientsPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Company</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Company</label>
                   <input 
                     type="text" 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={editClientForm.company}
                     onChange={e => setEditClientForm({...editClientForm, company: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Assigned To</label>
-                  <select className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={editClientForm.assignedToUid} disabled={usersLoading} onChange={e => { const assignee = users.find(item => item.uid === e.target.value); setEditClientForm({ ...editClientForm, assignedToUid: e.target.value, assignedToName: assignee?.name || '' }); }}>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Assigned To</label>
+                  <select className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" value={editClientForm.assignedToUid} disabled={usersLoading} onChange={e => { const assignee = users.find(item => item.uid === e.target.value); setEditClientForm({ ...editClientForm, assignedToUid: e.target.value, assignedToName: assignee?.name || '' }); }}>
                     <option value="">Unassigned</option>
                     {editClientForm.assignedToUid && !users.some(item => item.uid === editClientForm.assignedToUid) && <option value={editClientForm.assignedToUid}>{editClientForm.assignedToName || 'Legacy assignee'}</option>}
                     {users.map(item => <option key={item.uid} value={item.uid}>{item.name} ({item.role})</option>)}
                   </select>
                 </div>
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="app-modal-footer">
                 <Button type="button" variant="outline" onClick={() => setShowEditModal(false)}>Cancel</Button>
                 <Button type="submit" disabled={savingClient}>{savingClient ? 'Saving…' : 'Update Client'}</Button>
               </div>
@@ -1343,62 +1369,62 @@ export default function ClientsPage() {
         )}
 
         {showAddDealModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Add Deal dialog">
             <form onSubmit={handleCreateDeal} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Add Deal for Client</h3>
-              <div className="rounded-xl bg-slate-50 px-4 py-3"><p className="text-xs font-bold uppercase text-slate-500">Client</p><p className="mt-1 text-sm font-semibold text-slate-900">{selectedClient?.name || 'Client'}</p></div>
+              <ModalHeader title="Add Deal for Client" onClose={() => setShowAddDealModal(false)} />
+              <div className="rounded-xl bg-[var(--app-surface-subtle)] px-4 py-3"><p className="text-xs font-bold uppercase text-[var(--app-muted)]">Client</p><p className="mt-1 text-sm font-semibold text-[var(--app-text)]">{selectedClient?.name || 'Client'}</p></div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Deal Title</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Deal Title</label>
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   value={dealForm.title}
                   onChange={e => setDealForm({...dealForm, title: e.target.value})}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Product / Service (Optional)</label>
-                <input type="text" className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={dealForm.productServiceName} onChange={e => setDealForm({...dealForm, productServiceName: e.target.value})} placeholder="e.g. Website Development" />
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Product / Service (Optional)</label>
+                <input type="text" className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" value={dealForm.productServiceName} onChange={e => setDealForm({...dealForm, productServiceName: e.target.value})} placeholder="e.g. Website Development" />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Deal Value</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Deal Value</label>
                   <MoneyInput
                     aria-label="Deal value"
                     value={dealForm.value}
                     currency={settings.currency}
                     required
-                    className="px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     onChange={value => setDealForm({...dealForm, value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Stage</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Stage</label>
                   <select 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm bg-white"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm bg-white"
                     value={dealForm.stage}
                     onChange={e => setDealForm({...dealForm, stage: e.target.value})}
                   >
                     {dealCreationStages.map(s => <option key={s.name} value={s.name}>{s.name}</option>)}
                   </select>
-                  <p className="text-xs font-semibold text-blue-600">{getDealProbability(dealForm.stage)}% Probability</p>
+                  <p className="text-xs font-semibold text-[var(--app-primary)]">{getDealProbability(dealForm.stage)}% Probability</p>
                 </div>
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Expected Close Date</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Expected Close Date</label>
                 <input 
                   type="date" 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   value={dealForm.expectedCloseDate}
                   onChange={e => setDealForm({...dealForm, expectedCloseDate: e.target.value})}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Notes (Optional)</label>
-                <textarea rows={3} className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm" value={dealForm.notes} onChange={e => setDealForm({...dealForm, notes: e.target.value})} placeholder="Short context about this deal" />
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Notes (Optional)</label>
+                <textarea rows={3} className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" value={dealForm.notes} onChange={e => setDealForm({...dealForm, notes: e.target.value})} placeholder="Short context about this deal" />
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="app-modal-footer">
                 <Button type="button" variant="outline" onClick={() => setShowAddDealModal(false)}>Cancel</Button>
                 <Button type="submit" disabled={savingDeal || !defaultDealStage}>{savingDeal ? 'Saving…' : 'Create Deal'}</Button>
               </div>
@@ -1407,35 +1433,34 @@ export default function ClientsPage() {
         )}
 
         {showAddTaskModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Add Task dialog">
             <form onSubmit={handleCreateTask} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Add Task & Follow-up</h3>
-              <p className="text-sm text-slate-500">Related to: {selectedClient?.name || 'Client'}</p>
+              <ModalHeader title="Add Task & Follow-up" subtitle={<>Related to: {selectedClient?.name || 'Client'}</>} onClose={() => setShowAddTaskModal(false)} />
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Task Title</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Task Title</label>
                 <input 
                   type="text" 
                   required 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   value={taskForm.title}
                   onChange={e => setTaskForm({...taskForm, title: e.target.value})}
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Schedule Date &amp; Time</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Schedule Date &amp; Time</label>
                   <input 
                     type="datetime-local"
                     required 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                     value={taskForm.dueDate}
                     onChange={e => setTaskForm({...taskForm, dueDate: e.target.value})}
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-500 uppercase">Priority</label>
+                  <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Priority</label>
                   <select 
-                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm bg-white"
+                    className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm bg-white"
                     value={taskForm.priority}
                     onChange={e => setTaskForm({...taskForm, priority: e.target.value as any})}
                   >
@@ -1445,17 +1470,17 @@ export default function ClientsPage() {
                   </select>
                 </div>
               </div>
-              <p className="text-xs font-medium text-slate-600">{Date.parse(taskForm.dueDate) > currentTime ? 'This task will be scheduled.' : 'This task is due now or overdue.'}</p>
+              <p className="text-xs font-medium text-[var(--app-muted)]">{Date.parse(taskForm.dueDate) > currentTime ? 'This task will be scheduled.' : 'This task is due now or overdue.'}</p>
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Description</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Description</label>
                 <textarea 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   rows={3}
                   value={taskForm.description}
                   onChange={e => setTaskForm({...taskForm, description: e.target.value})}
                 />
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="app-modal-footer">
                 <Button type="button" variant="outline" onClick={() => setShowAddTaskModal(false)}>Cancel</Button>
                 <Button type="submit" disabled={savingTask}>{savingTask ? 'Saving…' : 'Create Task'}</Button>
               </div>
@@ -1464,34 +1489,33 @@ export default function ClientsPage() {
         )}
 
         {editingTask && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Edit Task dialog">
             <form onSubmit={handleEditTask} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl">
-              <h3 className="text-lg font-bold text-slate-900">Edit Task</h3>
-              <p className="text-sm text-slate-500">Related to: {selectedClient?.name || 'Client'}</p>
-              <input required className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.title} onChange={(event) => setEditTaskForm({ ...editTaskForm, title: event.target.value })} placeholder="Task title" />
-              <div className="grid grid-cols-2 gap-4"><input required type="datetime-local" className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.dueDate} onChange={(event) => setEditTaskForm({ ...editTaskForm, dueDate: event.target.value })} /><select className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm" value={editTaskForm.priority} onChange={(event) => setEditTaskForm({ ...editTaskForm, priority: event.target.value as typeof editTaskForm.priority })}><option>Low</option><option>Medium</option><option>High</option></select></div>
-              <select className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm" value={editTaskForm.type} onChange={(event) => setEditTaskForm({ ...editTaskForm, type: event.target.value as typeof editTaskForm.type })}><option>Follow-up</option><option>Task</option></select>
-              <textarea rows={4} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editTaskForm.description} onChange={(event) => setEditTaskForm({ ...editTaskForm, description: event.target.value })} placeholder="Description" />
-              <div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={() => setEditingTask(null)}>Cancel</Button><Button type="submit" disabled={savingTaskEdit}>{savingTaskEdit ? 'Saving…' : 'Save Changes'}</Button></div>
+              <ModalHeader title="Edit Task" subtitle={<>Related to: {selectedClient?.name || 'Client'}</>} onClose={() => setEditingTask(null)} />
+              <input required className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm" value={editTaskForm.title} onChange={(event) => setEditTaskForm({ ...editTaskForm, title: event.target.value })} placeholder="Task title" />
+              <div className="grid grid-cols-2 gap-4"><input required type="datetime-local" className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm" value={editTaskForm.dueDate} onChange={(event) => setEditTaskForm({ ...editTaskForm, dueDate: event.target.value })} /><select className="w-full rounded-xl border border-[var(--app-border)] bg-white px-4 py-2 text-sm" value={editTaskForm.priority} onChange={(event) => setEditTaskForm({ ...editTaskForm, priority: event.target.value as typeof editTaskForm.priority })}><option>Low</option><option>Medium</option><option>High</option></select></div>
+              <select className="w-full rounded-xl border border-[var(--app-border)] bg-white px-4 py-2 text-sm" value={editTaskForm.type} onChange={(event) => setEditTaskForm({ ...editTaskForm, type: event.target.value as typeof editTaskForm.type })}><option>Follow-up</option><option>Task</option></select>
+              <textarea rows={4} className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm" value={editTaskForm.description} onChange={(event) => setEditTaskForm({ ...editTaskForm, description: event.target.value })} placeholder="Description" />
+              <div className="app-modal-footer"><Button type="button" variant="outline" onClick={() => setEditingTask(null)}>Cancel</Button><Button type="submit" disabled={savingTaskEdit}>{savingTaskEdit ? 'Saving…' : 'Save Changes'}</Button></div>
             </form>
           </div>
         )}
 
         {showAddNoteModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Add Note dialog">
             <form onSubmit={handleCreateNote} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
-              <h3 className="text-lg font-bold text-slate-900">Add Note</h3>
+              <ModalHeader title="Add Note" onClose={() => setShowAddNoteModal(false)} />
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase">Note Content</label>
+                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Note Content</label>
                 <textarea 
                   required 
-                  className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm"
+                  className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
                   rows={4}
                   value={noteForm.content}
                   onChange={e => setNoteForm({...noteForm, content: e.target.value})}
                 />
               </div>
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="app-modal-footer">
                 <Button type="button" variant="outline" onClick={() => setShowAddNoteModal(false)}>Cancel</Button>
                 <Button type="submit" disabled={savingNote}>{savingNote ? 'Saving…' : 'Save Note'}</Button>
               </div>
@@ -1500,11 +1524,11 @@ export default function ClientsPage() {
         )}
 
         {editingNoteId && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Edit Note dialog">
             <form onSubmit={handleEditNote} className="w-full max-w-lg space-y-4 rounded-2xl bg-white p-6 shadow-xl">
-              <h3 className="text-lg font-bold text-slate-900">Edit Note</h3>
-              <textarea required rows={5} className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm" value={editNoteContent} onChange={(event) => setEditNoteContent(event.target.value)} />
-              <div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={() => setEditingNoteId(null)}>Cancel</Button><Button type="submit" disabled={savingNoteEdit}>{savingNoteEdit ? 'Saving…' : 'Save Changes'}</Button></div>
+              <ModalHeader title="Edit Note" onClose={() => setEditingNoteId(null)} />
+              <textarea required rows={5} className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm" value={editNoteContent} onChange={(event) => setEditNoteContent(event.target.value)} />
+              <div className="app-modal-footer"><Button type="button" variant="outline" onClick={() => setEditingNoteId(null)}>Cancel</Button><Button type="submit" disabled={savingNoteEdit}>{savingNoteEdit ? 'Saving…' : 'Save Changes'}</Button></div>
             </form>
           </div>
         )}

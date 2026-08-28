@@ -58,7 +58,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     const handleResize = () => {
-      const desktop = window.innerWidth >= 1024;
+      const desktop = window.innerWidth >= 1200;
       setIsDesktop(desktop);
       if (desktop) setIsMobileOpen(false);
     };
@@ -116,14 +116,14 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
   return (
     <MobileNavigationProvider openNavigation={() => setIsMobileOpen(true)} isOpen={isMobileOpen}>
       <div
-        className="flex h-[100dvh] min-h-screen min-w-0 overflow-hidden bg-[#f7f7f8] text-slate-800 antialiased"
+        className="flex h-[100dvh] min-h-screen min-w-0 overflow-hidden bg-[var(--app-canvas)] text-[var(--app-text)] antialiased"
         style={{ '--sidebar-width': isDesktop ? (sidebarCollapsed ? '68px' : '248px') : '0px' } as React.CSSProperties}
       >
       {/* Mobile Backdrop */}
       {isMobileOpen && (
         <div
           onClick={() => setIsMobileOpen(false)}
-          className="fixed inset-0 z-40 bg-slate-900/20 backdrop-blur-[1px] lg:hidden"
+          className="fixed inset-0 z-40 bg-[var(--app-primary)]/30 backdrop-blur-[1px] xl:hidden"
           aria-hidden="true"
         />
       )}
@@ -137,7 +137,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
         role={!isDesktop ? 'dialog' : undefined}
         aria-modal={!isDesktop ? true : undefined}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] max-w-[85vw] -translate-x-full flex-col border-r border-slate-200 bg-white text-slate-700 shadow-xl transition-transform duration-200 ease-out lg:relative lg:z-auto lg:w-[var(--sidebar-width)] lg:max-w-none lg:translate-x-0 lg:shadow-none lg:transition-[width,transform] lg:duration-200",
+          "fixed inset-y-0 left-0 z-50 flex w-[min(300px,85vw)] max-w-[85vw] -translate-x-full flex-col border-r border-white/10 bg-[var(--app-primary)] text-white shadow-[var(--app-shadow-lg)] transition-transform duration-200 ease-out xl:relative xl:z-auto xl:w-[var(--sidebar-width)] xl:max-w-none xl:translate-x-0 xl:shadow-none xl:transition-[width,transform] xl:duration-200",
           isMobileOpen && "translate-x-0",
           sidebarCollapsed ? "items-center" : "items-stretch"
         )}
@@ -145,17 +145,17 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       >
         {/* Logo Section */}
         <div className={cn(
-          "flex h-14 items-center border-b border-slate-100",
+          "flex h-16 items-center border-b border-white/10",
           sidebarCollapsed ? "h-auto flex-col gap-2 px-2 py-3" : "justify-between px-4"
         )}>
           <div className="flex items-center gap-3">
             <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-cover bg-center"
+              className="flex h-9 w-9 items-center justify-center rounded-[var(--app-radius-control)] border border-white/15 bg-cover bg-center shadow-[var(--app-shadow-xs)]"
               style={{ backgroundColor: settings.accentColor || '#3b82f6', ...(settings.logoUrl ? { backgroundImage: `url(${settings.logoUrl})` } : {}) }}
             >
               {!settings.logoUrl && <Briefcase size={18} className="text-white" />}
             </div>
-            {!sidebarCollapsed && <div className="min-w-0"><p className="max-w-[150px] truncate text-sm font-semibold tracking-tight text-slate-900">{settings.businessName}</p><p className="max-w-[150px] truncate text-[11px] text-slate-400">{currentOrganization?.name || 'Workspace'}</p></div>}
+            {!sidebarCollapsed && <div className="min-w-0"><p className="max-w-[150px] truncate text-sm font-semibold tracking-tight text-white">{settings.businessName}</p><p className="max-w-[150px] truncate text-xs text-white/60">{currentOrganization?.name || 'Workspace'}</p></div>}
           </div>
           {!sidebarCollapsed ? (
             <button 
@@ -164,18 +164,18 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
               onClick={() => isDesktop ? setIsCollapsed(true) : setIsMobileOpen(false)}
               aria-label={isDesktop ? 'Close sidebar' : 'Close navigation'}
               title={isDesktop ? 'Close sidebar' : 'Close navigation'}
-              className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+              className="flex min-h-11 min-w-11 items-center justify-center rounded-[var(--app-radius-control)] text-white/65 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"
             >
               <PanelLeftClose size={18} />
             </button>
-          ) : <button type="button" onClick={() => setIsCollapsed(false)} aria-label="Open sidebar" title="Open sidebar" className="flex min-h-11 min-w-11 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"><PanelLeftOpen size={18} /></button>}
+          ) : <button type="button" onClick={() => setIsCollapsed(false)} aria-label="Open sidebar" title="Open sidebar" className="flex min-h-11 min-w-11 items-center justify-center rounded-[var(--app-radius-control)] text-white/65 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]"><PanelLeftOpen size={18} /></button>}
         </div>
 
         {/* Navigation */}
         <nav className={cn("flex-1 overflow-y-auto py-4", sidebarCollapsed ? "px-2" : "px-3")} aria-label="Primary navigation">
           {sidebarSections.map((section) => (
             <div key={section.label} className="mb-4 last:mb-0">
-              {!sidebarCollapsed && <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{section.label}</p>}
+              {!sidebarCollapsed && <p className="mb-1 px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-white/45">{section.label}</p>}
               <div className="space-y-0.5">
                 {section.items.map((item) => {
                   const isActive = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
@@ -184,16 +184,16 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
                       key={item.name}
                       href={item.href}
                       className={cn(
-                        "group flex h-9 items-center gap-3 rounded-lg text-[13px] transition-colors duration-150",
+                        "group flex h-10 items-center gap-3 rounded-[var(--app-radius-control)] text-[13px] transition-colors duration-150",
                         sidebarCollapsed ? "justify-center px-0" : "px-3",
                         isActive
-                          ? "bg-blue-50 font-medium text-slate-900"
-                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                          ? "bg-[var(--app-accent)] font-semibold text-[var(--app-primary)]"
+                          : "text-white/72 hover:bg-white/10 hover:text-white"
                       )}
                       title={sidebarCollapsed ? item.name : undefined}
                       onClick={() => setIsMobileOpen(false)}
                     >
-                      <item.icon size={18} className={cn("shrink-0", isActive ? "text-blue-600" : "text-slate-500 group-hover:text-slate-700")} />
+                      <item.icon size={18} className={cn("shrink-0", isActive ? "text-[var(--app-primary)]" : "text-white/60 group-hover:text-white")} />
                       {!sidebarCollapsed && <span>{item.name}</span>}
                     </Link>
                   );
@@ -205,20 +205,20 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
         {/* Footer Profile Section */}
         <div className={cn(
-          "border-t border-slate-100 p-3",
+          "border-t border-white/10 p-3",
           sidebarCollapsed ? "flex justify-center" : ""
         )}>
           {sidebarCollapsed ? (
-             <button title="Sign out" aria-label="Sign out" onClick={() => signOut()} className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white transition-opacity hover:opacity-85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">{user?.name.slice(0, 2).toUpperCase()}</button>
+             <button title="Sign out" aria-label="Sign out" onClick={() => signOut()} className="flex h-10 w-10 items-center justify-center rounded-full bg-white/12 text-xs font-semibold text-white transition-colors hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]">{user?.name.slice(0, 2).toUpperCase()}</button>
           ) : (
             <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-800 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/12 text-xs font-semibold text-white">{user?.name.slice(0, 2).toUpperCase()}</div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-slate-900">{user?.name}</p>
-                <p className="truncate text-xs text-slate-500">{user?.email}</p>
-                <p className="truncate text-[10px] text-slate-500">{membership?.role || 'Loading role…'}</p>
+                <p className="truncate text-sm font-medium text-white">{user?.name}</p>
+                <p className="truncate text-xs text-white/60">{user?.email}</p>
+                <p className="sidebar-role-label truncate text-[10px] text-white/45">{membership?.role || 'Loading role…'}</p>
               </div>
-              <button title="Sign out" onClick={() => signOut()} className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30" aria-label="Sign out"><LogOut size={16} /></button>
+              <button title="Sign out" onClick={() => signOut()} className="rounded-[var(--app-radius-control)] p-2 text-white/55 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-accent)]" aria-label="Sign out"><LogOut size={16} /></button>
             </div>
           )}
         </div>
@@ -228,8 +228,8 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <main className="app-main-content min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 2xl:p-8">
           <div className="mx-auto w-full min-w-0 max-w-[1536px]">
-            {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
-            {isReadOnly && <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">{licenseState.status === 'UNKNOWN' ? 'Subscription status could not be verified. This workspace is temporarily read-only.' : licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
+            {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-[color-mix(in_srgb,var(--app-warning)_50%,white)] bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] px-3 py-2 text-sm text-[var(--app-text)]">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
+            {isReadOnly && <div className="mb-4 rounded-lg border border-[color-mix(in_srgb,var(--app-warning)_50%,white)] bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] px-3 py-2 text-sm text-[var(--app-text)]">{licenseState.status === 'UNKNOWN' ? 'Subscription status could not be verified. This workspace is temporarily read-only.' : licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}
             {children}
             <SecurityTrustFooter />
           </div>

@@ -15,8 +15,8 @@ import {
   Briefcase, 
   Plus,
   Calendar, 
+  ChevronDown,
   ArrowRight,
-  X,
   GripVertical
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -28,6 +28,7 @@ import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
 import { loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { IconActionButton } from '@/components/IconActionButton';
+import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
 import { emitStartupTiming, markStartup, observeStartupLcp } from '@/lib/startupTiming';
 
@@ -39,7 +40,7 @@ type SecondaryDashboardCard = 'leads' | 'clients' | 'deals' | 'activity';
 type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
 type DashboardRangePreset = '7' | '28' | '60' | '365' | 'custom';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
-const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'potentialSalesKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
+const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['potentialSalesKpi', 'leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: string; days?: number }> = [
   { value: '7', label: '7 Days', days: 7 },
   { value: '28', label: '28 Days', days: 28 },
@@ -48,14 +49,14 @@ const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: strin
   { value: 'custom', label: 'Custom' },
 ];
 
-function DashboardCurrencyValue({ value, currency }: { value: number; currency: string }) {
+function DashboardCurrencyValue({ value, currency, className }: { value: number; currency: string; className?: string }) {
   const safeCurrency = /^[A-Z]{3}$/.test(currency) ? currency : 'USD';
   const compactValue = Math.abs(value) >= 1_000_000
     ? new Intl.NumberFormat(undefined, { style: 'currency', currency: safeCurrency, notation: 'compact', maximumFractionDigits: 2 }).format(value)
     : null;
-  if (compactValue) return <span className="mt-3 inline-block max-w-full truncate text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]" title={formatCurrency(value, currency)}>{compactValue}</span>;
+  if (compactValue) return <span className={cn('dashboard-currency-value mt-3 inline-block max-w-full truncate text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]', className)} title={formatCurrency(value, currency)}>{compactValue}</span>;
   const parts = formatCurrencyParts(value, currency);
-  return <span className="mt-3 inline-flex max-w-full whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">
+  return <span className={cn('dashboard-currency-value mt-3 inline-flex max-w-full whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]', className)}>
     <span>{parts.beforeDecimal}</span>
     {parts.decimal && <span className="text-[18px] font-semibold align-baseline">{parts.decimal}</span>}
     {parts.afterDecimal && <span>{parts.afterDecimal}</span>}
@@ -109,9 +110,13 @@ export default function DashboardPage() {
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
   const [dashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [dashboardRangeOpen, setDashboardRangeOpen] = useState(false);
   const quickActionsMenuRef = useRef<HTMLDivElement>(null);
+  const dashboardRangeMenuRef = useRef<HTMLDivElement>(null);
   const dashboardPaintMeasured = useRef(false);
   const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
+  const dashboardRangeLabel = rangePreset === 'custom' ? 'Custom range' : `Last ${rangePreset} days`;
+  const dashboardDateRangeLabel = dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid range';
 
   useEffect(() => {
     if (!quickActionsOpen) return;
@@ -128,6 +133,22 @@ export default function DashboardPage() {
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [quickActionsOpen]);
+
+  useEffect(() => {
+    if (!dashboardRangeOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!dashboardRangeMenuRef.current?.contains(event.target as Node)) setDashboardRangeOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDashboardRangeOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [dashboardRangeOpen]);
 
   useEffect(() => {
     window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
@@ -384,7 +405,7 @@ export default function DashboardPage() {
                 aria-expanded={quickActionsOpen}
                 aria-haspopup="menu"
                 onClick={() => setQuickActionsOpen((open) => !open)}
-                className="dashboard-mobile-quick-action-trigger flex items-center justify-center rounded-lg bg-blue-600 text-white shadow-sm transition-colors hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                className="dashboard-mobile-quick-action-trigger flex items-center justify-center rounded-lg bg-[var(--app-primary)] text-white shadow-sm transition-colors hover:bg-[var(--app-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30"
               >
                 <Plus size={20} />
               </button>
@@ -402,84 +423,85 @@ export default function DashboardPage() {
       <div className="space-y-3">
         <div className="dashboard-key-metrics-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="dashboard-key-metrics-title">
-            <h2 className="text-sm font-semibold text-slate-800">Key Metrics</h2>
-            <p className="text-xs text-slate-500">{dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid date range'}</p>
+            <h2 className="text-sm font-semibold text-[var(--app-text)]">Key Metrics</h2>
+            <p className="sr-only">{dashboardDateRangeLabel}</p>
           </div>
-          <div className="dashboard-range-selector -mx-1 overflow-x-auto px-1 pb-1" role="group" aria-label="Dashboard time range">
-            <div className="dashboard-range-selector-inner flex min-w-max gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-              {DASHBOARD_RANGE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={rangePreset === option.value}
-                  onClick={() => setRangePreset(option.value)}
-                  className={cn('rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30', rangePreset === option.value ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50')}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+          <div ref={dashboardRangeMenuRef} className="dashboard-range-selector">
+            <button type="button" className="dashboard-range-trigger" aria-haspopup="listbox" aria-expanded={dashboardRangeOpen} aria-label={`Dashboard time range: ${dashboardRangeLabel}, ${dashboardDateRangeLabel}`} onClick={() => setDashboardRangeOpen((open) => !open)}>
+              <span className="dashboard-range-trigger-preset">{dashboardRangeLabel}</span>
+              <span className="dashboard-range-trigger-date">{dashboardDateRangeLabel}</span>
+              <ChevronDown size={18} aria-hidden="true" className={`dashboard-range-select-chevron transition-transform ${dashboardRangeOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {dashboardRangeOpen && <div className={`dashboard-range-menu ${rangePreset === 'custom' ? 'dashboard-range-menu-with-custom' : 'dashboard-range-menu-simple'}`} role="listbox" aria-label="Dashboard time range options">
+              <div className="dashboard-range-menu-options">
+                {DASHBOARD_RANGE_OPTIONS.map((option) => {
+                  const optionLabel = option.value === 'custom' ? 'Custom range' : `Last ${option.label.toLowerCase()}`;
+                  return <button key={option.value} type="button" role="option" aria-selected={rangePreset === option.value} className={`dashboard-range-option ${rangePreset === option.value ? 'dashboard-range-option-active' : ''}`} onClick={() => { setRangePreset(option.value); if (option.value !== 'custom') setDashboardRangeOpen(false); }}>
+                    <span>{optionLabel}</span>
+                    {rangePreset === option.value && <Check size={16} aria-hidden="true" />}
+                  </button>;
+                })}
+              </div>
+              {rangePreset === 'custom' && <div className="dashboard-range-custom-panel">
+                <label>
+                  Start date
+                  <input type="date" value={customStartDate} onChange={(event) => setCustomStartDate(event.target.value)} />
+                </label>
+                <label>
+                  End date
+                  <input type="date" value={customEndDate} onChange={(event) => setCustomEndDate(event.target.value)} />
+                </label>
+              </div>}
+            </div>}
           </div>
         </div>
-        {rangePreset === 'custom' && (
-          <div className="dashboard-custom-date-range flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-end">
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-slate-600">
-              Start Date
-              <input type="date" value={customStartDate} onChange={(event) => setCustomStartDate(event.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-            </label>
-            <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-slate-600">
-              End Date
-              <input type="date" value={customEndDate} onChange={(event) => setCustomEndDate(event.target.value)} className="h-9 rounded-md border border-slate-200 bg-white px-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
-            </label>
-          </div>
-        )}
       </div>
       <div data-startup-lcp="dashboard-kpi" className="dashboard-kpi-grid grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-6">
         <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Users size={14} /></span><span>Leads</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{totalLeads}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Potential customers</p>
+        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><Users size={14} /></span><span>Leads</span></div>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{totalLeads}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Potential customers</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="openDealsKpi" order={kpiCardOrder.indexOf('openDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('openDealsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-indigo-50 p-1 text-indigo-600"><TrendingUp size={14} /></span><span>Open Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{activeOpportunities}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Deals currently in progress</p>
+        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><TrendingUp size={14} /></span><span>Open Deals</span></div>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{activeOpportunities}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Deals currently in progress</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="followupsKpi" order={kpiCardOrder.indexOf('followupsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followupsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-orange-50 p-1 text-orange-600"><Clock size={14} /></span><span>Follow-ups Due</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{followUpsDue}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Tasks needing your attention</p>
+        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[color-mix(in_srgb,var(--app-warning)_14%,white)] p-1 text-[var(--app-warning)]"><Clock size={14} /></span><span>Follow-ups Due</span></div>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{followUpsDue}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Tasks needing your attention</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="wonDealsKpi" order={kpiCardOrder.indexOf('wonDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('wonDealsKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-green-50 p-1 text-green-600"><CheckCircle2 size={14} /></span><span>Won Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-slate-900 tabular-nums sm:text-[28px]">{wonDealsCount}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Successfully closed deals</p>
+        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><CheckCircle2 size={14} /></span><span>Won Deals</span></div>
+          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{wonDealsCount}</span>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Successfully closed deals</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="potentialSalesKpi" order={kpiCardOrder.indexOf('potentialSalesKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('potentialSalesKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-purple-50 p-1 text-purple-600"><DollarSign size={14} /></span><span>Potential Sales</span></div>
-          <DashboardCurrencyValue value={pipelineValue} currency={settings.currency} />
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Total value of open deals</p>
+        <Card className="dashboard-kpi-card dashboard-potential-sales-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-accent)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading dashboard-potential-sales-label flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="dashboard-potential-sales-icon rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><DollarSign size={14} /></span><span>Potential Sales</span></div>
+          <DashboardCurrencyValue value={pipelineValue} currency={settings.currency} className="dashboard-potential-sales-value" />
+          <p className="dashboard-potential-sales-description mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Total value of open deals</p>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="salesMonthKpi" order={kpiCardOrder.indexOf('salesMonthKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('salesMonthKpi', 'kpis')}>
-        <Card className="flex h-full min-h-[118px] flex-col rounded-[14px] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-[0_6px_16px_rgba(15,23,42,0.08)] sm:min-h-[128px] sm:p-4">
-          <div className="flex items-center gap-2 pr-8 text-xs font-semibold text-slate-500"><span className="rounded-md bg-blue-50 p-1 text-blue-600"><Briefcase size={14} /></span><span>Sales This Month</span></div>
+        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
+          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><Briefcase size={14} /></span><span>Sales This Month</span></div>
           <DashboardCurrencyValue value={salesThisMonth} currency={settings.currency} />
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-slate-500">Sales closed this month</p>
+          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Sales closed this month</p>
         </Card>
         </MovableDashboardCard>
       </div>
@@ -493,25 +515,25 @@ export default function DashboardPage() {
         {/* Follow-ups Due */}
         <MovableDashboardCard cardId="followups" order={primaryCardOrder.indexOf('followups')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followups', 'primary')}>
         <Card className="flex h-full flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">Follow-ups &amp; Tasks</h3>
-              <p className="text-xs text-slate-500">Upcoming and overdue actions</p>
+              <h3 className="text-sm font-semibold text-[var(--app-text)]">Follow-ups &amp; Tasks</h3>
+              <p className="text-xs text-[var(--app-muted)]">Upcoming and overdue actions</p>
             </div>
             <Badge variant="gray">{followUpItems.length} open</Badge>
           </div>
 
           <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {followUpItems.map((item) => (
-              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="flex cursor-pointer items-start justify-between gap-3 rounded-lg border-b border-slate-100 p-3 transition-colors duration-150 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
+              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="flex cursor-pointer items-start justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors duration-150 hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
                 <div className="w-full min-w-0 flex-1 space-y-1 text-left">
                     <div className="flex min-w-0 items-center gap-1.5">
                       <Badge variant={sourceBadgeVariant(item.source)}>{item.source}</Badge>
                       <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'OVERDUE' : isToday(new Date(item.scheduledAt)) ? 'DUE TODAY' : 'SCHEDULED'}</Badge>
-                      <span className="truncate text-xs font-medium text-slate-700">{item.relatedName}</span>
+                      <span className="truncate text-xs font-medium text-[var(--app-text)]">{item.relatedName}</span>
                     </div>
-                    <p className="min-w-0 truncate text-sm font-medium text-slate-900">{item.title}</p>
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                    <p className="min-w-0 truncate text-sm font-medium text-[var(--app-text)]">{item.title}</p>
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--app-muted)]">
                       <span className="flex items-center gap-1"><Calendar size={12} /> {formatCompactDateTime(item.scheduledAt, settings.timezone)}</span>
                       <span>· {item.priority} Priority</span>
                     </div>
@@ -523,7 +545,7 @@ export default function DashboardPage() {
             ))}
 
             {followUpItems.length === 0 && (
-              <div className="py-12 text-center text-slate-400 text-sm">
+              <div className="py-12 text-center text-[var(--app-tertiary)] text-sm">
                 No pending follow-ups. Great job!
               </div>
             )}
@@ -538,26 +560,26 @@ export default function DashboardPage() {
         {/* Recent Leads */}
         <MovableDashboardCard cardId="leads" order={secondaryCardOrder.indexOf('leads')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leads', 'secondary')}>
         <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
             <div>
-              <h3 className="font-bold text-slate-800">Recent Leads</h3>
-              <p className="text-xs text-slate-500">Latest prospects registered in the system</p>
+              <h3 className="font-bold text-[var(--app-text)]">Recent Leads</h3>
+              <p className="text-xs text-[var(--app-muted)]">Latest prospects registered in the system</p>
             </div>
             <Badge variant="purple">{totalLeads} Total</Badge>
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
             {leads.slice(0, 5).map((lead) => (
-              <div key={lead.id} role="button" tabIndex={0} onClick={() => openLead(lead.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openLead(lead.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
+              <div key={lead.id} role="button" tabIndex={0} onClick={() => openLead(lead.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openLead(lead.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
                 <div>
-                  <p className="font-semibold text-sm text-slate-900">{lead.name}</p>
-                  <p className="text-xs text-slate-500">{lead.company || 'Independent'} • Source: {lead.source}</p>
+                  <p className="font-semibold text-sm text-[var(--app-text)]">{lead.name}</p>
+                  <p className="text-xs text-[var(--app-muted)]">{lead.company || 'Independent'} • Source: {lead.source}</p>
                 </div>
                 <div className="text-right space-y-1">
                   <Badge variant={lead.status === 'New' ? 'blue' : lead.status === 'Opportunity' ? 'purple' : 'gray'}>
                     {lead.status}
                   </Badge>
-                  <p className="text-[10px] text-slate-400">{new Date(lead.createdAt).toISOString().split('T')[0]}</p>
+                  <p className="text-[10px] text-[var(--app-tertiary)]">{new Date(lead.createdAt).toISOString().split('T')[0]}</p>
                 </div>
               </div>
             ))}
@@ -567,42 +589,42 @@ export default function DashboardPage() {
 
         <MovableDashboardCard cardId="clients" order={secondaryCardOrder.indexOf('clients')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('clients', 'secondary')}>
         <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
             <div>
-              <h3 className="font-bold text-slate-800">Recent Clients</h3>
-              <p className="text-xs text-slate-500">Latest active client records</p>
+              <h3 className="font-bold text-[var(--app-text)]">Recent Clients</h3>
+              <p className="text-xs text-[var(--app-muted)]">Latest active client records</p>
             </div>
             <Badge variant="green">{clients.length} Loaded</Badge>
           </div>
           <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {clients.slice(0, 5).map((client) => (
-              <div key={client.id} role="button" tabIndex={0} onClick={() => openClient(client.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openClient(client.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{client.name}</p><p className="truncate text-xs text-slate-500">{client.company || client.email}</p></div>
-                <p className="shrink-0 text-[10px] text-slate-400">{new Date(client.createdAt).toLocaleDateString()}</p>
+              <div key={client.id} role="button" tabIndex={0} onClick={() => openClient(client.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openClient(client.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{client.name}</p><p className="truncate text-xs text-[var(--app-muted)]">{client.company || client.email}</p></div>
+                <p className="shrink-0 text-[10px] text-[var(--app-tertiary)]">{new Date(client.createdAt).toLocaleDateString()}</p>
               </div>
             ))}
-            {clients.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No clients yet.</div>}
+            {clients.length === 0 && <div className="py-12 text-center text-sm text-[var(--app-tertiary)]">No clients yet.</div>}
           </div>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="deals" order={secondaryCardOrder.indexOf('deals')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('deals', 'secondary')}>
         <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
             <div>
-              <h3 className="font-bold text-slate-800">Recent Deals</h3>
-              <p className="text-xs text-slate-500">Latest opportunities and closed deals</p>
+              <h3 className="font-bold text-[var(--app-text)]">Recent Deals</h3>
+              <p className="text-xs text-[var(--app-muted)]">Latest opportunities and closed deals</p>
             </div>
             <Badge variant="purple">{deals.length} Loaded</Badge>
           </div>
           <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {deals.slice(0, 5).map((deal) => (
-              <div key={deal.id} role="button" tabIndex={0} onClick={() => openDeal(deal.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDeal(deal.id); } }} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-b border-slate-100 p-3 transition-colors hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 last:border-b-0">
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{deal.title}</p><p className="truncate text-xs text-slate-500">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>
+              <div key={deal.id} role="button" tabIndex={0} onClick={() => openDeal(deal.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDeal(deal.id); } }} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
+                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{deal.title}</p><p className="truncate text-xs text-[var(--app-muted)]">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>
                 <Badge variant={deal.status === 'Won' ? 'green' : deal.status === 'Lost' ? 'red' : 'blue'}>{deal.status}</Badge>
               </div>
             ))}
-            {deals.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No deals yet.</div>}
+            {deals.length === 0 && <div className="py-12 text-center text-sm text-[var(--app-tertiary)]">No deals yet.</div>}
           </div>
         </Card>
         </MovableDashboardCard>
@@ -610,23 +632,23 @@ export default function DashboardPage() {
         {/* Recent Activity */}
         <MovableDashboardCard cardId="activity" order={secondaryCardOrder.indexOf('activity')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('activity', 'secondary')}>
         <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
             <div>
-              <h3 className="font-bold text-slate-800">Recent Activity</h3>
-              <p className="text-xs text-slate-500">System audit log of sales operations</p>
+              <h3 className="font-bold text-[var(--app-text)]">Recent Activity</h3>
+              <p className="text-xs text-[var(--app-muted)]">System audit log of sales operations</p>
             </div>
             <Badge variant="gray">{activities.length} Events</Badge>
           </div>
 
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
             {activities.map((act) => (
-              <div key={act.id} className="flex items-start gap-3 p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                <div className="w-2 h-2 mt-1.5 rounded-full bg-blue-600 shrink-0" />
+              <div key={act.id} className="flex items-start gap-3 p-3 bg-[var(--app-surface-subtle)] border border-[var(--app-border-subtle)] rounded-xl">
+                <div className="w-2 h-2 mt-1.5 rounded-full bg-[var(--app-primary)] shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-900">{act.description}</p>
+                  <p className="text-sm font-medium text-[var(--app-text)]">{act.description}</p>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="text-[10px] text-slate-400">{new Date(act.timestamp).toISOString().replace('T', ' ').substring(0, 16)}</span>
-                    {act.meta && <span className="text-[10px] font-bold text-green-600 bg-green-50 px-1.5 py-0.5 rounded">{act.meta}</span>}
+                    <span className="text-[10px] text-[var(--app-tertiary)]">{new Date(act.timestamp).toISOString().replace('T', ' ').substring(0, 16)}</span>
+                    {act.meta && <span className="text-[10px] font-bold text-[var(--app-primary)] bg-[var(--app-accent-soft)] px-1.5 py-0.5 rounded">{act.meta}</span>}
                   </div>
                 </div>
               </div>
@@ -637,47 +659,42 @@ export default function DashboardPage() {
       </div>
 
       {/* Modals for Quick Actions */}
-      {dashboardMetricsError && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800" role="status">{dashboardMetricsError}</p>}
+      {dashboardMetricsError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] p-3 text-sm text-[var(--app-text)]" role="status">{dashboardMetricsError}</p>}
       {activeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="relative w-full max-w-lg space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-[0_18px_55px_rgba(15,23,42,0.14)]">
-              <button 
-                onClick={() => setActiveModal(null)}
-                className="absolute top-4 right-4 p-1 text-slate-400 hover:text-slate-600 rounded-lg"
-              >
-                <X size={20} />
-              </button>
+        <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4">
+          <div className="app-modal-panel relative w-full max-w-lg space-y-5 p-5" role="dialog" aria-modal="true" aria-label={`${activeModal === 'lead' ? 'Add Lead' : activeModal === 'client' ? 'Add Client' : 'Add Task'} dialog`}>
+              <div className="absolute right-3 top-3"><ModalCloseButton onClose={() => setActiveModal(null)} /></div>
 
               {activeModal === 'lead' && (
                 <form onSubmit={handleCreateLead} className="space-y-4">
-                  <h3 className="text-lg font-bold text-slate-900">Add New Lead</h3>
-                  {(leadError || workspaceLoading) && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-700" role="alert">{leadError || 'Workspace is still loading. Please wait a moment.'}</p>}
+                  <h3 className="text-lg font-bold text-[var(--app-text)]">Add New Lead</h3>
+                  {(leadError || workspaceLoading) && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] p-3 text-sm text-[var(--app-text)]" role="alert">{leadError || 'Workspace is still loading. Please wait a moment.'}</p>}
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Full Name</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Full Name</label>
                     <input 
                       type="text" 
                       required 
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                       value={leadForm.name}
                       onChange={e => setLeadForm({...leadForm, name: e.target.value})}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                       <input 
                         type="email" 
                         required 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={leadForm.email}
                         onChange={e => setLeadForm({...leadForm, email: e.target.value})}
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Phone</label>
                       <input 
                         type="text" 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={leadForm.phone}
                         onChange={e => setLeadForm({...leadForm, phone: e.target.value})}
                       />
@@ -685,18 +702,18 @@ export default function DashboardPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Company</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Company</label>
                       <input 
                         type="text" 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={leadForm.company}
                         onChange={e => setLeadForm({...leadForm, company: e.target.value})}
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Source</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Source</label>
                       <select 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)] bg-white"
                         value={leadForm.source}
                         onChange={e => setLeadForm({...leadForm, source: e.target.value})}
                       >
@@ -704,7 +721,7 @@ export default function DashboardPage() {
                       </select>
                     </div>
                   </div>
-                  <div className="flex justify-end gap-3 pt-4">
+                  <div className="app-modal-footer">
                     <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
                     <Button type="submit" disabled={leadSaving || !workspaceReady}>{leadSaving ? 'Saving…' : 'Save Lead'}</Button>
                   </div>
@@ -713,48 +730,48 @@ export default function DashboardPage() {
 
               {activeModal === 'client' && (
                 <form onSubmit={handleCreateClient} className="space-y-4">
-                  <h3 className="text-lg font-bold text-slate-900">Add New Client</h3>
+                  <h3 className="text-lg font-bold text-[var(--app-text)]">Add New Client</h3>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Client Name</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Client Name</label>
                     <input 
                       type="text" 
                       required 
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                       value={clientForm.name}
                       onChange={e => setClientForm({...clientForm, name: e.target.value})}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                       <input 
                         type="email" 
                         required 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={clientForm.email}
                         onChange={e => setClientForm({...clientForm, email: e.target.value})}
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Phone</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Phone</label>
                       <input 
                         type="text" 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={clientForm.phone}
                         onChange={e => setClientForm({...clientForm, phone: e.target.value})}
                       />
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Company</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Company</label>
                     <input 
                       type="text" 
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                       value={clientForm.company}
                       onChange={e => setClientForm({...clientForm, company: e.target.value})}
                     />
                   </div>
-                  <div className="flex justify-end gap-3 pt-4">
+                  <div className="app-modal-footer">
                     <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
                     <Button type="submit">Save Client</Button>
                   </div>
@@ -763,32 +780,32 @@ export default function DashboardPage() {
 
               {activeModal === 'task' && (
                 <form onSubmit={handleCreateTask} className="space-y-4">
-                  <h3 className="text-lg font-bold text-slate-900">Create Task & Follow-up</h3>
+                  <h3 className="text-lg font-bold text-[var(--app-text)]">Create Task & Follow-up</h3>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Task Title</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Task Title</label>
                     <input 
                       type="text" 
                       required 
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                       value={taskForm.title}
                       onChange={e => setTaskForm({...taskForm, title: e.target.value})}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Due Date</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Due Date</label>
                       <input 
                         type="date" 
                         required 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={taskForm.dueDate}
                         onChange={e => setTaskForm({...taskForm, dueDate: e.target.value})}
                       />
                     </div>
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-slate-500 uppercase">Priority</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Priority</label>
                       <select 
-                        className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                        className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)] bg-white"
                         value={taskForm.priority}
                         onChange={e => setTaskForm({...taskForm, priority: e.target.value as any})}
                       >
@@ -799,15 +816,15 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs font-bold text-slate-500 uppercase">Description</label>
+                    <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Description</label>
                     <textarea 
-                      className="w-full px-4 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                       rows={3}
                       value={taskForm.description}
                       onChange={e => setTaskForm({...taskForm, description: e.target.value})}
                     />
                   </div>
-                  <div className="flex justify-end gap-3 pt-4">
+                  <div className="app-modal-footer">
                     <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
                     <Button type="submit">Create Task</Button>
                   </div>
@@ -832,7 +849,7 @@ function reorderCards<T extends string>(cards: T[], source: T, target: T) {
 
 function MovableDashboardCard({ cardId, order, onDragStart, onDragEnd, onDrop, children }: { cardId: string; order: number; onDragStart: (cardId: string) => void; onDragEnd: () => void; onDrop: () => void; children: React.ReactNode }) {
   return <div style={{ order }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} className="relative min-w-0">
-    <button type="button" draggable aria-label={`Move ${cardId} dashboard card`} title="Drag to move card" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="absolute right-3 top-3 z-20 rounded-md p-1 text-slate-300 opacity-0 transition-opacity hover:bg-slate-100 hover:text-slate-500 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 group-hover:opacity-100 sm:opacity-60">
+    <button type="button" draggable aria-label={`Move ${cardId} dashboard card`} title="Drag to move card" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="absolute right-3 top-3 z-20 rounded-md p-1 text-[var(--app-tertiary)] opacity-0 transition-opacity hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-muted)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 group-hover:opacity-100 sm:opacity-60">
       <GripVertical size={16} />
     </button>
     {children}

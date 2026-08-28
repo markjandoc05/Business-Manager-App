@@ -8,6 +8,7 @@ import { DEAL_STAGES, getDealProbability } from '@/lib/deal-workflow';
 import type { Deal } from '@/types';
 
 export const PIPELINE_STAGES = DEAL_STAGES;
+export const PIPELINE_STAGE_COLORS = ['#9BE15D', '#00B957', '#078B47', '#056B4F', '#032D20', '#B34D3E'] as const;
 
 const STAGE_DESCRIPTIONS: Record<typeof DEAL_STAGES[number], string> = {
   New: 'New opportunities that have just been added to the sales pipeline.',
@@ -19,14 +20,13 @@ const STAGE_DESCRIPTIONS: Record<typeof DEAL_STAGES[number], string> = {
 };
 
 export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[]; currency: string; stageSummary?: Record<string, { count: number; value: number }> }) {
-  const stageColors = ['#2563eb', '#3b82f6', '#0f766e', '#d97706', '#b45309'];
   const [activeStage, setActiveStage] = useState<typeof DEAL_STAGES[number] | null>(null);
 
-  return <Card className="h-full overflow-hidden border-slate-200 p-4 sm:p-5">
-    <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+  return <Card className="h-full overflow-hidden border-[var(--app-border)] p-4 sm:p-5">
+    <div className="flex items-start justify-between gap-4 border-b border-[var(--app-border-subtle)] pb-4">
       <div>
-        <h2 className="text-base font-semibold tracking-tight text-slate-900">Pipeline Overview</h2>
-        <p className="mt-1 text-sm text-slate-500">Deal count and value as opportunities progress</p>
+        <h2 className="text-base font-semibold tracking-tight text-[var(--app-text)]">Pipeline Overview</h2>
+        <p className="mt-1 text-sm text-[var(--app-muted)]">Deal count and value as opportunities progress</p>
       </div>
       <Badge variant="blue">{PIPELINE_STAGES.length} stages</Badge>
     </div>
@@ -39,7 +39,7 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
         const width = `${100 - index * 10}%`;
         const dealLabel = `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`;
 
-        return <FunnelStage key={stage} stage={stage} color={stageColors[index]} width={width} dealLabel={dealLabel} totalValue={formatCurrency(totalValue, currency)} probability={getDealProbability(stage)} description={STAGE_DESCRIPTIONS[stage]} active={activeStage === stage} onShow={() => setActiveStage(stage)} onHide={() => setActiveStage((current) => current === stage ? null : current)} />;
+        return <FunnelStage key={stage} stage={stage} color={PIPELINE_STAGE_COLORS[index]} width={width} dealLabel={dealLabel} totalValue={formatCurrency(totalValue, currency)} probability={getDealProbability(stage)} description={STAGE_DESCRIPTIONS[stage]} active={activeStage === stage} onShow={() => setActiveStage(stage)} onHide={() => setActiveStage((current) => current === stage ? null : current)} />;
       })}
     </div>
   </Card>;
@@ -161,16 +161,16 @@ function FunnelStage({ stage, color, width, dealLabel, totalValue, probability, 
           else onShow();
         }
       }}
-      className="flex min-h-[62px] items-center justify-center px-4 py-2.5 text-white shadow-sm transition-[filter,box-shadow] duration-200 hover:brightness-105 focus-visible:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-white sm:px-6"
-      style={{ width, backgroundColor: color, clipPath: 'polygon(3% 0, 97% 0, 94% 100%, 6% 100%)' }}
+      className="flex min-h-[62px] items-center justify-center px-4 py-2.5 shadow-sm transition-[filter,box-shadow] duration-200 hover:brightness-105 focus-visible:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-white sm:px-6"
+      style={{ width, color: color === PIPELINE_STAGE_COLORS[0] ? '#032D20' : '#FFFFFF', backgroundColor: color, clipPath: 'polygon(3% 0, 97% 0, 94% 100%, 6% 100%)' }}
     >
       <div className="flex min-w-0 flex-col items-center justify-center gap-1 text-center">
         <div className="flex min-w-0 items-center justify-center gap-3 text-sm font-semibold sm:text-base">
           <span className="truncate">{stage}</span>
-          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-white/45" />
+          <span aria-hidden="true" className="h-4 w-px shrink-0 bg-current/25" />
           <span className="shrink-0 tabular-nums">{totalValue}</span>
         </div>
-        <p className="truncate text-xs text-white/80">{dealLabel} · {probability}% probability</p>
+        <p className="truncate text-xs opacity-80">{dealLabel} · {probability}% probability</p>
       </div>
     </div>
     {active && typeof document !== 'undefined' && createPortal(
@@ -180,10 +180,10 @@ function FunnelStage({ stage, color, width, dealLabel, totalValue, probability, 
         role="tooltip"
         aria-hidden={positionedStage !== stage}
         style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
-        className={`pointer-events-none fixed z-[1000] w-[min(260px,calc(100vw-1.25rem))] rounded-lg border border-slate-200 bg-white p-3 text-left shadow-[0_12px_30px_rgba(15,23,42,0.16)] transition-opacity duration-150 ${positionedStage === stage ? 'opacity-100' : 'opacity-0'}`}
+      className={`pointer-events-none fixed z-[1000] w-[min(260px,calc(100vw-1.25rem))] rounded-lg border border-[var(--app-border)] bg-white p-3 text-left shadow-[var(--app-shadow-md)] transition-opacity duration-150 ${positionedStage === stage ? 'opacity-100' : 'opacity-0'}`}
       >
-        <p className="text-sm font-semibold text-slate-900">{stage}</p>
-        <p className="mt-1 text-xs leading-5 text-slate-600">{description}</p>
+        <p className="text-sm font-semibold text-[var(--app-text)]">{stage}</p>
+        <p className="mt-1 text-xs leading-5 text-[var(--app-muted)]">{description}</p>
       </div>,
       document.body,
     )}

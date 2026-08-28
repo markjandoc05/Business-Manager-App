@@ -39,22 +39,22 @@ export function TablePagination({
   const start = (currentPage - 1) * pageSize + 1;
   const end = Math.min(currentPage * pageSize, totalCount);
 
-  return <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-3 py-2.5 text-xs text-slate-500 sm:px-4 lg:px-6" aria-label="Table pagination">
+  return <nav className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--app-border-subtle)] px-3 py-3 text-xs text-[var(--app-muted)] sm:px-4 xl:px-6" aria-label="Table pagination">
     <label className="inline-flex items-center gap-2 whitespace-nowrap">
       <span>Rows per page:</span>
-      <select className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} aria-label="Rows per page">
+      <select className="h-9 rounded-[var(--app-radius-control)] border border-[var(--app-border)] bg-[var(--app-surface)] px-2 text-xs text-[var(--app-text)]" value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} aria-label="Rows per page">
         {PAGE_SIZE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
       </select>
     </label>
-    <span className="whitespace-nowrap font-medium text-slate-600">{start}–{end} of {totalCount}{hasMore ? '+' : ''}</span>
+    <span className="whitespace-nowrap font-medium text-[var(--app-muted)]">{start}–{end} of {totalCount}{hasMore ? '+' : ''}</span>
     <div className="flex items-center gap-1">
-      <button type="button" className="rounded-lg px-2.5 py-1.5 font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1}>‹ <span className="hidden sm:inline">Previous</span></button>
+      <button type="button" className="min-h-10 rounded-[var(--app-radius-control)] px-2.5 py-1.5 font-medium text-[var(--app-muted)] transition-colors hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-primary)] disabled:cursor-not-allowed disabled:opacity-40" onClick={() => onPageChange(currentPage - 1)} disabled={currentPage === 1}>‹ <span className="hidden sm:inline">Previous</span></button>
       <div className="hidden items-center gap-1 sm:flex">
         {getPageItems(currentPage, pageCount).map((item) => item === 'left-ellipsis' || item === 'right-ellipsis'
-          ? <span key={item} className="px-1.5 text-slate-400">…</span>
-          : <button key={item} type="button" className={`min-w-8 rounded-lg px-2 py-1.5 font-medium transition-colors ${item === currentPage ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`} onClick={() => onPageChange(item)} aria-current={item === currentPage ? 'page' : undefined}>{item}</button>)}
+          ? <span key={item} className="px-1.5 text-[var(--app-tertiary)]">…</span>
+          : <button key={item} type="button" className={`min-h-8 min-w-8 rounded-[var(--app-radius-control)] px-2 py-1.5 font-medium transition-colors ${item === currentPage ? 'bg-[var(--app-primary)] text-white' : 'text-[var(--app-muted)] hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-primary)]'}`} onClick={() => onPageChange(item)} aria-current={item === currentPage ? 'page' : undefined}>{item}</button>)}
       </div>
-      <button type="button" className="rounded-lg px-2.5 py-1.5 font-medium text-slate-600 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40" onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === pageCount}><span className="hidden sm:inline">Next</span> ›</button>
+      <button type="button" className="min-h-10 rounded-[var(--app-radius-control)] px-2.5 py-1.5 font-medium text-[var(--app-muted)] transition-colors hover:bg-[var(--app-accent-soft)] hover:text-[var(--app-primary)] disabled:cursor-not-allowed disabled:opacity-40" onClick={() => onPageChange(currentPage + 1)} disabled={currentPage === pageCount}><span className="hidden sm:inline">Next</span> ›</button>
     </div>
   </nav>;
 }
