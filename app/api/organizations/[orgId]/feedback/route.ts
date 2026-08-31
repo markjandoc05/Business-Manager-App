@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { FieldValue } from 'firebase-admin/firestore';
 import packageJson from '@/package.json';
-import { adminAuth, adminDb } from '@/lib/server/firebase-admin';
+import { adminDb } from '@/lib/server/firebase-admin';
+import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 import { FEEDBACK_TYPES, type FeedbackType } from '@/lib/feedback';
 import { buildFeedbackEmail } from '@/lib/server/feedback-email';
 
@@ -32,16 +33,6 @@ function cleanRoute(value: unknown) {
 
 function cleanText(value: unknown, fallback: string) {
   return typeof value === 'string' ? value.trim() : fallback;
-}
-
-async function getDecodedUser(request: NextRequest) {
-  const authorization = request.headers.get('authorization') || '';
-  if (!authorization.startsWith('Bearer ')) return null;
-  try {
-    return await adminAuth.verifyIdToken(authorization.slice('Bearer '.length).trim());
-  } catch {
-    return null;
-  }
 }
 
 async function sendFeedbackNotification(input: {
@@ -78,8 +69,9 @@ async function sendFeedbackNotification(input: {
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ orgId: string }> }) {
-  const decoded = await getDecodedUser(request);
-  if (!decoded) return errorResponse(401, 'Authentication is required.');
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return errorResponse(401, 'Authentication is required.');
+  if (!await isApplicationUserActive(authenticatedUser.uid)) return errorResponse(403, 'Your BSM account is not active.');
 
   const { orgId } = await context.params;
   if (!validId(orgId)) return errorResponse(400, 'Invalid organization.');
@@ -100,12 +92,12 @@ export async function POST(request: NextRequest, context: { params: Promise<{ or
   }
 
   const organizationRef = adminDb.doc(`organizations/${orgId}`);
-  const membershipRef = organizationRef.collection('members').doc(decoded.uid);
+  const membershipRef = organizationRef.collection('members').doc(authenticatedUser.uid);
   const [organizationSnapshot, membershipSnapshot] = await Promise.all([organizationRef.get(), membershipRef.get()]);
   const organization = organizationSnapshot.data() || {};
   const membership = membershipSnapshot.data() || {};
   if (!organizationSnapshot.exists || !membershipSnapshot.exists
-    || membership.userId !== decoded.uid
+    || membership.userId !== authenticatedUser.uid
     || membership.status !== 'active'
     || !['ADMIN', 'MANAGER', 'USER'].includes(String(membership.role))
     || !['trial', 'active', 'expired', 'suspended'].includes(String(organization.status))) {
@@ -114,17 +106,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ or
 
   const feedbackRef = organizationRef.collection('feedback').doc();
   const appVersion = cleanText(process.env.NEXT_PUBLIC_APP_VERSION, packageJson.version).slice(0, MAX_APP_VERSION_LENGTH);
-  const userEmail = typeof decoded.email === 'string' ? decoded.email : typeof membership.email === 'string' ? membership.email : '';
+  const userEmail = authenticatedUser.email || (typeof membership.email === 'string' ? membership.email : '');
   const userName = typeof membership.displayName === 'string' && membership.displayName.trim()
     ? membership.displayName.trim()
-    : typeof decoded.name === 'string' && decoded.name.trim() ? decoded.name.trim() : userEmail || 'User';
+    : authenticatedUser.name && authenticatedUser.name.trim() ? authenticatedUser.name.trim() : userEmail || 'User';
   const route = cleanRoute(body.route);
   const submittedAt = new Date().toISOString();
 
   await feedbackRef.set({
     type: body.type,
     message,
-    userId: decoded.uid,
+    userId: authenticatedUser.uid,
     userEmail,
     userName,
     route,

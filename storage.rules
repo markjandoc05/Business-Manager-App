@@ -6,8 +6,17 @@ service firebase.storage {
       return request.auth != null;
     }
 
-    function organizationMember(organizationId) {
+    function activeApplicationUser() {
       return signedIn()
+        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.uid == request.auth.uid
+        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active'
+        && (!firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.keys().hasAny(['active'])
+          || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.active == true);
+    }
+
+    function organizationMember(organizationId) {
+      return activeApplicationUser()
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
         && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active';

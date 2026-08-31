@@ -41,6 +41,7 @@ async function seed() {
     await db.doc(`organizations/${ORG}/members/${ADMIN}`).set({ userId: ADMIN, role: 'ADMIN', status: 'active' });
     await db.doc(`organizations/${ORG}/members/${MANAGER}`).set({ userId: MANAGER, role: 'MANAGER', status: 'active' });
     await db.doc(`organizations/${ORG}/members/${USER}`).set({ userId: USER, role: 'USER', status: 'active' });
+    await Promise.all([ADMIN, MANAGER, USER].map((uid) => db.doc(`users/${uid}`).set({ uid, status: 'active', active: true })));
     await db.doc(`organizations/${ORG}/settings/settings`).set({
       businessName: 'Initial Settings', currency: 'PHP', timezone: 'Asia/Manila',
       leadSources: [{ name: 'Website', isActive: true }],
@@ -51,6 +52,7 @@ async function seed() {
     });
     await db.doc(`organizations/${OTHER_ORG}/license/current`).set(validLicense('ACTIVE', expiresAt));
     await db.doc(`organizations/${OTHER_ORG}/members/${OTHER_ADMIN}`).set({ userId: OTHER_ADMIN, role: 'ADMIN', status: 'active' });
+    await db.doc(`users/${OTHER_ADMIN}`).set({ uid: OTHER_ADMIN, status: 'active', active: true });
     await db.doc(`organizations/${OTHER_ORG}/settings/settings`).set({ businessName: 'Other Settings' });
   });
 }

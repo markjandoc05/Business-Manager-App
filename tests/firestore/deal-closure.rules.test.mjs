@@ -27,6 +27,7 @@ async function seed() {
     await Promise.all([
       setDoc(doc(db, `organizations/${ORG_ID}`), { status: 'trial', licenseStatus: 'ACTIVE', licenseWriteEnabled: true, licenseExpiresAt: null }),
       setDoc(doc(db, `organizations/${ORG_ID}/members/${ADMIN_UID}`), { userId: ADMIN_UID, role: 'ADMIN', status: 'active' }),
+      setDoc(doc(db, `users/${ADMIN_UID}`), { uid: ADMIN_UID, status: 'active', active: true }),
       setDoc(doc(db, `organizations/${ORG_ID}/clients/client-1`), { status: 'ACTIVE' }),
       setDoc(doc(db, dealPath()), activeDeal()),
     ]);

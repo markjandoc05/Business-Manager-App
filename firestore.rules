@@ -6,6 +6,15 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isActiveApplicationUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.uid == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active'
+        && (!get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['active'])
+          || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active == true);
+    }
+
     // Console access is deliberately separate from organization membership.
     // Only active SUPER_ADMIN and SUPPORT records can read cross-tenant
     // platform data; all privileged mutations remain Admin SDK-only.
@@ -22,7 +31,7 @@ service cloud.firestore {
     }
 
     function isOrganizationMember(organizationId) {
-      return signedIn()
+      return isActiveApplicationUser()
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
@@ -44,6 +53,24 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(request.auth.uid)).data.organizationId == organizationId
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).data.businessName is string
         && getAfter(/databases/$(database)/documents/organizationSlugs/$(getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.slug)).data.organizationId == organizationId;
+    }
+
+    function isBootstrapProfileActivation(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && resource.data.uid == userId
+        && resource.data.status == 'pending'
+        && resource.data.active == false
+        && request.resource.data.uid == userId
+        && request.resource.data.status == 'active'
+        && request.resource.data.active == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'active'])
+        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.createdByUid == userId
+        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId is string
+        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)).data.createdByUid == userId
+        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.userId == userId
+        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.role == 'ADMIN'
+        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.status == 'active';
     }
 
     function organizationCanView(organizationId) {
@@ -307,15 +334,17 @@ service cloud.firestore {
         && request.auth.uid == userId
         && request.resource.data.role == 'USER'
         && request.resource.data.active == false
+        && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'role', 'active', 'createdAt', 'lastLogin', 'lastLoginAt']);
 
-      allow update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.role == resource.data.role
-        && request.resource.data.active == resource.data.active
-        && request.resource.data.status == resource.data.status
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
-        && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
-        && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'disabled']);
+      allow update: if isBootstrapProfileActivation(userId)
+        || (signedIn() && request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.active == resource.data.active
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
+          && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
+          && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'inactive', 'disabled']));
 
       allow delete: if false;
     }
@@ -342,7 +371,7 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/members/{userId} {
       allow read: if isActivePlatformAdmin()
-        || (signedIn() && userId == request.auth.uid && resource.data.status == 'active')
+        || (isActiveApplicationUser() && userId == request.auth.uid && resource.data.status == 'active')
         || isOrganizationMember(organizationId);
       allow create: if isBootstrapOrganizationCreate(organizationId)
         && request.resource.data.keys().hasOnly(['userId', 'email', 'displayName', 'role', 'status', 'joinedAt', 'activatedAt', 'activatedBy'])
@@ -390,7 +419,7 @@ service cloud.firestore {
     // Collection-group workspace discovery is limited to the caller's own active,
     // valid-role membership. This grants no write access and does not expose a directory.
     match /{path=**}/members/{memberId} {
-      allow read: if signedIn()
+      allow read: if isActiveApplicationUser()
         && resource.data.userId == request.auth.uid
         && resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived']
         && resource.data.role in ['ADMIN', 'MANAGER', 'USER'];

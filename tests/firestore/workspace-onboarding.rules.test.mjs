@@ -19,6 +19,7 @@ function onboardingPayload(db, uid = CREATOR_UID, organizationId = `onboarding-$
   const licenseRef = doc(db, 'organizations', organizationId, 'license', 'current');
   const slugRef = doc(db, 'organizationSlugs', slug);
   const bootstrapGuardRef = doc(db, 'workspaceBootstrap', uid);
+  const userRef = doc(db, 'users', uid);
   const timestamp = Timestamp.now();
   const trialEndsAt = Timestamp.fromMillis(Date.now() + 14 * 24 * 60 * 60 * 1000);
   const org = {
@@ -35,7 +36,7 @@ function onboardingPayload(db, uid = CREATOR_UID, organizationId = `onboarding-$
   const slugData = { organizationId, slug, createdAt: timestamp, createdByUid: uid };
   const guard = { organizationId, createdAt: timestamp, createdByUid: uid };
   const license = { plan: 'TRIAL', status: 'TRIAL', trialStartedAt: timestamp, trialEndsAt, maxUsers: 3, features: { crm: true }, createdAt: timestamp, updatedAt: timestamp, updatedBy: uid };
-  return { orgRef, memberRef, settingsRef, licenseRef, slugRef, bootstrapGuardRef, org, member, settings, slugData, guard, license };
+  return { orgRef, memberRef, settingsRef, licenseRef, slugRef, bootstrapGuardRef, userRef, org, member, settings, slugData, guard, license };
 }
 
 async function seedExisting() {
@@ -45,6 +46,7 @@ async function seedExisting() {
     await Promise.all([
       context.firestore().doc(`organizations/${EXISTING_ORG_ID}`).set({ name: 'Existing', slug: EXISTING_SLUG, status: 'trial', licenseStatus: 'TRIAL', licenseWriteEnabled: true, licenseExpiresAt: Timestamp.fromMillis(Date.now() + 14 * 24 * 60 * 60 * 1000) }),
       context.firestore().doc(`organizations/${EXISTING_ORG_ID}/members/${CREATOR_UID}`).set({ userId: CREATOR_UID, role: 'ADMIN', status: 'active' }),
+      context.firestore().doc(`users/${CREATOR_UID}`).set({ uid: CREATOR_UID, status: 'pending', active: false }),
       context.firestore().doc(`organizationSlugs/${EXISTING_SLUG}`).set({ organizationId: EXISTING_ORG_ID, slug: EXISTING_SLUG }),
       context.firestore().doc(`organizations/${EXISTING_ORG_ID}/settings/settings`).set({ businessName: 'Existing', currency: 'PHP', timezone: 'Asia/Manila' }),
     ]);
@@ -57,6 +59,7 @@ async function commitPayload(db, payload) {
   batch.set(payload.orgRef, payload.org);
   batch.set(payload.slugRef, payload.slugData);
   batch.set(payload.memberRef, payload.member);
+  batch.update(payload.userRef, { status: 'active', active: true });
   batch.set(payload.settingsRef, payload.settings);
   batch.set(payload.licenseRef, payload.license);
   batch.set(payload.bootstrapGuardRef, payload.guard);
@@ -102,13 +105,12 @@ test('creator cannot claim an existing slug', async () => {
   await assertFails(commitPayload(db, payload));
 });
 
-test('a new user can safely discover zero memberships through the collection-group query', async () => {
+test('a new user cannot query memberships until its application profile is active', async () => {
   const db = testEnv.authenticatedContext('brand-new-user').firestore();
-  const memberships = await assertSucceeds(getDocs(query(
+  await assertFails(getDocs(query(
     collectionGroup(db, 'members'),
     where('userId', '==', 'brand-new-user'),
     where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
     where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
   )));
-  assert.equal(memberships.empty, true);
 });

@@ -79,14 +79,14 @@ function WorkspacePicker() {
   return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6"><Card className="w-full max-w-lg space-y-5 p-6 sm:p-8"><div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-primary)]">BSM</p><h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Select Workspace</h1><p className="mt-2 text-sm text-[var(--app-muted)]">Choose the workspace you want to open.</p></div><div className="space-y-3">{availableOrganizations.map((organization) => { const membership = membershipSummaries.find((item) => item.organizationId === organization.id); return <button key={organization.id} type="button" onClick={() => selectOrganization(organization.id)} className="flex w-full items-center justify-between gap-4 rounded-xl border border-[var(--app-border)] bg-white p-4 text-left transition hover:border-[var(--app-primary)] hover:bg-[var(--app-accent-soft)]/40 focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"><span className="min-w-0"><span className="block truncate font-semibold text-[var(--app-text)]">{organization.name}</span><span className="mt-1 block text-xs text-[var(--app-muted)]">{membership?.role || 'Member'} · {organization.status}</span></span><ArrowRight className="shrink-0 text-[var(--app-tertiary)]" size={18} /></button>; })}</div></Card></div>;
 }
 
-function PendingScreen({ disabled = false }: { disabled?: boolean }) {
+function PendingScreen({ disabled = false, inactive = false }: { disabled?: boolean; inactive?: boolean }) {
   const { user, signOut } = useAuth();
   const { refresh } = useWorkspace();
   return (
     <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-6">
       <Card className="w-full max-w-md space-y-5 p-8 text-center">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--app-warning)_20%,white)] text-[var(--app-text)]"><ShieldCheck size={28} /></div>
-        <div><h1 className="text-2xl font-bold text-[var(--app-text)]">{disabled ? 'Account Disabled' : 'Pending Workspace Access'}</h1><p className="mt-2 text-sm text-[var(--app-muted)]">{disabled ? 'This account has been disabled at the platform level. Contact support for assistance.' : 'An organization ADMIN must activate your organization membership before you can access the dashboard.'}</p></div>
+        <div><h1 className="text-2xl font-bold text-[var(--app-text)]">{disabled ? (inactive ? 'Account Inactive' : 'Account Disabled') : 'Pending Workspace Access'}</h1><p className="mt-2 text-sm text-[var(--app-muted)]">{disabled ? (inactive ? 'This account is inactive at the platform level. Contact support for assistance.' : 'This account has been disabled at the platform level. Contact support for assistance.') : 'An organization ADMIN must activate your organization membership before you can access the dashboard.'}</p></div>
         <div className="rounded-xl bg-[var(--app-surface-subtle)] p-4 text-left text-sm"><p className="font-semibold text-[var(--app-text)]">{user?.name}</p><p className="text-[var(--app-muted)]">{user?.email}</p><p className="mt-2 text-xs text-[var(--app-tertiary)]">Role: {user?.role}</p></div>
         {!disabled && <Button type="button" onClick={refresh} className="w-full">Check access again</Button>}
         <Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button>
@@ -129,7 +129,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         ? 'loading'
         : status === 'signed-out' || status === 'error'
           ? 'login'
-          : status === 'disabled'
+          : status === 'disabled' || status === 'inactive'
             ? 'blocked'
             : workspaceLoading
               ? 'loading'
@@ -160,7 +160,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   }, [activeMembershipCount, currentOrganizationId, firebaseUser?.uid, hasMembership, membershipCount, membershipSummaries, onboardingRequired, status, workspaceError, workspaceLoading, workspaceReady]);
   if (status === 'loading') return <LoadingScreen />;
   if (status === 'signed-out' || status === 'error') return <LoginScreen onIntent={setEntryIntent} />;
-  if (status === 'disabled') return <PendingScreen disabled />;
+  if (status === 'disabled' || status === 'inactive') return <PendingScreen disabled inactive={status === 'inactive'} />;
   if (workspaceLoading) return <LoadingScreen />;
   if (workspaceError) return <WorkspaceErrorScreen error={workspaceError} refresh={refresh} />;
   if (activeMembershipCount > 1 && !workspaceReady) return <WorkspacePicker />;

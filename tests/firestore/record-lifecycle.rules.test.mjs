@@ -26,6 +26,8 @@ async function seed() {
     }
     await db.doc(`organizations/${ORG}/members/${ADMIN}`).set({ userId: ADMIN, role: 'ADMIN', status: 'active' });
     await db.doc(`organizations/${OTHER_ORG}/members/${OTHER_ADMIN}`).set({ userId: OTHER_ADMIN, role: 'ADMIN', status: 'active' });
+    await db.doc(`users/${ADMIN}`).set({ uid: ADMIN, status: 'active', active: true });
+    await db.doc(`users/${OTHER_ADMIN}`).set({ uid: OTHER_ADMIN, status: 'active', active: true });
     await db.doc(`organizations/${ORG}/clients/client-a`).set({
       name: 'Client A', email: '', phone: '', assignedToUid: ADMIN, assignedToName: 'Admin', status: 'ACTIVE', archived: false,
       createdAt: now, createdBy: ADMIN, updatedAt: now, updatedBy: ADMIN,

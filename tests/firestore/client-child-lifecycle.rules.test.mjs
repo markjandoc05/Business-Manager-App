@@ -27,6 +27,9 @@ async function seed() {
     await db.doc(`organizations/${ORG}/members/${USER}`).set({ userId: USER, role: 'USER', status: 'active' });
     await db.doc(`organizations/${ORG}/members/${INACTIVE}`).set({ userId: INACTIVE, role: 'ADMIN', status: 'inactive' });
     await db.doc(`organizations/${OTHER_ORG}/members/${OTHER_ORG_ADMIN}`).set({ userId: OTHER_ORG_ADMIN, role: 'ADMIN', status: 'active' });
+    for (const uid of [ADMIN, MANAGER, USER, INACTIVE, OTHER_ORG_ADMIN]) {
+      await db.doc(`users/${uid}`).set({ uid, status: 'active', active: true });
+    }
     await db.doc(`organizations/${ORG}/clients/client-a`).set({ status: 'ACTIVE' });
     await db.doc(`organizations/${ORG}/clients/client-a/notes/note-a`).set({ content: 'Keep this note', createdAt: now, createdByUid: ADMIN, createdByName: 'Admin', archived: false, archivedAt: null, archivedBy: null });
     await db.doc(`organizations/${ORG}/clients/client-a/documents/document-a`).set({ name: 'file.pdf', storagePath: `organizations/${ORG}/clients/client-a/documents/document-a/file.pdf`, downloadURL: 'https://example.test/file.pdf', mimeType: 'application/pdf', size: 10, uploadedAt: now, uploadedByUid: ADMIN, uploadedByName: 'Admin', archived: false, archivedAt: null, archivedBy: null });

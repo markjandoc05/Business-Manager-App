@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminAuth, adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
-import { assertFirebaseProject } from '@/lib/server/firebase-project';
+import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 
 export const runtime = 'nodejs';
 
@@ -38,70 +38,11 @@ function isMissingStorageObject(error: unknown) {
   return error.code === 404 || error.code === '404' || error.code === 'storage/object-not-found';
 }
 
-function tokenDiagnosticClaims(token: string) {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as Record<string, unknown>;
-    return {
-      audience: typeof payload.aud === 'string' ? payload.aud : undefined,
-      issuer: typeof payload.iss === 'string' ? payload.iss : undefined,
-      subjectPresent: typeof payload.sub === 'string' && payload.sub.length > 0,
-      expiresAt: typeof payload.exp === 'number' ? payload.exp : undefined,
-      issuedAt: typeof payload.iat === 'number' ? payload.iat : undefined,
-      authenticatedAt: typeof payload.auth_time === 'number' ? payload.auth_time : undefined,
-    };
-  } catch {
-    return { audience: undefined, issuer: undefined, subjectPresent: false, expiresAt: undefined, issuedAt: undefined, authenticatedAt: undefined };
-  }
-}
-
-function verificationErrorDetails(error: unknown) {
-  return {
-    code: error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined,
-    message: error instanceof Error ? error.message : 'Unknown Firebase Admin verification error',
-  };
-}
-
-async function verifyFirebaseUser(request: NextRequest) {
-  const authorization = request.headers.get('authorization')?.trim() || null;
-  const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : null;
-  if (process.env.NODE_ENV !== 'production') {
-    console.debug('Client document API authentication', {
-      authorizationHeaderPresent: Boolean(authorization),
-      bearerTokenParsed: Boolean(token),
-    });
-  }
-  if (!token) return null;
-  try {
-    const decoded = await adminAuth.verifyIdToken(token);
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug('Client document API token verification', {
-        verifyIdTokenSucceeded: true,
-        verifiedUidPresent: Boolean(decoded.uid),
-      });
-    }
-    return decoded.uid;
-  } catch (error) {
-    let adminProjectId: string | undefined;
-    try {
-      adminProjectId = assertFirebaseProject().projectId;
-    } catch {
-      adminProjectId = undefined;
-    }
-    console.error('Client document API token verification failed', {
-      verifyIdTokenSucceeded: false,
-      verifiedUidPresent: false,
-      clientProjectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-      adminProjectId,
-      ...tokenDiagnosticClaims(token),
-      ...verificationErrorDetails(error),
-    });
-    return null;
-  }
-}
-
 export async function DELETE(request: NextRequest, context: { params: Promise<{ orgId: string; clientId: string; documentId: string }> }) {
-  const uid = await verifyFirebaseUser(request);
-  if (!uid) return errorResponse(401, 'Authentication is required.');
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return errorResponse(401, 'Authentication is required.');
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return errorResponse(403, 'Your BSM account is not active.');
 
   const { orgId, clientId, documentId } = await context.params;
   if (![orgId, clientId, documentId].every(validId)) return errorResponse(400, 'Invalid document request.');
@@ -156,8 +97,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ orgId: string; clientId: string; documentId: string }> }) {
-  const uid = await verifyFirebaseUser(request);
-  if (!uid) return errorResponse(401, 'Authentication is required.');
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return errorResponse(401, 'Authentication is required.');
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return errorResponse(403, 'Your BSM account is not active.');
 
   const { orgId, clientId, documentId } = await context.params;
   if (![orgId, clientId, documentId].every(validId)) return errorResponse(400, 'Invalid document request.');

@@ -33,6 +33,7 @@ async function seed(status = 'ACTIVE', expiresAt = Timestamp.fromMillis(Date.now
     await context.firestore().doc(`organizations/${ORG}/members/${ADMIN}`).set({ userId: ADMIN, role: 'ADMIN', status: 'active' });
     await context.firestore().doc(`organizations/${ORG}/members/${MANAGER}`).set({ userId: MANAGER, role: 'MANAGER', status: 'active' });
     await context.firestore().doc(`organizations/${ORG}/members/${USER}`).set({ userId: USER, role: 'USER', status: 'active' });
+    await Promise.all([ADMIN, MANAGER, USER].map((uid) => context.firestore().doc(`users/${uid}`).set({ uid, status: 'active', active: true })));
     await context.firestore().doc(`organizations/${ORG}/leads/${LEAD}`).set({ name: 'Lead', company: 'Company', email: '', phone: '', source: 'Other', status: 'New', assignedTo: USER, assignedToUid: USER, assignedToName: USER, createdAt: Timestamp.now(), createdBy: ADMIN, updatedAt: Timestamp.now(), updatedBy: ADMIN, archived: false });
     await context.firestore().doc(`organizations/${ORG}/settings/settings`).set({ businessName: 'License Test' });
     await context.firestore().doc(`organizations/${ORG}/license/current`).set(seedLicense(status, expiresAt));

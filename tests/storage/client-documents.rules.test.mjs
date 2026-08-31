@@ -31,6 +31,7 @@ async function seed() {
       setDoc(doc(db, `organizations/${ORG_A}/members/${USER_A}`), member(USER_A, 'USER')),
       setDoc(doc(db, `organizations/${ORG_A}/members/${INACTIVE_USER}`), member(INACTIVE_USER, 'ADMIN', 'inactive')),
       setDoc(doc(db, `organizations/${ORG_B}/members/${USER_B}`), member(USER_B, 'USER')),
+      ...[ADMIN, MANAGER, USER_A, INACTIVE_USER, USER_B].map((uid) => setDoc(doc(db, `users/${uid}`), { uid, status: 'active', active: true })),
       setDoc(doc(db, `organizations/${ORG_A}/clients/client-a`), { status: 'ACTIVE' }),
       setDoc(doc(db, `organizations/${ORG_B}/clients/client-b`), { status: 'ACTIVE' }),
       setDoc(doc(db, `organizations/${ORG_A}/clients/client-a/documents/doc-1`), { archived: false, storagePath: objectPath(ORG_A) }),

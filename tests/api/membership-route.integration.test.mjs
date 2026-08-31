@@ -43,6 +43,7 @@ async function createToken(label) {
     body: JSON.stringify({ email, password: 'phase3a-test-password', returnSecureToken: true }),
   });
   assert.equal(response.ok, true, `Auth emulator sign-in failed for ${label}.`);
+  await adminDb.doc(`users/${uid}`).set({ uid, name: label, email, displayName: label, status: 'active', role: 'USER', active: true });
   return { uid, token: (await response.json()).idToken };
 }
 
@@ -212,6 +213,7 @@ test('deactivation releases a seat for later reuse', async () => {
     { uid: pendingUser.uid, role: 'USER', status: 'pending' },
   ] });
   await expectStatus(patchMembership(admin.token, organizationId, activeUser.uid, { status: 'inactive' }), 200, 'Deactivation');
+  assert.equal((await adminDb.doc(`users/${activeUser.uid}`).get()).data().status, 'active');
   await expectStatus(patchMembership(admin.token, organizationId, pendingUser.uid, { status: 'active' }), 200, 'Seat reuse');
 });
 
@@ -249,4 +251,83 @@ test('client-supplied actor, role, counts, limits, and license values cannot inf
     licenseStatus: 'ACTIVE',
   });
   assert.equal(response.status, 400);
+});
+
+test('inactive application users are rejected before organization authorization', async () => {
+  const admin = await createToken('inactive-app-admin');
+  const target = await createToken('inactive-app-target');
+  const organizationId = await seedOrganization({ members: [
+    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'pending' },
+  ] });
+  await adminDb.doc(`users/${admin.uid}`).update({ status: 'inactive', active: false });
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { status: 'active' }), 403, 'Inactive application user');
+});
+
+test('revoked Firebase ID tokens are rejected by every protected API entry point', async () => {
+  const admin = await createToken('revoked-token-admin');
+  const target = await createToken('revoked-token-target');
+  const organizationId = await seedOrganization({ members: [
+    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'pending' },
+  ] });
+  // Firebase revocation timestamps have one-second precision. Ensure the ID
+  // token's auth_time is strictly older than validSince in the emulator.
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  await adminAuth.revokeRefreshTokens(admin.uid);
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { status: 'active' }), 401, 'Revoked ID token');
+});
+
+test('Firebase-disabled users cannot use an otherwise valid ID token', async () => {
+  const admin = await createToken('disabled-auth-admin');
+  const target = await createToken('disabled-auth-target');
+  const organizationId = await seedOrganization({ members: [
+    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'pending' },
+  ] });
+  await adminAuth.updateUser(admin.uid, { disabled: true });
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { status: 'active' }), 401, 'Firebase-disabled user');
+});
+
+test('explicit account disablement and reactivation update both Firebase Auth and the app profile', async () => {
+  const admin = await createToken('account-action-admin');
+  const target = await createToken('account-action-target');
+  const organizationId = await seedOrganization({ members: [
+    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'active' },
+  ] });
+
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'disable' }), 200, 'Account disablement');
+  assert.equal((await adminAuth.getUser(target.uid)).disabled, true);
+  assert.deepEqual((await adminDb.doc(`users/${target.uid}`).get()).data(), {
+    uid: target.uid,
+    name: 'account-action-target',
+    email: `${target.uid}@example.test`,
+    displayName: 'account-action-target',
+    status: 'disabled',
+    role: 'USER',
+    active: false,
+  });
+  assert.equal((await adminDb.doc(`organizations/${organizationId}/members/${target.uid}`).get()).data().status, 'inactive');
+
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'reactivate' }), 200, 'Account reactivation');
+  assert.equal((await adminAuth.getUser(target.uid)).disabled, false);
+  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().status, 'active');
+  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().active, true);
+  assert.equal((await adminDb.doc(`organizations/${organizationId}/members/${target.uid}`).get()).data().status, 'active');
+});
+
+test('a non-ADMIN cannot trigger account reactivation', async () => {
+  const admin = await createToken('unauthorized-action-admin');
+  const user = await createToken('unauthorized-action-user');
+  const target = await createToken('unauthorized-action-target');
+  const organizationId = await seedOrganization({ members: [
+    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+    { uid: user.uid, role: 'USER', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'active' },
+  ] });
+  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'disable' }), 200, 'Target disablement');
+  await expectStatus(patchMembership(user.token, organizationId, target.uid, { accountAction: 'reactivate' }), 403, 'Unauthorized reactivation');
+  assert.equal((await adminAuth.getUser(target.uid)).disabled, true);
+  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().status, 'disabled');
 });

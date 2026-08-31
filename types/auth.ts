@@ -6,6 +6,7 @@ export type PlatformRole = 'PLATFORM_ADMIN';
 export type LicensePlan = 'TRIAL' | 'STARTER' | 'TEAM' | 'LEGACY';
 export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED';
 export type LicenseEffectiveStatus = LicenseStatus | 'UNKNOWN';
+export type AccountStatus = 'pending' | 'active' | 'inactive' | 'disabled';
 
 export interface License {
   plan: LicensePlan;
@@ -37,7 +38,7 @@ export interface GlobalUserProfile {
   email: string;
   displayName: string;
   photoURL?: string;
-  status: 'pending' | 'active' | 'disabled';
+  status: AccountStatus;
   createdAt?: string;
   lastLoginAt?: string;
   /** Legacy fields retained only during the Phase 1 compatibility period. */
@@ -91,5 +92,5 @@ export interface AppUser {
   role: UserRole;
   active: boolean;
   /** Global account state. Organization access is controlled by membership status. */
-  accountStatus: 'pending' | 'active' | 'disabled';
+  accountStatus: AccountStatus;
 }

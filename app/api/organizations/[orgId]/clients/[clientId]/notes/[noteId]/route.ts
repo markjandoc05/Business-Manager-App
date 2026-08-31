@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminAuth, adminDb } from '@/lib/server/firebase-admin';
+import { adminDb } from '@/lib/server/firebase-admin';
+import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 
 export const runtime = 'nodejs';
 
@@ -25,15 +26,11 @@ function writableLicense(organization: Record<string, unknown>, license: Record<
     && ((license.status === 'TRIAL' && organization.status === 'trial') || (license.status === 'ACTIVE' && organization.status === 'active'));
 }
 
-async function getUid(request: NextRequest) {
-  const header = request.headers.get('authorization') || '';
-  if (!header.startsWith('Bearer ')) return null;
-  try { return (await adminAuth.verifyIdToken(header.slice(7).trim())).uid; } catch { return null; }
-}
-
 export async function DELETE(request: NextRequest, context: { params: Promise<{ orgId: string; clientId: string; noteId: string }> }) {
-  const uid = await getUid(request);
-  if (!uid) return NextResponse.json({ error: 'Authentication is required.' }, { status: 401 });
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return NextResponse.json({ error: 'Authentication is required.' }, { status: 401 });
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return NextResponse.json({ error: 'Your BSM account is not active.' }, { status: 403 });
   const { orgId, clientId, noteId } = await context.params;
   if (![orgId, clientId, noteId].every(validId)) return NextResponse.json({ error: 'Invalid note request.' }, { status: 400 });
 

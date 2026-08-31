@@ -127,10 +127,10 @@ async function seedBase() {
       setDoc(doc(db, membershipPath(OTHER_ORG_UID, OTHER_ORGANIZATION_ID)), adminMembership(OTHER_ORG_UID, OTHER_ORGANIZATION_ID)),
       setDoc(doc(db, leadPath()), unconvertedLead()),
       setDoc(doc(db, `organizations/${OTHER_ORGANIZATION_ID}/leads/${LEAD_ID}`), { ...unconvertedLead(LEAD_ID, OTHER_ORG_UID), createdBy: OTHER_ORG_UID, updatedBy: OTHER_ORG_UID }),
-      setDoc(doc(db, `users/${ADMIN_UID}`), { uid: ADMIN_UID, role: 'ADMIN', active: true }),
-      setDoc(doc(db, `users/${USER_UID}`), { uid: USER_UID, role: 'USER', active: true }),
-      setDoc(doc(db, `users/${INACTIVE_UID}`), { uid: INACTIVE_UID, role: 'ADMIN', active: true }),
-      setDoc(doc(db, `users/${OTHER_ORG_UID}`), { uid: OTHER_ORG_UID, role: 'ADMIN', active: true }),
+      setDoc(doc(db, `users/${ADMIN_UID}`), { uid: ADMIN_UID, role: 'ADMIN', active: true, status: 'active' }),
+      setDoc(doc(db, `users/${USER_UID}`), { uid: USER_UID, role: 'USER', active: true, status: 'active' }),
+      setDoc(doc(db, `users/${INACTIVE_UID}`), { uid: INACTIVE_UID, role: 'ADMIN', active: true, status: 'active' }),
+      setDoc(doc(db, `users/${OTHER_ORG_UID}`), { uid: OTHER_ORG_UID, role: 'ADMIN', active: true, status: 'active' }),
     ]);
     assert.ok(timestamp);
   });

@@ -53,6 +53,7 @@ async function createToken(label) {
     body: JSON.stringify({ email, password: 'client-document-delete-test-password', returnSecureToken: true }),
   });
   assert.equal(response.ok, true, `Auth emulator sign-in failed for ${label}.`);
+  await adminDb.doc(`users/${uid}`).set({ uid, name: label, email, displayName: label, status: 'active', role: 'USER', active: true });
   return { uid, token: (await response.json()).idToken };
 }
 

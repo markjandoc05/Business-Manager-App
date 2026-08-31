@@ -1,7 +1,8 @@
 import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { auth, db, storage } from '@/lib/firebase/client';
+import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
+import { authenticatedFetch } from '@/lib/repositories/authenticatedRequest';
 import type { Client, DocumentItem, Note } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { resolveAssignment } from '@/lib/ownership';
@@ -321,13 +322,9 @@ export async function restoreClientNote(user: AppUser | null, organizationId: st
 export async function permanentlyDeleteClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
   await requireClientManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to delete a client note.');
-  await auth.authStateReady();
-  const firebaseUser = auth.currentUser;
-  if (!firebaseUser) throw new Error('Authentication is required.');
-  const token = await firebaseUser.getIdToken(false);
-  const response = await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/notes/${encodeURIComponent(noteId)}`, {
+  const response = await authenticatedFetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/notes/${encodeURIComponent(noteId)}`, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
   });
   const payload = await response.json().catch(() => null) as { error?: string } | null;
   if (!response.ok) throw new Error(payload?.error || 'Unable to permanently delete this note.');
@@ -452,13 +449,9 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
   } catch (error) {
     if (uploaded) {
       await (async () => {
-        await auth.authStateReady();
-        const firebaseUser = auth.currentUser;
-        if (!firebaseUser) return;
-        const token = await firebaseUser.getIdToken(false);
-        await fetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/documents/${encodeURIComponent(documentRef.id)}`, {
+        await authenticatedFetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/documents/${encodeURIComponent(documentRef.id)}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ storagePath }),
         });
       })().catch(() => undefined);
@@ -510,30 +503,10 @@ export async function restoreClientDocument(user: AppUser | null, organizationId
 export async function permanentlyDeleteClientDocument(user: AppUser | null, organizationId: string, clientId: string, documentId: string) {
   await requireClientManager(user, organizationId);
   const endpoint = `/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/documents/${encodeURIComponent(documentId)}`;
-  const getToken = async (forceRefresh: boolean) => {
-    await auth.authStateReady();
-    const firebaseUser = auth.currentUser;
-    if (!firebaseUser) throw new Error('Authentication is required.');
-    const token = await firebaseUser.getIdToken(forceRefresh);
-    if (process.env.NODE_ENV !== 'production') {
-      console.debug('Client document delete authentication', {
-        currentUserPresent: true,
-        currentUserUidPresent: Boolean(firebaseUser.uid),
-        tokenObtained: Boolean(token),
-        authorizationHeaderAttached: Boolean(token),
-        endpoint,
-        forcedRefresh: forceRefresh,
-      });
-    }
-    return token;
-  };
-  const sendRequest = (token: string) => fetch(endpoint, {
+  const response = await authenticatedFetch(endpoint, {
     method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
   });
-
-  let response = await sendRequest(await getToken(false));
-  if (response.status === 401) response = await sendRequest(await getToken(true));
   if (!response.ok) {
     const payload = await response.json().catch(() => null) as { error?: string } | null;
     throw new Error(payload?.error || 'Unable to permanently delete the document. Please try again.');

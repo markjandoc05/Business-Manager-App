@@ -22,7 +22,7 @@ import { listUserMemberships } from '@/lib/repositories/workspaces';
 import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 import { clearCachedRequests } from '@/lib/repositories/requestCache';
 
-type AuthStatus = 'loading' | 'signed-out' | 'active' | 'disabled' | 'error';
+type AuthStatus = 'loading' | 'signed-out' | 'active' | 'inactive' | 'disabled' | 'error';
 
 interface AuthContextValue {
   firebaseUser: FirebaseUser | null;
@@ -42,7 +42,7 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
     ? data.role
     : 'USER';
 
-  const accountStatus = data.status === 'disabled' ? 'disabled' : data.status === 'active' || data.active === true ? 'active' : 'pending';
+  const accountStatus = data.status === 'disabled' ? 'disabled' : data.status === 'inactive' ? 'inactive' : data.status === 'active' || data.active === true ? 'active' : 'pending';
 
   return {
     uid: firebaseUser.uid,
@@ -108,9 +108,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState(false);
   const lastAuthUidRef = useRef<string | null>(null);
+  const authEventRef = useRef(0);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
+      const authEvent = ++authEventRef.current;
       setFirebaseUser(nextFirebaseUser);
       setError(null);
       // Do not retain display/startup data across an auth boundary.
@@ -132,9 +134,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setStatus('loading');
       try {
         const nextUser = await syncUser(nextFirebaseUser);
+        if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
         setUser(nextUser);
-        setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : 'active');
+        setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : nextUser.accountStatus === 'inactive' ? 'inactive' : 'active');
       } catch (syncError) {
+        if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
         console.error('Unable to load the authenticated Firestore user', syncError);
         setUser(null);
         setStatus('error');

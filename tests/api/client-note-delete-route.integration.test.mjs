@@ -30,6 +30,7 @@ async function createToken(label) {
     body: JSON.stringify({ email, password: 'note-delete-test-password', returnSecureToken: true }),
   });
   assert.equal(response.ok, true);
+  await adminDb.doc(`users/${uid}`).set({ uid, name: label, email, displayName: label, status: 'active', role: 'USER', active: true });
   return { uid, token: (await response.json()).idToken };
 }
 

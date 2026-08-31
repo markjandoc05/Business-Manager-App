@@ -103,6 +103,7 @@ export async function createWorkspace(user: AppUser, input: WorkspaceOnboardingI
   const settingsRef = doc(db, 'organizations', organizationRef.id, 'settings', 'settings');
   const licenseRef = doc(db, 'organizations', organizationRef.id, 'license', 'current');
   const membershipRef = doc(db, 'organizations', organizationRef.id, 'members', user.uid);
+  const userRef = doc(db, 'users', user.uid);
   const bootstrapGuardRef = doc(db, 'workspaceBootstrap', user.uid);
   const timestamp = serverTimestamp();
   const trialEndsAt = Timestamp.fromMillis(Date.now() + DEFAULT_TRIAL_DAYS * 86_400_000);
@@ -111,6 +112,8 @@ export async function createWorkspace(user: AppUser, input: WorkspaceOnboardingI
   await runTransaction(db, async (transaction) => {
     const existingGuard = await transaction.get(bootstrapGuardRef);
     if (existingGuard.exists()) throw new WorkspaceAlreadyExistsError();
+    const userSnapshot = await transaction.get(userRef);
+    if (!userSnapshot.exists()) throw new Error('Your account profile is not ready yet. Please try again.');
     let slug = baseSlug;
     let slugRef = doc(db, 'organizationSlugs', slug);
     for (let suffix = 1; suffix <= 100; suffix += 1) {
@@ -147,6 +150,7 @@ export async function createWorkspace(user: AppUser, input: WorkspaceOnboardingI
       activatedAt: timestamp,
       activatedBy: user.uid,
     });
+    transaction.update(userRef, { status: 'active', active: true });
     transaction.set(settingsRef, {
       businessName: name,
       businessType: input.businessType,

@@ -39,6 +39,8 @@ async function seed() {
       setDoc(doc(db, `organizations/${ORG_B}`), organization('Console Organization B')),
       setDoc(doc(db, `organizations/${ORG_A}/members/${TENANT_ADMIN}`), member(TENANT_ADMIN)),
       setDoc(doc(db, `organizations/${ORG_B}/members/${OTHER_TENANT_ADMIN}`), member(OTHER_TENANT_ADMIN)),
+      setDoc(doc(db, `users/${TENANT_ADMIN}`), { uid: TENANT_ADMIN, status: 'active', active: true }),
+      setDoc(doc(db, `users/${OTHER_TENANT_ADMIN}`), { uid: OTHER_TENANT_ADMIN, status: 'active', active: true }),
       setDoc(doc(db, `organizations/${ORG_A}/settings/settings`), { businessName: 'Console Organization A' }),
       setDoc(doc(db, `organizations/${ORG_B}/settings/settings`), { businessName: 'Console Organization B' }),
       setDoc(doc(db, `platformAdmins/${SUPER_ADMIN}`), platformAdmin('SUPER_ADMIN')),

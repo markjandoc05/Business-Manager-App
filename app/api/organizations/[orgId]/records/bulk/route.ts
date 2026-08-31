@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp } from 'firebase-admin/firestore';
-import { adminAuth, adminDb } from '@/lib/server/firebase-admin';
+import { adminDb } from '@/lib/server/firebase-admin';
+import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 import { executeBulkLifecycleAction, getBulkLifecycleDecision, type BulkLifecycleAction } from '@/lib/server/bulk-lifecycle';
 import type { LifecycleEntity } from '@/lib/record-lifecycle';
 
@@ -16,16 +17,6 @@ function normalizeEntity(value: unknown): LifecycleEntity | null {
 
 function normalizeAction(value: unknown): BulkLifecycleAction | null {
   return value === 'archive' || value === 'trash' || value === 'restore' || value === 'permanent-delete' ? value : null;
-}
-
-async function getUid(request: NextRequest) {
-  const header = request.headers.get('authorization') || '';
-  if (!header.startsWith('Bearer ')) return null;
-  try {
-    return (await adminAuth.verifyIdToken(header.slice(7).trim())).uid;
-  } catch {
-    return null;
-  }
 }
 
 async function getAuthorization(organizationId: string, uid: string) {
@@ -63,8 +54,10 @@ function hasWritableLicense(organization: Record<string, unknown>, license: Reco
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ orgId: string }> }) {
-  const uid = await getUid(request);
-  if (!uid) return NextResponse.json({ error: 'Authentication is required.' }, { status: 401 });
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return NextResponse.json({ error: 'Authentication is required.' }, { status: 401 });
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return NextResponse.json({ error: 'Your BSM account is not active.' }, { status: 403 });
   const { orgId } = await context.params;
   if (!validId(orgId)) return NextResponse.json({ error: 'Invalid organization.' }, { status: 400 });
 

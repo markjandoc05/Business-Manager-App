@@ -13,6 +13,7 @@ async function seed() {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await db.doc(`organizations/${ORG}`).set({ status: 'active' });
+    await db.doc(`users/${USER}`).set({ uid: USER, status: 'active', active: true });
     await db.doc(`organizations/${ORG}/members/${USER}`).set({ userId: USER, role: 'USER', status: 'active' });
     await db.doc(`organizations/${ORG}/feedback/existing`).set({ type: 'Feedback', message: 'Existing', status: 'NEW' });
   });

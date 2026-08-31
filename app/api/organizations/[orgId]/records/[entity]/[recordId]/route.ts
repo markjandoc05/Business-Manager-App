@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
-import { adminAuth, adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 import { evaluateLifecycle, type LifecycleAction, type LifecycleDependencies, type LifecycleEntity } from '@/lib/record-lifecycle';
 
 export const runtime = 'nodejs';
@@ -19,16 +20,6 @@ function normalizeEntity(value: string): LifecycleEntity | null {
 
 function normalizeAction(value: string | null): LifecycleAction | null {
   return value === 'archive' || value === 'trash' || value === 'permanent-delete' ? value : null;
-}
-
-async function getUid(request: NextRequest) {
-  const header = request.headers.get('authorization') || '';
-  if (!header.startsWith('Bearer ')) return null;
-  try {
-    return (await adminAuth.verifyIdToken(header.slice(7).trim())).uid;
-  } catch {
-    return null;
-  }
 }
 
 function organizationDataMatchesLicense(organization: Record<string, unknown>, license: Record<string, unknown>, licenseExpiry: Timestamp) {
@@ -233,8 +224,10 @@ async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: s
 }
 
 export async function GET(request: NextRequest, context: { params: Promise<{ orgId: string; entity: string; recordId: string }> }) {
-  const uid = await getUid(request);
-  if (!uid) return response(401, { error: 'Authentication is required.' });
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return response(401, { error: 'Authentication is required.' });
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return response(403, { error: 'Your BSM account is not active.' });
   const { orgId, entity: rawEntity, recordId } = await context.params;
   const entity = normalizeEntity(rawEntity);
   const action = normalizeAction(new URL(request.url).searchParams.get('action'));
@@ -250,8 +243,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ org
 }
 
 export async function DELETE(request: NextRequest, context: { params: Promise<{ orgId: string; entity: string; recordId: string }> }) {
-  const uid = await getUid(request);
-  if (!uid) return response(401, { error: 'Authentication is required.' });
+  const authenticatedUser = await getAuthenticatedUser(request);
+  if (!authenticatedUser) return response(401, { error: 'Authentication is required.' });
+  const { uid } = authenticatedUser;
+  if (!await isApplicationUserActive(uid)) return response(403, { error: 'Your BSM account is not active.' });
   const { orgId, entity: rawEntity, recordId } = await context.params;
   const entity = normalizeEntity(rawEntity);
   if (!validId(orgId) || !validId(recordId) || !entity) return response(400, { error: 'Invalid record request.' });
