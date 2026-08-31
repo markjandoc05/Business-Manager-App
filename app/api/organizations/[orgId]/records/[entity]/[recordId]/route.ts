@@ -38,7 +38,7 @@ function writableLicense(organization: Record<string, unknown>, license: Record<
     && ['TRIAL', 'ACTIVE'].includes(String(organization.licenseStatus))
     && organizationExpiry instanceof Timestamp
     && organizationExpiry.toMillis() >= Date.now()
-    && ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
+    && ['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
     && ['TRIAL', 'ACTIVE'].includes(String(license.status))
     && Number.isInteger(license.maxUsers)
     && (license.maxUsers as number) >= 1

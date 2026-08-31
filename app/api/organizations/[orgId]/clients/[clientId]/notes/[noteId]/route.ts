@@ -14,7 +14,7 @@ function writableLicense(organization: Record<string, unknown>, license: Record<
     || !['TRIAL', 'ACTIVE'].includes(String(organization.licenseStatus))) return false;
   if (organization.licenseExpiresAt instanceof Timestamp && organization.licenseExpiresAt.toMillis() < Date.now()) return false;
   const expiry = license.status === 'TRIAL' ? license.trialEndsAt : license.subscriptionEndsAt;
-  return ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
+  return ['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
     && ['TRIAL', 'ACTIVE'].includes(String(license.status))
     && Number.isInteger(license.maxUsers)
     && (license.maxUsers as number) >= 1

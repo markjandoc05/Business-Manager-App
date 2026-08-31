@@ -22,6 +22,15 @@ const keys = manifest.indexes.map(indexKey);
 const duplicateKeys = keys.filter((key, index) => keys.indexOf(key) !== index);
 assert.equal(duplicateKeys.length, 0, 'firestore.indexes.json must not contain exact duplicate indexes.');
 
+const fieldOverrideKeys = manifest.fieldOverrides.flatMap((override) => (override.indexes || []).map((index) => JSON.stringify({
+  collectionGroup: override.collectionGroup,
+  fieldPath: override.fieldPath,
+  order: index.order,
+  queryScope: index.queryScope,
+})));
+const duplicateFieldOverrideKeys = fieldOverrideKeys.filter((key, index) => fieldOverrideKeys.indexOf(key) !== index);
+assert.equal(duplicateFieldOverrideKeys.length, 0, 'firestore.indexes.json must not contain exact duplicate field overrides.');
+
 const requiredIndexes = [
   ['members', 'COLLECTION_GROUP', [['userId', 'ASCENDING'], ['role', 'ASCENDING'], ['status', 'ASCENDING']]],
   ['leads', 'COLLECTION', [['archived', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
@@ -40,5 +49,11 @@ for (const [collectionGroup, queryScope, fields] of requiredIndexes) {
   assert.ok(found, `Missing required ${queryScope} index for ${collectionGroup}: ${JSON.stringify(fields)}`);
 }
 
-console.log(`Validated ${manifest.indexes.length} canonical Firestore indexes; no exact duplicates found.`);
+const requiredFieldOverride = manifest.fieldOverrides.some((override) => override.collectionGroup === 'members'
+  && override.fieldPath === 'userId'
+  && override.indexes?.some((index) => index.order === 'ASCENDING' && index.queryScope === 'COLLECTION_GROUP'));
+assert.ok(requiredFieldOverride, 'Missing required COLLECTION_GROUP ASCENDING single-field index override for members.userId.');
+
+const fieldOverrideIndexCount = manifest.fieldOverrides.reduce((count, override) => count + (override.indexes || []).length, 0);
+console.log(`Validated ${manifest.indexes.length + fieldOverrideIndexCount} canonical Firestore indexes (${manifest.indexes.length} composite, ${fieldOverrideIndexCount} single-field overrides); no exact duplicates found.`);
 console.log('Console critical organization, member-status, license/settings, and createdAt-only audit-log queries require no additional composite index.');

@@ -95,7 +95,7 @@ service cloud.firestore {
     function settingsLicenseAllowsWrites(organizationId) {
       return licenseAllowsWrites(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/license/current)
-        && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.plan in ['TRIAL', 'STARTER', 'TEAM', 'LEGACY']
+        && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.plan in ['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY']
         && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.maxUsers is int
         && get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.maxUsers >= 1
         && get(/databases/$(database)/documents/organizations/$(organizationId)).data.licenseStatus == get(/databases/$(database)/documents/organizations/$(organizationId)/license/current).data.status
@@ -405,7 +405,7 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/members/{userId} {
       allow read: if isActivePlatformAdmin()
-        || (isActiveApplicationUser() && userId == request.auth.uid && resource.data.status == 'active')
+        || (isActiveApplicationUser() && userId == request.auth.uid && resource.data.userId == request.auth.uid)
         || isOrganizationMember(organizationId);
       allow create: if isBootstrapOrganizationCreate(organizationId)
         && request.resource.data.keys().hasOnly(['userId', 'email', 'displayName', 'role', 'status', 'joinedAt', 'activatedAt', 'activatedBy'])

@@ -35,6 +35,9 @@ test('valid ACTIVE and TRIAL licenses are writable and readable', () => {
   assert.equal(trial.status, 'TRIAL');
   assert.equal(trial.canRead, true);
   assert.equal(trial.canWrite, true);
+  const solo = resolveLicenseState(license({ plan: 'SOLO', maxUsers: 1 }), now);
+  assert.equal(solo.license.maxUsers, 1);
+  assert.equal(solo.plan, 'SOLO');
 });
 
 test('EXPIRED and SUSPENDED licenses remain readable but read-only', () => {

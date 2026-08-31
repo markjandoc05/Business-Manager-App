@@ -3,10 +3,12 @@ export type OrganizationRole = UserRole;
 export type OrganizationStatus = 'trial' | 'active' | 'expired' | 'suspended';
 export type MembershipStatus = 'pending' | 'active' | 'inactive' | 'suspended' | 'archived';
 export type PlatformRole = 'PLATFORM_ADMIN';
-export type LicensePlan = 'TRIAL' | 'STARTER' | 'TEAM' | 'LEGACY';
+export type LicensePlan = 'TRIAL' | 'SOLO' | 'STARTER' | 'TEAM' | 'LEGACY';
 export type LicenseStatus = 'TRIAL' | 'ACTIVE' | 'EXPIRED' | 'SUSPENDED';
 export type LicenseEffectiveStatus = LicenseStatus | 'UNKNOWN';
 export type AccountStatus = 'pending' | 'active' | 'inactive' | 'disabled';
+export type MemberLoginStatus = 'SUCCESS' | 'FAILED';
+export type MemberLoginFailureCode = 'BOOTSTRAP_FAILED' | 'MEMBERSHIP_INACTIVE' | 'LICENSE_BLOCKED' | 'WORKSPACE_ACCESS_FAILED';
 
 export interface License {
   plan: LicensePlan;
@@ -75,6 +77,11 @@ export interface OrganizationMembership {
   joinedAt?: string;
   activatedAt?: string;
   activatedBy?: string;
+  lastLoginAt?: string;
+  lastLoginStatus?: MemberLoginStatus;
+  lastSuccessfulLoginAt?: string;
+  lastFailedLoginAt?: string;
+  lastLoginFailureCode?: MemberLoginFailureCode;
 }
 
 export interface PlatformUserProfile {

@@ -1,5 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 import type { License, LicensePlan, LicenseStatus, ResolvedLicenseState } from '@/types/auth';
+import { LICENSE_PLANS } from './config.ts';
 
 function timestamp(value: unknown) {
   return value instanceof Timestamp ? value : undefined;
@@ -10,7 +11,7 @@ function hasTimestamp(value: unknown) {
 }
 
 export function parseLicense(data: Record<string, unknown>): License | null {
-  const plan = ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(data.plan as string) ? data.plan as LicensePlan : null;
+  const plan = LICENSE_PLANS.includes(data.plan as LicensePlan) ? data.plan as LicensePlan : null;
   const status = ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.status as string) ? data.status as LicenseStatus : null;
   const maxUsers = data.maxUsers;
   if (!plan || !status || typeof maxUsers !== 'number' || !Number.isInteger(maxUsers) || maxUsers < 1) return null;

@@ -30,7 +30,7 @@ async function validateMembershipAuthorization(organizationId: string, callerUid
   if (organization.licenseExpiresAt instanceof Timestamp && organization.licenseExpiresAt.toMillis() < Date.now()) return 'LICENSE_BLOCKED';
 
   const license = licenseSnapshot.data() || {};
-  if (!['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan)) || !['TRIAL', 'ACTIVE'].includes(String(license.status)) || !Number.isInteger(license.maxUsers) || license.maxUsers < 1) return 'LICENSE_INVALID';
+  if (!['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan)) || !['TRIAL', 'ACTIVE'].includes(String(license.status)) || !Number.isInteger(license.maxUsers) || license.maxUsers < 1) return 'LICENSE_INVALID';
   const expiry = license.status === 'TRIAL' ? license.trialEndsAt : license.subscriptionEndsAt;
   if (!(expiry instanceof Timestamp) || expiry.toMillis() < Date.now()) return 'LICENSE_BLOCKED';
   if (organization.licenseStatus !== license.status
@@ -117,7 +117,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ o
       if (organization.licenseExpiresAt instanceof Timestamp && organization.licenseExpiresAt.toMillis() < Date.now()) throw new Error('LICENSE_BLOCKED');
 
       const license = licenseSnapshot.data() || {};
-      if (!['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan)) || !['TRIAL', 'ACTIVE'].includes(String(license.status)) || !Number.isInteger(license.maxUsers) || license.maxUsers < 1) throw new Error('LICENSE_INVALID');
+      if (!['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan)) || !['TRIAL', 'ACTIVE'].includes(String(license.status)) || !Number.isInteger(license.maxUsers) || license.maxUsers < 1) throw new Error('LICENSE_INVALID');
       const expiry = license.status === 'TRIAL' ? license.trialEndsAt : license.subscriptionEndsAt;
       if (!(expiry instanceof Timestamp) || expiry.toMillis() < Date.now()) throw new Error('LICENSE_BLOCKED');
       if (organization.licenseStatus !== license.status

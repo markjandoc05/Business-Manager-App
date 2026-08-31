@@ -20,7 +20,22 @@ function mapMembership(data: Record<string, unknown>, organizationId: string): O
   const role = data.role === 'ADMIN' || data.role === 'MANAGER' || data.role === 'USER' ? data.role as OrganizationRole : null;
   const status = membershipStatuses.includes(data.status as MembershipStatus) ? data.status as MembershipStatus : null;
   if (!role || !status || typeof data.userId !== 'string') return null;
-  return { organizationId, userId: data.userId, email: typeof data.email === 'string' ? data.email : '', displayName: typeof data.displayName === 'string' ? data.displayName : '', role, status, joinedAt: toIsoDate(data.joinedAt), activatedAt: toIsoDate(data.activatedAt), activatedBy: typeof data.activatedBy === 'string' ? data.activatedBy : undefined };
+  return {
+    organizationId,
+    userId: data.userId,
+    email: typeof data.email === 'string' ? data.email : '',
+    displayName: typeof data.displayName === 'string' ? data.displayName : '',
+    role,
+    status,
+    joinedAt: toIsoDate(data.joinedAt),
+    activatedAt: toIsoDate(data.activatedAt),
+    activatedBy: typeof data.activatedBy === 'string' ? data.activatedBy : undefined,
+    lastLoginAt: toIsoDate(data.lastLoginAt),
+    lastLoginStatus: data.lastLoginStatus === 'SUCCESS' || data.lastLoginStatus === 'FAILED' ? data.lastLoginStatus : undefined,
+    lastSuccessfulLoginAt: toIsoDate(data.lastSuccessfulLoginAt),
+    lastFailedLoginAt: toIsoDate(data.lastFailedLoginAt),
+    lastLoginFailureCode: ['BOOTSTRAP_FAILED', 'MEMBERSHIP_INACTIVE', 'LICENSE_BLOCKED', 'WORKSPACE_ACCESS_FAILED'].includes(data.lastLoginFailureCode as string) ? data.lastLoginFailureCode as OrganizationMembership['lastLoginFailureCode'] : undefined,
+  };
 }
 
 function mapOrganization(id: string, data: Record<string, unknown>): Organization | null {
@@ -32,6 +47,13 @@ function mapOrganization(id: string, data: Record<string, unknown>): Organizatio
 export async function listUserMemberships(user: Pick<AppUser, 'uid'> | null) {
   if (!user) return [];
   return cachedRequest(`workspace-memberships:${user.uid}`, 5_000, async () => {
+    // Firestore correctly denies collection-group membership queries until the
+    // caller's root profile is active. Read the caller's own profile first so
+    // first-login onboarding resolves to an empty workspace list instead of a
+    // permission error while syncUser is creating the pending profile.
+    const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
+    const profile = profileSnapshot.data();
+    if (!profileSnapshot.exists() || profile?.status !== 'active' || profile.active === false) return [];
     startStartupStage('membership-query');
     const snapshot = await getDocs(query(
       collectionGroup(db, 'members'),
@@ -54,6 +76,12 @@ export async function getOrganization(organizationId: string) {
 export function subscribeToOrganization(organizationId: string, onChange: (organization: Organization | null) => void, onError: (error: Error) => void): Unsubscribe {
   return onSnapshot(doc(db, 'organizations', organizationId), (snapshot) => {
     onChange(snapshot.exists() ? mapOrganization(snapshot.id, snapshot.data()) : null);
+  }, onError);
+}
+
+export function subscribeToOrganizationMembership(organizationId: string, userId: string, onChange: (membership: OrganizationMembership | null) => void, onError: (error: Error) => void): Unsubscribe {
+  return onSnapshot(doc(db, 'organizations', organizationId, 'members', userId), (snapshot) => {
+    onChange(snapshot.exists() ? mapMembership(snapshot.data(), organizationId) : null);
   }, onError);
 }
 

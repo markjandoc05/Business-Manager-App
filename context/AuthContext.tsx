@@ -11,14 +11,11 @@ import {
 import {
   doc,
   getDoc,
-  serverTimestamp,
-  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/client';
 import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
-import { listUserMemberships } from '@/lib/repositories/workspaces';
 import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 import { clearCachedRequests } from '@/lib/repositories/requestCache';
 
@@ -32,6 +29,7 @@ interface AuthContextValue {
   authenticating: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
+  retryBootstrap: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -54,30 +52,45 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
   };
 }
 
+type BootstrapResponseBody = {
+  code?: unknown;
+  error?: unknown;
+  debug?: { stage?: unknown; code?: unknown; message?: unknown; requestId?: unknown };
+};
+
+type BootstrapFailure = { status: number; code: string; stage: string; message: string; requestId: string };
+
+async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser, forceRefresh: boolean) {
+  const token = await firebaseUser.getIdToken(forceRefresh);
+  if (!token) throw new Error('Unable to obtain a Firebase session token.');
+  const response = await fetch('/api/auth/bootstrap', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const body = await response.json().catch(() => ({})) as BootstrapResponseBody;
+  if (response.ok) return;
+
+  const failure: BootstrapFailure = {
+    status: response.status,
+    code: typeof body.debug?.code === 'string' ? body.debug.code : typeof body.code === 'string' ? body.code : 'BOOTSTRAP_FAILED',
+    stage: typeof body.debug?.stage === 'string' ? body.debug.stage : 'unknown',
+    message: typeof body.debug?.message === 'string' ? body.debug.message : typeof body.error === 'string' ? body.error : 'Workspace bootstrap failed.',
+    requestId: typeof body.debug?.requestId === 'string' ? body.debug.requestId : response.headers.get('x-bootstrap-request-id') || 'unknown',
+  };
+  if (process.env.NODE_ENV !== 'production') console.warn(`[workspace-bootstrap] status=${failure.status} stage=${failure.stage} code=${failure.code} requestId=${failure.requestId} message=${failure.message}`);
+  return failure;
+}
+
 async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
   startStartupStage('root-user');
+  let bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser, false);
+  if (bootstrapFailure && bootstrapFailure.status === 401) bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser, true);
+  if (bootstrapFailure) throw new Error('We could not prepare your BSM workspace access yet.');
   const userRef = doc(db, 'users', firebaseUser.uid);
   const snapshot = await getDoc(userRef);
 
   if (!snapshot.exists()) {
-    const name = firebaseUser.displayName || 'User';
-    const email = firebaseUser.email || '';
-    await setDoc(userRef, {
-      uid: firebaseUser.uid,
-      name,
-      email,
-      displayName: name,
-      photoURL: firebaseUser.photoURL || '',
-      status: 'pending',
-      role: 'USER',
-      active: false,
-      createdAt: serverTimestamp(),
-      lastLogin: serverTimestamp(),
-      lastLoginAt: serverTimestamp(),
-    });
-    finishStartupStage('root-user');
-    markStartup('root-user-complete');
-    return { uid: firebaseUser.uid, name, email, role: 'USER', active: false, accountStatus: 'pending' };
+    throw new Error('Your BSM account profile is not available yet. Please try again.');
   }
 
   const nextName = firebaseUser.displayName || snapshot.data().name || 'User';
@@ -92,11 +105,11 @@ async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
     displayName: nextName,
     photoURL: firebaseUser.photoURL || '',
     status: appUser.accountStatus,
-    lastLogin: serverTimestamp(),
-    lastLoginAt: serverTimestamp(),
-  }).catch((error) => console.error('Unable to update user login metadata', error));
+  }).catch((error) => {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.warn(`[auth-profile] unable to update login metadata message=${message}`);
+  });
 
-  finishStartupStage('root-user');
   markStartup('root-user-complete');
   return appUser;
 }
@@ -109,6 +122,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authenticating, setAuthenticating] = useState(false);
   const lastAuthUidRef = useRef<string | null>(null);
   const authEventRef = useRef(0);
+
+  const completeBootstrap = React.useCallback(async (nextFirebaseUser: FirebaseUser, authEvent: number) => {
+    try {
+      const nextUser = await syncUser(nextFirebaseUser);
+      if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
+      setUser(nextUser);
+      setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : nextUser.accountStatus === 'inactive' ? 'inactive' : 'active');
+    } catch (syncError) {
+      if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
+      const message = syncError instanceof Error ? syncError.message : 'Unknown bootstrap error';
+      if (process.env.NODE_ENV !== 'production') console.warn(`[auth-bootstrap] handled failure message=${message}`);
+      setUser(null);
+      setStatus('error');
+      setError("We couldn't prepare your workspace access. Please try again.");
+    } finally {
+      finishStartupStage('root-user');
+    }
+  }, []);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
@@ -128,24 +159,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       beginStartupTrace(nextFirebaseUser.uid);
       markStartup('auth-ready');
-      // Start the authorization discovery while the global profile is loading.
-      // WorkspaceContext consumes the same in-flight request; rules remain authoritative.
-      void listUserMemberships(nextFirebaseUser).catch(() => undefined);
       setStatus('loading');
-      try {
-        const nextUser = await syncUser(nextFirebaseUser);
-        if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
-        setUser(nextUser);
-        setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : nextUser.accountStatus === 'inactive' ? 'inactive' : 'active');
-      } catch (syncError) {
-        if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
-        console.error('Unable to load the authenticated Firestore user', syncError);
-        setUser(null);
-        setStatus('error');
-        setError('We could not load your account. Please try again.');
-      }
+      await completeBootstrap(nextFirebaseUser, authEvent);
     });
-  }, []);
+  }, [completeBootstrap]);
 
   const signInController = useMemo(() => createSignInController({
       signInWithPopup: async () => { await signInWithPopup(auth, googleProvider); },
@@ -163,8 +180,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = () => firebaseSignOut(auth);
 
+  const retryBootstrap = async () => {
+    const nextFirebaseUser = auth.currentUser;
+    if (!nextFirebaseUser) return;
+    const authEvent = ++authEventRef.current;
+    setFirebaseUser(nextFirebaseUser);
+    setError(null);
+    setStatus('loading');
+    await completeBootstrap(nextFirebaseUser, authEvent);
+  };
+
   return (
-    <AuthContext.Provider value={{ firebaseUser, user, status, error, authenticating, signInWithGoogle, signOut }}>
+    <AuthContext.Provider value={{ firebaseUser, user, status, error, authenticating, signInWithGoogle, signOut, retryBootstrap }}>
       {children}
     </AuthContext.Provider>
   );

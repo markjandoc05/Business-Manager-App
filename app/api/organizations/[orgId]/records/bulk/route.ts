@@ -44,7 +44,7 @@ function hasWritableLicense(organization: Record<string, unknown>, license: Reco
     && ['TRIAL', 'ACTIVE'].includes(String(organization.licenseStatus))
     && organization.licenseExpiresAt instanceof Timestamp
     && organization.licenseExpiresAt.toMillis() >= Date.now()
-    && ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
+    && ['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
     && ['TRIAL', 'ACTIVE'].includes(String(license.status))
     && Number.isInteger(license.maxUsers)
     && (license.maxUsers as number) >= 1

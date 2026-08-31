@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, collectionGroup, doc, getDoc, getDocs, query, Timestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, collectionGroup, doc, getDoc, getDocs, query, runTransaction, Timestamp, updateDoc, where } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-bsm-client-app';
 const CREATOR_UID = 'onboarding-creator';
@@ -55,15 +55,19 @@ async function seedExisting() {
 }
 
 async function commitPayload(db, payload) {
-  const batch = writeBatch(db);
-  batch.set(payload.orgRef, payload.org);
-  batch.set(payload.slugRef, payload.slugData);
-  batch.set(payload.memberRef, payload.member);
-  batch.update(payload.userRef, { status: 'active', active: true });
-  batch.set(payload.settingsRef, payload.settings);
-  batch.set(payload.licenseRef, payload.license);
-  batch.set(payload.bootstrapGuardRef, payload.guard);
-  return batch.commit();
+  return runTransaction(db, async (transaction) => {
+    const guardSnapshot = await transaction.get(payload.bootstrapGuardRef);
+    const userSnapshot = await transaction.get(payload.userRef);
+    if (guardSnapshot.exists()) throw new Error('workspace-already-exists');
+    if (!userSnapshot.exists()) throw new Error('profile-not-ready');
+    transaction.set(payload.orgRef, payload.org);
+    transaction.set(payload.slugRef, payload.slugData);
+    transaction.set(payload.memberRef, payload.member);
+    transaction.update(payload.userRef, { status: 'active', active: true });
+    transaction.set(payload.settingsRef, payload.settings);
+    transaction.set(payload.licenseRef, payload.license);
+    transaction.set(payload.bootstrapGuardRef, payload.guard);
+  });
 }
 
 before(async () => {
@@ -85,6 +89,23 @@ test('new authenticated user can atomically create an organization and first ADM
   assert.equal((await getDoc(payload.memberRef)).data().role, 'ADMIN');
   assert.equal((await getDoc(payload.settingsRef)).data().currency, 'PHP');
   assert.equal((await getDoc(payload.licenseRef)).data().status, 'TRIAL');
+  assert.equal((await getDoc(payload.userRef)).data().status, 'active');
+  assert.equal((await getDoc(payload.userRef)).data().active, true);
+  assert.equal((await getDoc(payload.bootstrapGuardRef)).data().organizationId, payload.orgRef.id);
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    assert.equal((await context.firestore().doc(`organizationSlugs/${payload.slugRef.id}`).get()).data().organizationId, payload.orgRef.id);
+  });
+});
+
+test('repeating workspace creation cannot create a second canonical workspace', async () => {
+  const db = testEnv.authenticatedContext(CREATOR_UID).firestore();
+  const payload = onboardingPayload(db);
+  await assertSucceeds(commitPayload(db, payload));
+  await assert.rejects(commitPayload(db, payload), /workspace-already-exists/);
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const organizations = await context.firestore().collection('organizations').get();
+    assert.equal(organizations.docs.filter((item) => item.id === payload.orgRef.id).length, 1);
+  });
 });
 
 test('creator cannot make another UID the initial ADMIN', async () => {
@@ -111,6 +132,24 @@ test('signed-in users cannot read or enumerate internal workspace slug records',
   await assertFails(getDocs(query(collection(db, 'organizationSlugs'))));
 });
 
+test('an active existing UID membership is discoverable after profile bootstrap', async () => {
+  const uid = 'existing-console-user';
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await Promise.all([
+      context.firestore().doc(`users/${uid}`).set({ uid, status: 'active', active: true }),
+      context.firestore().doc(`organizations/${EXISTING_ORG_ID}/members/${uid}`).set({ userId: uid, role: 'USER', status: 'active' }),
+    ]);
+  });
+  const db = testEnv.authenticatedContext(uid).firestore();
+  const memberships = await getDocs(query(
+    collectionGroup(db, 'members'),
+    where('userId', '==', uid),
+    where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
+    where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
+  ));
+  assert.deepEqual(memberships.docs.map((item) => item.ref.parent.parent?.id), [EXISTING_ORG_ID]);
+});
+
 test('a new user cannot query memberships until its application profile is active', async () => {
   const db = testEnv.authenticatedContext('brand-new-user').firestore();
   await assertFails(getDocs(query(
@@ -119,4 +158,18 @@ test('a new user cannot query memberships until its application profile is activ
     where('role', 'in', ['ADMIN', 'MANAGER', 'USER']),
     where('status', 'in', ['pending', 'active', 'inactive', 'suspended', 'archived']),
   )));
+});
+
+test('clients cannot write server-controlled login activity on memberships', async () => {
+  const uid = 'login-activity-client';
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await context.firestore().doc(`users/${uid}`).set({ uid, status: 'active', active: true });
+    await context.firestore().doc(`organizations/${EXISTING_ORG_ID}/members/${uid}`).set({ userId: uid, role: 'USER', status: 'active' });
+  });
+  const db = testEnv.authenticatedContext(uid).firestore();
+  await assertFails(updateDoc(doc(db, `organizations/${EXISTING_ORG_ID}/members/${uid}`), {
+    lastLoginAt: Timestamp.now(),
+    lastLoginStatus: 'SUCCESS',
+    lastSuccessfulLoginAt: Timestamp.now(),
+  }));
 });

@@ -19,7 +19,7 @@ function writableLicense(organization: Record<string, unknown>, license: Record<
     || !['TRIAL', 'ACTIVE'].includes(String(organization.licenseStatus))) return false;
   if (organization.licenseExpiresAt instanceof Timestamp && organization.licenseExpiresAt.toMillis() < Date.now()) return false;
 
-  if (!['TRIAL', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
+  if (!['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'].includes(String(license.plan))
     || !['TRIAL', 'ACTIVE'].includes(String(license.status))
     || !Number.isInteger(license.maxUsers)
     || (license.maxUsers as number) < 1) return false;

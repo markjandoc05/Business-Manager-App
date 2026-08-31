@@ -14,7 +14,7 @@ function LoadingScreen() {
 }
 
 function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => void }) {
-  const { signInWithGoogle, error, authenticating } = useAuth();
+  const { firebaseUser, signInWithGoogle, signOut, retryBootstrap, error, authenticating } = useAuth();
   const [authAction, setAuthAction] = React.useState<'signin' | 'create-workspace' | null>(null);
   const isAuthenticating = authenticating || authAction !== null;
 
@@ -61,6 +61,7 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
         </div>
 
         {error && <p className="text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
+        {error && firebaseUser && <div className="space-y-2"><Button type="button" onClick={() => void retryBootstrap()} className="w-full">Retry workspace access</Button><Button type="button" variant="outline" onClick={signOut} className="w-full">Sign out</Button></div>}
         <p className="text-center text-[11px] leading-5 text-[var(--app-tertiary)]">
           By using BSM App, you agree to the <span className="underline decoration-[var(--app-border)] underline-offset-2">Terms of Service</span> and <span className="underline decoration-[var(--app-border)] underline-offset-2">Data Processing Agreement</span>.
         </p>

@@ -8,6 +8,5 @@ export const DEFAULT_LICENSE_FEATURES: Record<string, boolean> = {
   documents: true,
 };
 
-export const LICENSE_PLANS = ['TRIAL', 'STARTER', 'TEAM', 'LEGACY'] as const;
+export const LICENSE_PLANS = ['TRIAL', 'SOLO', 'STARTER', 'TEAM', 'LEGACY'] as const;
 export const LICENSE_STATUSES = ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'] as const;
-

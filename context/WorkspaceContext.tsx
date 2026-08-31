@@ -2,10 +2,11 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { getOrganization, listUserMemberships, subscribeToOrganization } from '@/lib/repositories/workspaces';
+import { getOrganization, listUserMemberships, subscribeToOrganization, subscribeToOrganizationMembership } from '@/lib/repositories/workspaces';
 import { invalidateCachedRequest } from '@/lib/repositories/requestCache';
 import { resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
 import { firestoreWorkspaceErrorMessage, isFirestoreIndexError } from '@/lib/repositories/pagination';
+import { recordClientLoginActivity } from '@/lib/auth/loginActivity';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
 import { finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 
@@ -38,7 +39,7 @@ interface WorkspaceContextValue {
 const WorkspaceContext = createContext<WorkspaceContextValue | undefined>(undefined);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const { firebaseUser } = useAuth();
+  const { firebaseUser, status: authStatus } = useAuth();
   const [currentOrganization, setCurrentOrganization] = useState<Organization | null>(null);
   const [membership, setMembership] = useState<OrganizationMembership | null>(null);
   const [availableOrganizations, setAvailableOrganizations] = useState<Organization[]>([]);
@@ -53,6 +54,27 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const [resolvedMemberships, setResolvedMemberships] = useState<OrganizationMembership[]>([]);
   const resolutionRequestRef = useRef(0);
+  const loginActivityKeysRef = useRef(new Set<string>());
+  const loginActivityUidRef = useRef<string | null>(null);
+
+  const recordLoginActivity = useCallback((organizationId: string, status: 'SUCCESS' | 'FAILED') => {
+    if (!firebaseUser || !organizationId) return;
+    const key = `${firebaseUser.uid}:${organizationId}:${status}`;
+    if (loginActivityKeysRef.current.has(key)) return;
+    loginActivityKeysRef.current.add(key);
+    void recordClientLoginActivity(firebaseUser, organizationId, status).catch((activityError) => {
+      loginActivityKeysRef.current.delete(key);
+      if (process.env.NODE_ENV !== 'production') console.warn('[login-activity] best-effort recording failed', activityError);
+    });
+  }, [firebaseUser]);
+
+  useEffect(() => {
+    const nextUid = firebaseUser?.uid || null;
+    if (loginActivityUidRef.current !== nextUid) {
+      loginActivityKeysRef.current.clear();
+      loginActivityUidRef.current = nextUid;
+    }
+  }, [firebaseUser?.uid]);
 
   const clearWorkspace = () => {
     setCurrentOrganization(null);
@@ -77,10 +99,10 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
     const isCurrentRequest = () => !cancelled && requestId === resolutionRequestRef.current;
 
-    if (!firebaseUser) {
+    if (!firebaseUser || authStatus !== 'active') {
       setSelectedOrganizationId(null);
       clearWorkspace();
-      setLoading(false);
+      setLoading(authStatus === 'loading');
       return () => { cancelled = true; };
     }
 
@@ -121,7 +143,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [firebaseUser, refreshToken]);
+  }, [authStatus, firebaseUser, refreshToken]);
 
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
@@ -139,6 +161,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (cancelled || requestId !== resolutionRequestRef.current) return;
       if (!nextOrganization) {
         finishStartupStage('organization-resolution');
+        recordLoginActivity(selectedOrganizationId, 'FAILED');
         setError('This workspace is no longer available.');
         setLoading(false);
         return;
@@ -147,6 +170,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       markStartup('organization-resolved');
       setMembership(selectedMembership);
       setCurrentOrganization(nextOrganization);
+      recordLoginActivity(selectedOrganizationId, 'SUCCESS');
       setAvailableOrganizations((organizations) => organizations.some((organization) => organization.id === nextOrganization.id)
         ? organizations.map((organization) => organization.id === nextOrganization.id ? nextOrganization : organization)
         : [...organizations, nextOrganization]);
@@ -159,6 +183,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       } else {
         console.error('Unable to resolve organization', snapshotError);
       }
+      recordLoginActivity(selectedOrganizationId, 'FAILED');
       setError(firestoreWorkspaceErrorMessage(snapshotError, snapshotError.message));
       setLoading(false);
     });
@@ -177,8 +202,62 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       unsubscribeOrganization();
       unsubscribeLicense();
     };
-  }, [firebaseUser, resolvedMemberships, selectedOrganizationId]);
+  }, [firebaseUser, recordLoginActivity, resolvedMemberships, selectedOrganizationId]);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  /* Keep the selected membership authoritative while retaining a listener after access is removed so reactivation can be observed. */
+  useEffect(() => {
+    let cancelled = false;
+    if (!firebaseUser || !selectedOrganizationId) return undefined;
+    const userId = firebaseUser.uid;
+    const updateResolvedMembership = (nextMembership: OrganizationMembership | null) => {
+      setResolvedMemberships((previous) => {
+        const index = previous.findIndex((item) => item.organizationId === selectedOrganizationId);
+        if (!nextMembership) return index === -1 ? previous : previous.filter((_, itemIndex) => itemIndex !== index);
+        if (index === -1) return [...previous, nextMembership];
+        const current = previous[index];
+        if (current.status === nextMembership.status && current.role === nextMembership.role && current.userId === nextMembership.userId) return previous;
+        const updated = previous.slice(); updated[index] = nextMembership; return updated;
+      });
+      setMembershipSummaries((previous) => {
+        const index = previous.findIndex((item) => item.organizationId === selectedOrganizationId);
+        if (!nextMembership) return index === -1 ? previous : previous.filter((_, itemIndex) => itemIndex !== index);
+        const summary = { organizationId: selectedOrganizationId, status: nextMembership.status, role: nextMembership.role };
+        if (index === -1) return [...previous, summary];
+        const current = previous[index];
+        if (current.status === summary.status && current.role === summary.role) return previous;
+        const updated = previous.slice(); updated[index] = summary; return updated;
+      });
+      if (!nextMembership || nextMembership.status !== 'active') {
+        recordLoginActivity(selectedOrganizationId, 'FAILED');
+        setMembership(null);
+        setCurrentOrganization(null);
+        setLicense(null);
+        setLicenseLoading(false);
+        setLicenseError(null);
+        setAvailableOrganizations((organizations) => organizations.filter((organization) => organization.id !== selectedOrganizationId));
+        setLoading(false);
+        setError('You no longer have access to this workspace.');
+        return;
+      }
+      setMembership(nextMembership);
+      setError(null);
+    };
+    const unsubscribe = subscribeToOrganizationMembership(selectedOrganizationId, userId, (nextMembership) => {
+      if (cancelled || userId !== firebaseUser.uid) return;
+      updateResolvedMembership(nextMembership);
+    }, (membershipError) => {
+      if (cancelled || userId !== firebaseUser.uid) return;
+      console.error('Unable to resolve workspace membership', membershipError);
+      setMembership(null);
+      setCurrentOrganization(null);
+      setLicense(null);
+      setLicenseLoading(false);
+      recordLoginActivity(selectedOrganizationId, 'FAILED');
+      setError('Workspace access is not available yet.');
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [firebaseUser, recordLoginActivity, selectedOrganizationId]);
 
   const ready = !loading && currentOrganization !== null && ['trial', 'active', 'expired', 'suspended'].includes(currentOrganization.status) && membership?.status === 'active';
   const resolvedLicenseState = resolveLicenseState(license);
