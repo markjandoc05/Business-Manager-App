@@ -125,11 +125,12 @@ service cloud.firestore {
     }
 
     function organizationCanCreateTask(organizationId) {
-      return organizationCanManageWrite(organizationId)
-        || (organizationCanWrite(organizationId)
-          && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'USER'
-          && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.assignedToUid == request.auth.uid);
+      return organizationCanView(organizationId)
+        && licenseAllowsWrites(organizationId)
+        && (get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER']
+          || (get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'USER'
+            && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.assignedToUid == request.auth.uid));
     }
 
     function organizationCanAssign(organizationId, userId) {
@@ -137,7 +138,8 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId)).data.status == 'active'
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(userId)).data.role in ['ADMIN', 'MANAGER', 'USER']
-        && (userId == request.auth.uid || organizationCanManage(organizationId));
+        && (userId == request.auth.uid
+          || get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER']);
     }
 
     function organizationCanUpdateDeal(organizationId) {
@@ -171,10 +173,10 @@ service cloud.firestore {
     }
 
     function organizationTaskCanManage(organizationId) {
-      return organizationCanManage(organizationId)
-        || (organizationCanView(organizationId)
-          && resource.data.assignedToUid == request.auth.uid
-          && request.resource.data.assignedToUid == resource.data.assignedToUid);
+      return organizationCanView(organizationId)
+        && (get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER']
+          || (resource.data.assignedToUid == request.auth.uid
+            && request.resource.data.assignedToUid == resource.data.assignedToUid));
     }
 
     // System activities are only valid when their related mutation is part of the
@@ -296,6 +298,38 @@ service cloud.firestore {
       return activityUpdatesTask(organizationId, taskId)
         && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == true
         && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == false;
+    }
+
+    // Keep task activity authorization in one type-dispatched branch. The
+    // equivalent six-way OR tree can exceed Firestore's per-request Rules
+    // expression budget for atomic task/activity batches.
+    function activityTaskMutationIsAtomic(organizationId, taskId) {
+      return request.resource.data.type == 'task_creation'
+        ? (!exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.createdBy == request.auth.uid)
+        : request.resource.data.type == 'task_update'
+          ? (exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedBy == request.auth.uid
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedAt == request.time)
+          : request.resource.data.type == 'task_completion'
+            ? (exists(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId))
+              && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status != 'Completed'
+              && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Completed'
+              && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedBy == request.auth.uid
+              && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.updatedAt == request.time)
+            : request.resource.data.type == 'task_reopened'
+              ? (activityUpdatesTask(organizationId, taskId)
+                && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Completed'
+                && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.status == 'Pending')
+              : request.resource.data.type == 'task_archive'
+                ? (activityUpdatesTask(organizationId, taskId)
+                  && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived != true
+                  && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == true)
+                : request.resource.data.type == 'task_restore'
+                  ? (activityUpdatesTask(organizationId, taskId)
+                    && get(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == true
+                    && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/tasks/$(taskId)).data.archived == false)
+                  : false;
     }
 
     function activityCreatesNote(organizationId, clientId, noteId) {
@@ -427,7 +461,9 @@ service cloud.firestore {
     }
 
     match /organizationSlugs/{slug} {
-      allow read: if signedIn();
+      // Slug records are an internal uniqueness index, not a public workspace
+      // directory. Browser clients never need to read them.
+      allow read: if false;
       allow create: if signedIn()
         && !exists(/databases/$(database)/documents/organizationSlugs/$(slug))
         && request.resource.data.keys().hasOnly(['organizationId', 'slug', 'createdAt', 'createdByUid'])
@@ -873,30 +909,10 @@ service cloud.firestore {
             && request.resource.data.metadata.clientId is string
             && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.entityId)).data.clientId == request.resource.data.metadata.clientId
             && activityRestoresDeal(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_creation'
+          || (request.resource.data.type in ['task_creation', 'task_update', 'task_completion', 'task_reopened', 'task_archive', 'task_restore']
             && request.resource.data.entityType == 'Task'
             && request.resource.data.entityId is string
-            && activityCreatesTask(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_update'
-            && request.resource.data.entityType == 'Task'
-            && request.resource.data.entityId is string
-            && activityUpdatesTask(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_completion'
-            && request.resource.data.entityType == 'Task'
-            && request.resource.data.entityId is string
-            && activityCompletesTask(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_reopened'
-            && request.resource.data.entityType == 'Task'
-            && request.resource.data.entityId is string
-            && activityReopensTask(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_archive'
-            && request.resource.data.entityType == 'Task'
-            && request.resource.data.entityId is string
-            && activityArchivesTask(organizationId, request.resource.data.entityId))
-          || (request.resource.data.type == 'task_restore'
-            && request.resource.data.entityType == 'Task'
-            && request.resource.data.entityId is string
-            && activityRestoresTask(organizationId, request.resource.data.entityId))
+            && activityTaskMutationIsAtomic(organizationId, request.resource.data.entityId))
           || (request.resource.data.type == 'note_creation'
             && request.resource.data.entityType == 'Note'
             && request.resource.data.entityId is string

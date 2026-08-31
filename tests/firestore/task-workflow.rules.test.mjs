@@ -20,6 +20,7 @@ const client = { name: 'Client A', status: 'ACTIVE', archived: false, createdAt:
 const deal = { title: 'Deal A', clientId: 'client-a', leadId: null, value: 100, stage: 'New', status: 'Active', expectedCloseDate: '', assignedToUid: ADMIN, assignedToName: 'Admin', archived: false, createdAt: now, createdBy: ADMIN, updatedAt: now, updatedBy: ADMIN, wonAt: null, lostAt: null, lossReason: null };
 const orgBClient = { ...client, name: 'Client B', createdBy: 'org-b-admin', updatedBy: 'org-b-admin' };
 const orgBDeal = { ...deal, title: 'Deal B', clientId: 'client-b', createdBy: 'org-b-admin', updatedBy: 'org-b-admin' };
+const appUser = (uid, role = 'USER') => ({ uid, status: 'active', active: true, role });
 
 function taskData(taskId, assignedToUid = ADMIN, assignedToName = 'Admin', relatedTo = { type: 'Deal', id: 'deal-a' }) {
   return {
@@ -43,6 +44,10 @@ async function seed() {
   await testEnv.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     await Promise.all([
+      setDoc(doc(db, `users/${ADMIN}`), appUser(ADMIN, 'ADMIN')),
+      setDoc(doc(db, `users/${MANAGER}`), appUser(MANAGER, 'MANAGER')),
+      setDoc(doc(db, `users/${USER}`), appUser(USER)),
+      setDoc(doc(db, `users/${OTHER_USER}`), appUser(OTHER_USER)),
       setDoc(doc(db, `organizations/${ORG}`), organization),
       setDoc(doc(db, `organizations/${ORG}/members/${ADMIN}`), member(ADMIN, 'ADMIN')),
       setDoc(doc(db, `organizations/${ORG}/members/${MANAGER}`), member(MANAGER, 'MANAGER')),

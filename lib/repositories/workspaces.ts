@@ -114,15 +114,11 @@ export async function createWorkspace(user: AppUser, input: WorkspaceOnboardingI
     if (existingGuard.exists()) throw new WorkspaceAlreadyExistsError();
     const userSnapshot = await transaction.get(userRef);
     if (!userSnapshot.exists()) throw new Error('Your account profile is not ready yet. Please try again.');
-    let slug = baseSlug;
-    let slugRef = doc(db, 'organizationSlugs', slug);
-    for (let suffix = 1; suffix <= 100; suffix += 1) {
-      const snapshot = await transaction.get(slugRef);
-      if (!snapshot.exists()) break;
-      slug = `${baseSlug}-${suffix + 1}`.slice(0, sixtyFour);
-      slugRef = doc(db, 'organizationSlugs', slug);
-      if (suffix === 100) throw new WorkspaceSlugError();
-    }
+    // Slug records are an internal uniqueness index and are intentionally not
+    // readable by browser clients. The create rule atomically rejects a slug
+    // that already exists; do not pre-read the index from the client.
+    const slug = baseSlug;
+    const slugRef = doc(db, 'organizationSlugs', slug);
 
     transaction.set(organizationRef, {
       name,

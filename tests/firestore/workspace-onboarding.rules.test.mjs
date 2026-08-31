@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collectionGroup, doc, getDoc, getDocs, query, Timestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, collectionGroup, doc, getDoc, getDocs, query, Timestamp, where, writeBatch } from 'firebase/firestore';
 
 const PROJECT_ID = 'demo-bsm-client-app';
 const CREATOR_UID = 'onboarding-creator';
@@ -103,6 +103,12 @@ test('creator cannot claim an existing slug', async () => {
   const db = testEnv.authenticatedContext(CREATOR_UID).firestore();
   const payload = onboardingPayload(db, CREATOR_UID, 'onboarding-slug-conflict', EXISTING_SLUG);
   await assertFails(commitPayload(db, payload));
+});
+
+test('signed-in users cannot read or enumerate internal workspace slug records', async () => {
+  const db = testEnv.authenticatedContext(OTHER_UID).firestore();
+  await assertFails(getDoc(doc(db, `organizationSlugs/${EXISTING_SLUG}`)));
+  await assertFails(getDocs(query(collection(db, 'organizationSlugs'))));
 });
 
 test('a new user cannot query memberships until its application profile is active', async () => {
