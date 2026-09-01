@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { getAuthenticatedUser } from '@/lib/server/auth';
+import { authorizationHeaderDiagnostics, getAuthenticatedUser } from '@/lib/server/auth';
 import { bootstrapWorkspaceAccess, WorkspaceBootstrapError, type WorkspaceBootstrapStage } from '@/lib/server/workspace-bootstrap';
 
 export const runtime = 'nodejs';
@@ -19,28 +19,24 @@ function responseWithRequestId(body: Record<string, unknown>, status: number, re
   return NextResponse.json(body, { status, headers: { 'x-bootstrap-request-id': requestId } });
 }
 
-function hasBearerToken(request: NextRequest) {
-  const header = request.headers.get('authorization')?.trim() || '';
-  const parts = header.split(/\s+/);
-  return parts.length === 2 && parts[0] === 'Bearer' && Boolean(parts[1]);
-}
-
 export async function POST(request: NextRequest) {
   const requestId = randomUUID();
   const log = (message: string) => console.info(`[workspace-bootstrap:${requestId}] ${message}`);
+  const headerDiagnostics = authorizationHeaderDiagnostics(request);
   log('start');
-  if (!hasBearerToken(request)) {
-    log('failed stage=authorization-header code=AUTH_REQUIRED message=Authentication is required.');
+  if (!headerDiagnostics.bearerPrefixValid) {
+    const classification = headerDiagnostics.authorizationHeaderPresent ? 'AUTH_BEARER_INVALID' : 'AUTH_HEADER_MISSING';
+    log(`[firebase-auth] requestId=${requestId} stage=authorization-header classification=${classification} firebaseCode=none project=unknown authorizationHeaderPresent=${headerDiagnostics.authorizationHeaderPresent} bearerPrefixValid=${headerDiagnostics.bearerPrefixValid} tokenLength=${headerDiagnostics.tokenLength}`);
     return responseWithRequestId({ error: 'Authentication is required.', code: 'AUTH_REQUIRED' }, 401, requestId);
   }
 
   let authenticatedUser;
   try {
-    authenticatedUser = await getAuthenticatedUser(request);
-  } catch (error) {
-    const safeError = safeBootstrapError(error);
-    console.warn(`[workspace-bootstrap:${requestId}] failed stage=token-verification code=${safeError.code} message=${safeError.message}`);
-    return responseWithRequestId({ error: 'We could not verify your BSM session.', code: 'AUTHENTICATION_FAILED' }, 503, requestId);
+    authenticatedUser = await getAuthenticatedUser(request, {
+      onVerificationFailure: (diagnostic) => log(`[firebase-auth] requestId=${requestId} stage=token-verification classification=${diagnostic.classification} firebaseCode=${diagnostic.firebaseCode} project=${process.env.GOOGLE_CLOUD_PROJECT || 'unknown'} authorizationHeaderPresent=${headerDiagnostics.authorizationHeaderPresent} bearerPrefixValid=${headerDiagnostics.bearerPrefixValid} tokenLength=${headerDiagnostics.tokenLength} message=${diagnostic.message}`),
+    });
+  } catch {
+    authenticatedUser = null;
   }
   if (!authenticatedUser) {
     log('failed stage=token-verification code=AUTH_REQUIRED message=Authentication is required.');

@@ -18,6 +18,7 @@ import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
 import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 import { clearCachedRequests } from '@/lib/repositories/requestCache';
+import { requestBootstrapWithOneRefresh } from '@/lib/auth/bootstrap-request';
 
 type AuthStatus = 'loading' | 'signed-out' | 'active' | 'inactive' | 'disabled' | 'error';
 
@@ -60,13 +61,7 @@ type BootstrapResponseBody = {
 
 type BootstrapFailure = { status: number; code: string; stage: string; message: string; requestId: string };
 
-async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser, forceRefresh: boolean) {
-  const token = await firebaseUser.getIdToken(forceRefresh);
-  if (!token) throw new Error('Unable to obtain a Firebase session token.');
-  const response = await fetch('/api/auth/bootstrap', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-  });
+async function parseWorkspaceBootstrapResponse(response: Response) {
   const body = await response.json().catch(() => ({})) as BootstrapResponseBody;
   if (response.ok) return;
 
@@ -81,10 +76,13 @@ async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser, forceRefres
   return failure;
 }
 
+async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser) {
+  return parseWorkspaceBootstrapResponse(await requestBootstrapWithOneRefresh(firebaseUser));
+}
+
 async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
   startStartupStage('root-user');
-  let bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser, false);
-  if (bootstrapFailure && bootstrapFailure.status === 401) bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser, true);
+  const bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser);
   if (bootstrapFailure) throw new Error('We could not prepare your BSM workspace access yet.');
   const userRef = doc(db, 'users', firebaseUser.uid);
   const snapshot = await getDoc(userRef);

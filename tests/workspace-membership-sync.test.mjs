@@ -5,6 +5,7 @@ import { test } from 'node:test';
 const workspaces = fs.readFileSync(new URL('../lib/repositories/workspaces.ts', import.meta.url), 'utf8');
 const context = fs.readFileSync(new URL('../context/WorkspaceContext.tsx', import.meta.url), 'utf8');
 const auth = fs.readFileSync(new URL('../context/AuthContext.tsx', import.meta.url), 'utf8');
+const bootstrapRequest = fs.readFileSync(new URL('../lib/auth/bootstrap-request.ts', import.meta.url), 'utf8');
 const bootstrap = fs.readFileSync(new URL('../lib/server/workspace-bootstrap.ts', import.meta.url), 'utf8');
 const loginActivity = fs.readFileSync(new URL('../lib/server/login-activity.ts', import.meta.url), 'utf8');
 const loginActivityRoute = fs.readFileSync(new URL('../app/api/auth/login-activity/route.ts', import.meta.url), 'utf8');
@@ -29,8 +30,11 @@ test('membership changes clear access and update roles without polling', () => {
 });
 
 test('trusted profile bootstrap runs before protected membership discovery', () => {
-  assert.match(auth, /fetch\('\/api\/auth\/bootstrap'/);
-  assert.ok(auth.indexOf("fetch('/api/auth/bootstrap'") < auth.indexOf("getDoc(userRef)"));
+  assert.match(auth, /requestBootstrapWithOneRefresh/);
+  assert.ok(auth.indexOf('requestBootstrapWithOneRefresh') < auth.indexOf("getDoc(userRef)"));
+  assert.match(bootstrapRequest, /fetchImpl\('\/api\/auth\/bootstrap'/);
+  assert.match(bootstrapRequest, /response\.status === 401/);
+  assert.match(bootstrapRequest, /getIdToken\(forceRefresh\)/);
   assert.match(bootstrap, /adminAuth\.getUser\(uid\)/);
   assert.match(bootstrap, /emailVerified/);
   assert.match(bootstrap, /organizationInvitations/);

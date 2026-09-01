@@ -1,5 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { adminAuth, adminDb } from '@/lib/server/firebase-admin';
+import { describeFirebaseAuthError, type FirebaseAuthDiagnostic } from './firebase-auth-diagnostics';
 
 export interface AuthenticatedUser {
   uid: string;
@@ -7,11 +8,25 @@ export interface AuthenticatedUser {
   name?: string;
 }
 
+export function authorizationHeaderDiagnostics(request: Pick<NextRequest, 'headers'>) {
+  const header = request.headers.get('authorization')?.trim() || '';
+  const parts = header.split(/\s+/);
+  const bearerPrefixValid = parts.length === 2 && parts[0] === 'Bearer' && Boolean(parts[1]);
+  return {
+    authorizationHeaderPresent: Boolean(header),
+    bearerPrefixValid,
+    tokenLength: bearerPrefixValid ? parts[1].length : 0,
+  };
+}
+
 /**
  * Authenticate a protected API request with a current, non-revoked Firebase
  * ID token. Callers must perform organization and role authorization separately.
  */
-export async function getAuthenticatedUser(request: Pick<NextRequest, 'headers'>): Promise<AuthenticatedUser | null> {
+export async function getAuthenticatedUser(
+  request: Pick<NextRequest, 'headers'>,
+  options: { onVerificationFailure?: (diagnostic: FirebaseAuthDiagnostic) => void } = {},
+): Promise<AuthenticatedUser | null> {
   const header = request.headers.get('authorization')?.trim() || '';
   const parts = header.split(/\s+/);
   if (parts.length !== 2 || parts[0] !== 'Bearer' || !parts[1]) return null;
@@ -23,7 +38,8 @@ export async function getAuthenticatedUser(request: Pick<NextRequest, 'headers'>
       ...(typeof decoded.email === 'string' ? { email: decoded.email } : {}),
       ...(typeof decoded.name === 'string' ? { name: decoded.name } : {}),
     };
-  } catch {
+  } catch (error) {
+    options.onVerificationFailure?.(describeFirebaseAuthError(error));
     return null;
   }
 }
