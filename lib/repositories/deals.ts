@@ -11,6 +11,7 @@ import { resolveAssignment } from '@/lib/ownership';
 import { dealSystemTimelineData, dealSystemTimelineRef } from '@/lib/repositories/dealTimeline';
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
+import { incrementStartupCounter } from '@/lib/startupTiming';
 
 export const PIPELINE_DEAL_LIMIT = 100;
 export const DEAL_PAGE_SIZE = 25;
@@ -139,16 +140,23 @@ export async function listDeals(user: AppUser | null, organizationId: string, pa
 
 export type PipelineStageSummary = Record<string, { count: number; value: number }>;
 
-/**
- * Loads authoritative, organization-scoped Pipeline totals without relying on
- * the paginated Deal list used to render the board cards.
- */
-export async function getPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
+// Pipeline summaries are authoritative and intentionally not persisted in a
+// cache. Sharing only the currently running request prevents simultaneous
+// Dashboard/focus refreshes from issuing duplicate aggregate batches while
+// preserving a fresh read for every later refresh.
+const pipelineSummaryRequests = new Map<string, Promise<PipelineStageSummary>>();
+
+function pipelineSummaryRequestKey(user: AppUser | null, organizationId: string) {
+  return `${user?.uid || 'anonymous'}:${organizationId}`;
+}
+
+async function loadPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
   const { membership } = await requireOrganizationAccess(user, organizationId);
   const dealsCollection = organizationCollection<DocumentData>(db, organizationId, 'deals');
   const assigned = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
   const stages = [...DEAL_ACTIVE_STAGES, 'Won', 'Lost'] as const;
   const summaries = await Promise.all(stages.map(async (stage) => {
+    incrementStartupCounter('dashboard-pipeline-aggregate-queries');
     const snapshot = await getAggregateFromServer(
       query(dealsCollection, where('archived', '==', false), ...assigned, where('stage', '==', stage)),
       { count: count(), value: sum('value') },
@@ -157,6 +165,32 @@ export async function getPipelineStageSummaries(user: AppUser | null, organizati
     return [stage, { count: data.count, value: data.value || 0 }] as const;
   }));
   return Object.fromEntries(summaries);
+}
+
+/**
+ * Loads authoritative, organization-scoped Pipeline totals without relying on
+ * the paginated Deal list used to render the board cards.
+ */
+export async function getPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
+  const key = pipelineSummaryRequestKey(user, organizationId);
+  const pending = pipelineSummaryRequests.get(key);
+  if (pending) return pending;
+  const request = loadPipelineStageSummaries(user, organizationId).finally(() => {
+    if (pipelineSummaryRequests.get(key) === request) pipelineSummaryRequests.delete(key);
+  });
+  pipelineSummaryRequests.set(key, request);
+  return request;
+}
+
+/**
+ * Drops only in-flight sharing state after a known Deal mutation. The next
+ * Dashboard refresh therefore cannot reuse a query that began before the
+ * mutation committed.
+ */
+export function invalidatePipelineStageSummaryRequests(organizationId?: string) {
+  for (const key of pipelineSummaryRequests.keys()) {
+    if (!organizationId || key.endsWith(`:${organizationId}`)) pipelineSummaryRequests.delete(key);
+  }
 }
 
 export async function createDeal(user: AppUser | null, organizationId: string, input: DealInput) {

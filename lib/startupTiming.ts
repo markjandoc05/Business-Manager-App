@@ -5,6 +5,7 @@ type StartupTrace = {
   loginStartedAt?: number;
   points: Map<string, StartupPoint>;
   stages: Map<string, { startedAt: number; endedAt?: number }>;
+  counters: Map<string, number>;
   uid?: string;
   emitted: boolean;
 };
@@ -31,6 +32,7 @@ export function beginStartupTrace(uid?: string) {
     loginStartedAt: uid ? undefined : startedAt,
     points: new Map(),
     stages: new Map(),
+    counters: new Map(),
     uid,
     emitted: false,
   };
@@ -53,6 +55,16 @@ export function finishStartupStage(stage: string) {
   if (current) current.endedAt = now();
 }
 
+/**
+ * Records a development-only operation count for the current startup trace.
+ * Counters intentionally stay in this module so instrumentation never carries
+ * request payloads, IDs, or other user data into the browser console.
+ */
+export function incrementStartupCounter(counter: string, amount = 1) {
+  if (process.env.NODE_ENV === 'production' || !trace) return;
+  trace.counters.set(counter, (trace.counters.get(counter) || 0) + amount);
+}
+
 function point(label: string) {
   return trace?.points.get(label)?.elapsedMs ?? null;
 }
@@ -60,6 +72,11 @@ function point(label: string) {
 function stageDuration(stage: string) {
   const current = trace?.stages.get(stage);
   return current === undefined ? null : Math.max(0, Math.round((current.endedAt || now()) - current.startedAt));
+}
+
+function maxStageDuration(stages: string[]) {
+  const durations = stages.map(stageDuration).filter((duration): duration is number => duration !== null);
+  return durations.length ? Math.max(...durations) : null;
 }
 
 export function observeStartupLcp(selector: string) {
@@ -99,10 +116,30 @@ export function emitStartupTiming() {
     startupToDashboardFirstPaintMs: point('dashboard-first-paint'),
     startupToKpiLcpMs: point('kpi-lcp'),
     dashboardReadyMs: point('dashboard-data-ready'),
+    dashboardStartMs: point('dashboard-start'),
+    workspaceReadyMs: point('workspace-ready'),
+    dashboardDataStartMs: point('dashboard-data-start'),
+    dashboardCriticalDataReadyMs: point('dashboard-critical-data-ready'),
+    dashboardCompleteMs: point('dashboard-complete'),
+    dashboardSalesMetricsMs: maxStageDuration(['dashboard-kpi-salesRange', 'dashboard-kpi-salesOutstanding']),
+    dashboardDealMetricsMs: maxStageDuration(['dashboard-kpi-dealsOpen', 'dashboard-kpi-dealsWon', 'dashboard-kpi-dealsLost']),
+    dashboardTaskMetricsMs: maxStageDuration(['dashboard-kpi-tasksFollowups', 'dashboard-kpi-tasksOverdue']),
+    dashboardPipelineAggregatesMs: stageDuration('dashboard-pipeline-aggregates'),
+    dashboardGroupDurationsMs: Object.fromEntries(
+      [...(trace?.stages.entries() || [])]
+        .filter(([stage]) => stage.startsWith('dashboard-'))
+        .map(([stage]) => [stage, stageDuration(stage)]),
+    ),
+    dashboardOperationCounts: Object.fromEntries(
+      [...(trace?.counters.entries() || [])]
+        .filter(([counter]) => counter.startsWith('dashboard-')),
+    ),
   };
   const signature = JSON.stringify(timing);
   if (trace.emitted && signature === lastEmission) return;
   trace.emitted = true;
   lastEmission = signature;
-  console.info('[Startup Summary]', timing);
+  // Keep the payload machine-readable for local profiling while remaining
+  // dev-only and free of organization/user identifiers.
+  console.info('[Startup Summary]', JSON.stringify(timing));
 }

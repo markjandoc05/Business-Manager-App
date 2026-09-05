@@ -32,13 +32,13 @@ import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
 import { loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
-import { getPipelineStageSummaries, type PipelineStageSummary } from '@/lib/repositories/deals';
+import { getPipelineStageSummaries, invalidatePipelineStageSummaryRequests, type PipelineStageSummary } from '@/lib/repositories/deals';
 import { DASHBOARD_KPI_STORAGE_KEY, DEFAULT_DASHBOARD_KPI_IDS, getKpiDefinition, KPI_REGISTRY, MAX_DASHBOARD_KPIS, MIN_DASHBOARD_KPIS, normalizeDashboardKpiIds, readDashboardKpiPreference, type DashboardKpiId } from '@/lib/dashboard-kpis';
 import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
 import { IconActionButton } from '@/components/IconActionButton';
 import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
-import { emitStartupTiming, markStartup, observeStartupLcp } from '@/lib/startupTiming';
+import { emitStartupTiming, finishStartupStage, markStartup, observeStartupLcp, startStartupStage } from '@/lib/startupTiming';
 import { MovableKpiCard } from '@/components/KpiCard';
 
 type DashboardFollowUpItem =
@@ -49,6 +49,7 @@ type SecondaryDashboardCard = 'leads' | 'clients' | 'deals' | 'activity';
 type DashboardRangePreset = '7' | '28' | '60' | '365' | 'custom';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
 const DEFAULT_DASHBOARD_LAYOUT = { primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
+const PIPELINE_FOCUS_REFRESH_GUARD_MS = 1_000;
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: string; days?: number }> = [
   { value: '7', label: '7 Days', days: 7 },
   { value: '28', label: '28 Days', days: 28 },
@@ -99,7 +100,7 @@ function getDashboardLayoutPreference() {
 }
 
 export default function DashboardPage() {
-  const { leads, clients, deals, tasks, activities, settings, completeTask, addLead, addClient, addTask } = useApp();
+  const { leads, clients, deals, tasks, activities, settings, leadsLoading, clientsLoading, dealsLoading, tasksLoading, settingsLoading, completeTask, addLead, addClient, addTask } = useApp();
   const router = useRouter();
   const { user } = useAuth();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
@@ -124,17 +125,31 @@ export default function DashboardPage() {
   const [pipelineStageSummary, setPipelineStageSummary] = useState<PipelineStageSummary | null>(null);
   const [pipelineMetricsError, setPipelineMetricsError] = useState<string | null>(null);
   const pipelineRequestVersion = useRef(0);
+  const pipelineLastRequestAt = useRef(0);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [dashboardRangeOpen, setDashboardRangeOpen] = useState(false);
   const quickActionsMenuRef = useRef<HTMLDivElement>(null);
   const dashboardRangeMenuRef = useRef<HTMLDivElement>(null);
   const dashboardPaintMeasured = useRef(false);
+  const dashboardStarted = useRef(false);
+  const dashboardDataStarted = useRef(false);
+  const dashboardCriticalReady = useRef(false);
+  const dashboardComplete = useRef(false);
   const dashboardRequestVersion = useRef(0);
   const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
   const selectedKpiMetricKey = useMemo(() => [...selectedKpis].sort().join('|'), [selectedKpis]);
   const selectedKpisForMetrics = useMemo(() => selectedKpiMetricKey.split('|').filter(Boolean) as DashboardKpiId[], [selectedKpiMetricKey]);
   const dashboardRangeLabel = rangePreset === 'custom' ? 'Custom range' : `Last ${rangePreset} days`;
   const dashboardDateRangeLabel = dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid range';
+
+  useEffect(() => {
+    if (!dashboardStarted.current) {
+      dashboardStarted.current = true;
+      markStartup('dashboard-start');
+    }
+    if (workspaceReady) markStartup('workspace-ready');
+    emitStartupTiming();
+  }, [workspaceReady]);
 
   useEffect(() => {
     if (!quickActionsOpen) return;
@@ -195,6 +210,11 @@ export default function DashboardPage() {
       return;
     }
     setDashboardMetricsError(null);
+    if (!dashboardDataStarted.current) {
+      dashboardDataStarted.current = true;
+      markStartup('dashboard-data-start');
+    }
+    startStartupStage('dashboard-kpi-metrics');
     try {
       const metrics = await loadDashboardMetrics(user, currentOrganizationId, selectedKpisForMetrics, dashboardDateRange);
       if (requestVersion !== dashboardRequestVersion.current) return;
@@ -207,6 +227,7 @@ export default function DashboardPage() {
       setDashboardMetrics(null);
       setDashboardMetricsError('Dashboard metrics could not be loaded. Please refresh and try again.');
     } finally {
+      finishStartupStage('dashboard-kpi-metrics');
     }
   }, [currentOrganizationId, dashboardDateRange, selectedKpisForMetrics, user, workspaceLoading, workspaceReady]);
 
@@ -231,7 +252,9 @@ export default function DashboardPage() {
       setPipelineStageSummary(null);
       return;
     }
+    pipelineLastRequestAt.current = Date.now();
     setPipelineMetricsError(null);
+    startStartupStage('dashboard-pipeline-aggregates');
     try {
       const summary = await getPipelineStageSummaries(user, currentOrganizationId);
       if (requestVersion !== pipelineRequestVersion.current) return;
@@ -240,13 +263,24 @@ export default function DashboardPage() {
       if (requestVersion !== pipelineRequestVersion.current) return;
       console.error('Unable to load Pipeline Overview aggregates', error);
       setPipelineMetricsError('Pipeline Overview could not be refreshed. Please try again.');
+    } finally {
+      finishStartupStage('dashboard-pipeline-aggregates');
     }
   }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
     void reloadPipelineStageSummary();
-    const handleInvalidation = () => { void reloadPipelineStageSummary(); };
-    const handleFocus = () => { void reloadPipelineStageSummary(); };
+    const handleInvalidation = () => {
+      invalidatePipelineStageSummaryRequests();
+      void reloadPipelineStageSummary();
+    };
+    const handleFocus = () => {
+      // Google/Firebase sign-in commonly restores focus as the Dashboard is
+      // mounting. Avoid immediately repeating the just-started aggregate
+      // batch; later focus events still refresh the authoritative summary.
+      if (Date.now() - pipelineLastRequestAt.current < PIPELINE_FOCUS_REFRESH_GUARD_MS) return;
+      void reloadPipelineStageSummary();
+    };
     window.addEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
     window.addEventListener('focus', handleFocus);
     return () => {
@@ -255,6 +289,20 @@ export default function DashboardPage() {
       pipelineRequestVersion.current += 1;
     };
   }, [reloadPipelineStageSummary]);
+
+  useEffect(() => {
+    if (dashboardCriticalReady.current || !dashboardMetrics || !pipelineStageSummary) return;
+    dashboardCriticalReady.current = true;
+    markStartup('dashboard-critical-data-ready');
+    emitStartupTiming();
+  }, [dashboardMetrics, pipelineStageSummary]);
+
+  useEffect(() => {
+    if (dashboardComplete.current || !dashboardMetrics || !pipelineStageSummary || leadsLoading || clientsLoading || dealsLoading || tasksLoading || settingsLoading) return;
+    dashboardComplete.current = true;
+    markStartup('dashboard-complete');
+    emitStartupTiming();
+  }, [clientsLoading, dashboardMetrics, dealsLoading, leadsLoading, pipelineStageSummary, settingsLoading, tasksLoading]);
 
   useEffect(() => {
     const stopObservingLcp = observeStartupLcp('[data-startup-lcp="dashboard-kpi"]');

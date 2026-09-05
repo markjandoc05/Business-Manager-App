@@ -7,6 +7,7 @@ import { cachedRequest, invalidateCachedRequest } from '@/lib/repositories/reque
 import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
 import { getLocalCalendarDate } from '@/lib/sale-workflow';
 import type { DashboardKpiId } from '@/lib/dashboard-kpis';
+import { finishStartupStage, incrementStartupCounter, startStartupStage } from '@/lib/startupTiming';
 
 export type DashboardDateRange = { start: Date; end: Date };
 export type DashboardMetricValues = Partial<Record<DashboardKpiId, number>>;
@@ -31,6 +32,16 @@ export function getDefaultDashboardDateRange(now = new Date()): DashboardDateRan
   return { start, end };
 }
 
+async function loadDashboardAggregate<T>(group: QueryGroup, loader: () => Promise<T>): Promise<T> {
+  incrementStartupCounter('dashboard-aggregate-queries');
+  startStartupStage(`dashboard-kpi-${group}`);
+  try {
+    return await loader();
+  } finally {
+    finishStartupStage(`dashboard-kpi-${group}`);
+  }
+}
+
 export async function loadDashboardMetrics(user: AppUser | null, organizationId: string, selected: readonly DashboardKpiId[], range = getDefaultDashboardDateRange()): Promise<DashboardMetrics> {
   const groups = planDashboardQueryGroups(selected);
   const rangeGroups: QueryGroup[] = ['salesRange', 'dealsWon', 'dealsLost', 'leadsNew', 'clientsNew'];
@@ -53,18 +64,18 @@ async function loadDashboardMetricsUncached(user: AppUser | null, organizationId
   const dueNow = new Date().toISOString();
   const results = await Promise.allSettled(groups.map(async (group) => {
     switch (group) {
-      case 'salesRange': { const d = (await getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE'), ...saleRange), { count: count(), total: sum('total'), paid: sum('amountPaid') })).data(); return [group, { 'sales.transactions': d.count, 'sales.total': d.total || 0, 'sales.collected': d.paid || 0 }] as const; }
-      case 'salesOutstanding': { const d = (await getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE')), { balance: sum('balance') })).data(); return [group, { 'sales.outstanding': d.balance || 0 }] as const; }
-      case 'dealsOpen': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('stage', 'in', [...DEAL_ACTIVE_STAGES])), { count: count(), value: sum('value') })).data(); return [group, { 'deals.open': d.count, 'deals.potentialSales': d.value || 0 }] as const; }
-      case 'dealsWon': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Won'), where('wonAt', '>=', range.start), where('wonAt', '<=', range.end)), { count: count() })).data(); return [group, { 'deals.won': d.count }] as const; }
-      case 'dealsLost': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Lost'), where('lostAt', '>=', range.start), where('lostAt', '<=', range.end)), { count: count() })).data(); return [group, { 'deals.lost': d.count }] as const; }
-      case 'leadsTotal': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned), { count: count() })).data(); return [group, { 'leads.total': d.count }] as const; }
-      case 'leadsNew': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, ...createdRange), { count: count() })).data(); return [group, { 'leads.new': d.count }] as const; }
-      case 'leadsFollowup': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, where('status', '==', 'Follow-up')), { count: count() })).data(); return [group, { 'leads.followup': d.count }] as const; }
-      case 'clientsTotal': { const d = (await getAggregateFromServer(query(c.clients, where('archived', '==', false)), { count: count() })).data(); return [group, { 'clients.total': d.count }] as const; }
-      case 'clientsNew': { const d = (await getAggregateFromServer(query(c.clients, where('archived', '==', false), ...createdRange), { count: count() })).data(); return [group, { 'clients.new': d.count }] as const; }
-      case 'tasksFollowups': { const d = (await getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), where('dueDate', '<=', dueNow)), { count: count() })).data(); return [group, { 'tasks.followupsDue': d.count }] as const; }
-      case 'tasksOverdue': { const today = new Date(); today.setHours(0, 0, 0, 0); const d = (await getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('dueDate', '<', today.toISOString())), { count: count() })).data(); return [group, { 'tasks.overdue': d.count }] as const; }
+      case 'salesRange': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE'), ...saleRange), { count: count(), total: sum('total'), paid: sum('amountPaid') }))).data(); return [group, { 'sales.transactions': d.count, 'sales.total': d.total || 0, 'sales.collected': d.paid || 0 }] as const; }
+      case 'salesOutstanding': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE')), { balance: sum('balance') }))).data(); return [group, { 'sales.outstanding': d.balance || 0 }] as const; }
+      case 'dealsOpen': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('stage', 'in', [...DEAL_ACTIVE_STAGES])), { count: count(), value: sum('value') }))).data(); return [group, { 'deals.open': d.count, 'deals.potentialSales': d.value || 0 }] as const; }
+      case 'dealsWon': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Won'), where('wonAt', '>=', range.start), where('wonAt', '<=', range.end)), { count: count() }))).data(); return [group, { 'deals.won': d.count }] as const; }
+      case 'dealsLost': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Lost'), where('lostAt', '>=', range.start), where('lostAt', '<=', range.end)), { count: count() }))).data(); return [group, { 'deals.lost': d.count }] as const; }
+      case 'leadsTotal': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned), { count: count() }))).data(); return [group, { 'leads.total': d.count }] as const; }
+      case 'leadsNew': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, ...createdRange), { count: count() }))).data(); return [group, { 'leads.new': d.count }] as const; }
+      case 'leadsFollowup': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, where('status', '==', 'Follow-up')), { count: count() }))).data(); return [group, { 'leads.followup': d.count }] as const; }
+      case 'clientsTotal': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.clients, where('archived', '==', false)), { count: count() }))).data(); return [group, { 'clients.total': d.count }] as const; }
+      case 'clientsNew': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.clients, where('archived', '==', false), ...createdRange), { count: count() }))).data(); return [group, { 'clients.new': d.count }] as const; }
+      case 'tasksFollowups': { const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), where('dueDate', '<=', dueNow)), { count: count() }))).data(); return [group, { 'tasks.followupsDue': d.count }] as const; }
+      case 'tasksOverdue': { const today = new Date(); today.setHours(0, 0, 0, 0); const d = (await loadDashboardAggregate(group, () => getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('dueDate', '<', today.toISOString())), { count: count() }))).data(); return [group, { 'tasks.overdue': d.count }] as const; }
     }
   }));
   const values: DashboardMetricValues = {}; const failedKpis: DashboardKpiId[] = [];
