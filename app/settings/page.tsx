@@ -7,6 +7,7 @@ import { useApp } from '@/context/AppContext';
 import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { UserRole } from '@/types/auth';
+import type { Settings } from '@/types';
 import { canManageSettings } from '@/lib/permissions';
 import { listOrganizationMembers, updateOrganizationMember, type ManagedOrganizationMember } from '@/lib/repositories/users';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -25,7 +26,8 @@ export default function SettingsPage() {
   const { user } = useAuth();
   const { currentOrganizationId, membership, license, licenseState, isReadOnly } = useWorkspace();
   const canManageSystemSettings = canManageSettings(membership);
-  const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'users' | 'pipeline' | 'sources' | 'license'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'branding' | 'users' | 'pipeline' | 'sources' | 'sales' | 'license'>('profile');
+  const [salesSettings, setSalesSettings] = useState({ mode: settings.salesReferenceMode || 'SYSTEM_GENERATED', prefix: settings.salesReferencePrefix || 'SALE-', starting: settings.salesReferenceStartingNumber || 1, digits: settings.salesReferenceDigits || 6, paymentStatus: settings.salesDefaultPaymentStatus || 'PAID', paymentMethod: settings.salesDefaultPaymentMethod || 'CASH' });
   const [managedUsers, setManagedUsers] = useState<ManagedOrganizationMember[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState<string | null>(null);
@@ -65,6 +67,7 @@ export default function SettingsPage() {
     };
     void syncSettingsDrafts();
   }, [settings]);
+  useEffect(() => { setSalesSettings({ mode: settings.salesReferenceMode || 'SYSTEM_GENERATED', prefix: settings.salesReferencePrefix || 'SALE-', starting: settings.salesReferenceStartingNumber || 1, digits: settings.salesReferenceDigits || 6, paymentStatus: settings.salesDefaultPaymentStatus || 'PAID', paymentMethod: settings.salesDefaultPaymentMethod || 'CASH' }); }, [settings]);
 
   const saveSettings = async (changes: Parameters<typeof updateSettings>[0], successMessage: string, onSuccess?: () => void) => {
     if (settingsSaving || isReadOnly) return;
@@ -154,6 +157,7 @@ export default function SettingsPage() {
     ...(canManageSystemSettings ? [{ id: 'users', label: 'Users & Access', icon: Users }] : []),
     { id: 'pipeline', label: 'Pipeline', icon: Pipeline },
     { id: 'sources', label: 'Lead Sources', icon: Tag },
+    { id: 'sales', label: 'Sales', icon: CreditCard },
     { id: 'license', label: 'License', icon: CreditCard },
   ];
 
@@ -353,6 +357,16 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {activeTab === 'sales' && (
+              <form className="space-y-5" onSubmit={(event) => { event.preventDefault(); if (salesSettings.starting < 1 || salesSettings.digits < 1 || salesSettings.digits > 12 || !/^[A-Za-z0-9 _-]{0,24}$/.test(salesSettings.prefix)) { setSettingsActionError('Enter a valid Sales reference configuration.'); return; } void saveSettings({ salesReferenceMode: salesSettings.mode as 'SYSTEM_GENERATED' | 'SEQUENTIAL', salesReferencePrefix: salesSettings.prefix, salesReferenceStartingNumber: salesSettings.starting, salesReferenceDigits: salesSettings.digits, salesDefaultPaymentStatus: salesSettings.paymentStatus as 'PAID' | 'PARTIAL' | 'UNPAID', salesDefaultPaymentMethod: salesSettings.paymentMethod as 'CASH' | 'GCASH' | 'MAYA' | 'BANK_TRANSFER' | 'CARD' | 'OTHER' }, 'Sales settings saved.'); }}>
+                <div><h4 className="font-semibold text-[var(--app-text)]">Sales Reference Number</h4><p className="text-xs text-[var(--app-muted)]">Applies to future Sales only. Existing Sale numbers will not change.</p></div>
+                <label className="block text-sm font-medium">Numbering mode<select className="mt-1 w-full" value={salesSettings.mode} onChange={(event) => setSalesSettings({ ...salesSettings, mode: event.target.value as 'SYSTEM_GENERATED' | 'SEQUENTIAL' })}><option value="SYSTEM_GENERATED">System Generated</option><option value="SEQUENTIAL">Sequential</option></select></label>
+                {salesSettings.mode === 'SEQUENTIAL' && <div className="grid gap-3 sm:grid-cols-3"><label className="text-sm font-medium">Prefix<input className="mt-1 w-full" value={salesSettings.prefix} onChange={(event) => setSalesSettings({ ...salesSettings, prefix: event.target.value })} /></label><label className="text-sm font-medium">Starting number<input className="mt-1 w-full" type="number" min="1" value={salesSettings.starting} onChange={(event) => setSalesSettings({ ...salesSettings, starting: Number(event.target.value) })} /></label><label className="text-sm font-medium">Digits<input className="mt-1 w-full" type="number" min="1" max="12" value={salesSettings.digits} onChange={(event) => setSalesSettings({ ...salesSettings, digits: Number(event.target.value) })} /></label><p className="text-sm text-[var(--app-muted)] sm:col-span-3">Preview: <b>{salesSettings.prefix}{String(salesSettings.starting).padStart(salesSettings.digits, '0')}</b></p></div>}
+                <div className="border-t pt-4"><h4 className="font-semibold text-[var(--app-text)]">Default Payment</h4><div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-sm font-medium">Payment status<select className="mt-1 w-full" value={salesSettings.paymentStatus} onChange={(event) => setSalesSettings({ ...salesSettings, paymentStatus: event.target.value as 'PAID' | 'PARTIAL' | 'UNPAID' })}><option value="PAID">Paid</option><option value="PARTIAL">Partial</option><option value="UNPAID">Unpaid</option></select></label><label className="text-sm font-medium">Payment method<select className="mt-1 w-full" value={salesSettings.paymentMethod} onChange={(event) => setSalesSettings({ ...salesSettings, paymentMethod: event.target.value as 'CASH' | 'GCASH' | 'MAYA' | 'BANK_TRANSFER' | 'CARD' | 'OTHER' })}>{['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER'].map((method) => <option key={method} value={method}>{method.replace('_', ' ')}</option>)}</select></label></div></div>
+                <div className="flex justify-end"><Button type="submit" disabled={isReadOnly || settingsSaving}>{settingsSaving ? 'Saving…' : 'Save Sales Settings'}</Button></div>
+              </form>
             )}
 
             {activeTab === 'license' && (

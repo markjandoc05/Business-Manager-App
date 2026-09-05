@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { addClientNote, archiveClient as archiveClientRepository, archiveClientDocument as archiveClientDocumentRepository, archiveClientNote as archiveClientNoteRepository, createClient as createClientRepository, getClientById, listArchivedClientDocuments, listArchivedClientNotes, listArchivedClientsPage, listClientDocumentsPage, listClientNotesPage, listClientsPage, listTrashedClientsPage, permanentlyDeleteClient as permanentlyDeleteClientRepository, permanentlyDeleteClientDocument as permanentlyDeleteClientDocumentRepository, permanentlyDeleteClientNote as permanentlyDeleteClientNoteRepository, restoreClient as restoreClientRepository, restoreClientDocument as restoreClientDocumentRepository, restoreClientNote as restoreClientNoteRepository, trashClient as trashClientRepository, uploadClientDocument, updateClient as updateClientRepository, updateClientNote as updateClientNoteRepository, type ClientInput } from '@/lib/repositories/clients';
 import { archiveLead as archiveLeadRepository, convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeadsPage, listLeadsPage, listTrashedLeadsPage, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository, trashLead as trashLeadRepository, updateLead as updateLeadRepository, updateLeadStatus as updateLeadStatusRepository, type LeadInput, type LeadListFilters } from '@/lib/repositories/leads';
 import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDealsPage, listDeals, permanentlyDeleteDeal as permanentlyDeleteDealRepository, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
+import { getDealValue } from '@/lib/deal-items';
 import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listLeadTasks, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
 import { defaultSettings, loadSettings, SettingsLoadError, SettingsPersistenceError, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
 import { invalidateDashboardMetrics } from '@/lib/repositories/dashboard';
@@ -14,7 +15,7 @@ import { listActivities } from '@/lib/repositories/activities';
 import { listAssignableOrganizationUsers, type AssignableUser } from '@/lib/repositories/users';
 import { getDealStatusForStage } from '@/lib/deal-workflow';
 import { useWorkspace } from '@/context/WorkspaceContext';
-import { firestoreQueryErrorMessage, type FirestoreCursor } from '@/lib/repositories/pagination';
+import { firestoreQueryErrorMessage, userFacingErrorMessage, type FirestoreCursor } from '@/lib/repositories/pagination';
 import { isActiveLead, isArchivedLead, isTrashedLead, dedupeLeadsById, type LeadLifecycleState } from '@/lib/lead-lifecycle';
 import { executeBulkLifecycle as executeBulkLifecycleRequest, type BulkLifecycleAction as BulkLifecycleRequestAction, type BulkLifecycleResult } from '@/lib/repositories/lifecycle';
 
@@ -24,7 +25,7 @@ interface AppContextType {
   leads: Lead[];
   leadsLoading: boolean;
   leadsError: string | null;
-  refreshLeads: (filters?: LeadListFilters) => Promise<void>;
+  refreshLeads: (filters?: LeadListFilters, pageSize?: number) => Promise<void>;
   loadMoreLeads: () => Promise<void>;
   leadsHasMore: boolean;
   clients: Client[];
@@ -87,7 +88,7 @@ interface AppContextType {
   trashClient: (clientId: string) => Promise<void>;
   restoreClient: (clientId: string) => Promise<void>;
   permanentlyDeleteClient: (clientId: string) => Promise<void>;
-  refreshClients: (ensureClientId?: string) => Promise<void>;
+  refreshClients: (ensureClientId?: string, search?: string, pageSize?: number) => Promise<void>;
   loadMoreClients: () => Promise<void>;
   clientsHasMore: boolean;
   loadClientNotes: (clientId: string) => Promise<void>;
@@ -99,7 +100,7 @@ interface AppContextType {
   loadMoreClientDocuments: () => Promise<void>;
   clientDocumentsHasMore: boolean;
   addDeal: (deal: Omit<Deal, 'id' | 'createdAt' | 'status'>) => Promise<void>;
-  updateDeal: (dealId: string, input: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => Promise<void>;
+  updateDeal: (dealId: string, input: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; items?: Deal['items']; assignedToUid: string; assignedToName: string; lossReason: string }) => Promise<void>;
   addTask: (task: Omit<Task, 'id' | 'status'>) => Promise<void>;
   updateTask: (taskId: string, task: Omit<Task, 'id' | 'status'>) => Promise<void>;
   completeTask: (taskId: string) => Promise<void>;
@@ -162,6 +163,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const currentOrganizationRef = useRef(currentOrganizationId);
   const clientNotesRequestRef = useRef(0);
   const clientDocumentsRequestRef = useRef(0);
+  const leadsPageSizeRef = useRef(25);
+  const clientsPageSizeRef = useRef(25);
   useEffect(() => {
     currentOrganizationRef.current = currentOrganizationId;
   }, [currentOrganizationId]);
@@ -186,6 +189,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const archivedLeadsRequestRef = useRef(0);
   const trashedLeadsRequestRef = useRef(0);
   const clientsRequestRef = useRef(0);
+  const clientSearchRef = useRef('');
   const tasksRequestRef = useRef(0);
   const leadTasksRequestRef = useRef(0);
   const [users, setUsers] = useState<AssignableUser[]>([]);
@@ -395,7 +399,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const loadMoreClientNotes = useCallback(async () => {
     if (!user || !currentOrganizationId || !clientNotesCursor || clientNotesLoading) return;
-    const clientId = clientNotes[0]?.clientId;
+    const clientId = clientNotesClientId;
     if (!clientId) return;
     const organizationId = currentOrganizationId;
     setClientNotesLoading(true);
@@ -404,12 +408,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (organizationId !== currentOrganizationRef.current) return;
       setClientNotes((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setClientNotesCursor(page.nextCursor); setClientNotesHasMore(page.hasMore);
+    } catch (error) {
+      console.error('Unable to load more client notes', error);
+      if (organizationId === currentOrganizationRef.current) setClientNotesError(userFacingErrorMessage(error, 'Unable to load client notes. Please try again.'));
     } finally { if (organizationId === currentOrganizationRef.current) setClientNotesLoading(false); }
-  }, [clientNotes, clientNotesCursor, clientNotesLoading, currentOrganizationId, user]);
+  }, [clientNotesClientId, clientNotesCursor, clientNotesLoading, currentOrganizationId, user]);
 
   const loadMoreClientDocuments = useCallback(async () => {
     if (!user || !currentOrganizationId || !clientDocumentsCursor || clientDocumentsLoading) return;
-    const clientId = clientDocuments[0]?.clientId;
+    const clientId = clientDocumentsClientId;
     if (!clientId) return;
     const organizationId = currentOrganizationId;
     setClientDocumentsLoading(true);
@@ -418,17 +425,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       if (organizationId !== currentOrganizationRef.current) return;
       setClientDocuments((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setClientDocumentsCursor(page.nextCursor); setClientDocumentsHasMore(page.hasMore);
+    } catch (error) {
+      console.error('Unable to load more client documents', error);
+      if (organizationId === currentOrganizationRef.current) setClientDocumentsError(userFacingErrorMessage(error, 'Unable to load client documents. Please try again.'));
     } finally { if (organizationId === currentOrganizationRef.current) setClientDocumentsLoading(false); }
-  }, [clientDocuments, clientDocumentsCursor, clientDocumentsLoading, currentOrganizationId, user]);
+  }, [clientDocumentsClientId, clientDocumentsCursor, clientDocumentsLoading, currentOrganizationId, user]);
 
-  const refreshClients = useCallback(async (ensureClientId?: string) => {
+  const refreshClients = useCallback(async (ensureClientId?: string, search = '', requestedPageSize?: number) => {
     if (!user || !currentOrganizationId) return;
+    const pageSize = requestedPageSize && Number.isFinite(requestedPageSize) ? Math.max(1, Math.floor(requestedPageSize)) : clientsPageSizeRef.current;
+    clientsPageSizeRef.current = pageSize;
     const requestId = ++clientsRequestRef.current;
     const organizationId = currentOrganizationId;
+    clientSearchRef.current = search;
     setClientsLoading(true);
     setClientsError(null);
     try {
-      const loadedClients = await listClientsPage(user, organizationId);
+      const loadedClients = await listClientsPage(user, organizationId, null, pageSize, search);
       let nextClients = loadedClients.items;
       if (ensureClientId && !nextClients.some((client) => client.id === ensureClientId)) {
         const ensuredClient = await getClientById(user, organizationId, ensureClientId);
@@ -468,7 +481,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const organizationId = currentOrganizationId;
     setClientsLoading(true);
     try {
-      const page = await listClientsPage(user, organizationId, clientsCursor);
+      const page = await listClientsPage(user, organizationId, clientsCursor, clientsPageSizeRef.current, clientSearchRef.current);
       if (requestId !== clientsRequestRef.current || organizationId !== currentOrganizationRef.current) return;
       setClients((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
       setClientsCursor(page.nextCursor);
@@ -486,7 +499,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setClientsLoading(true);
       setClientsError(null);
       try {
-        const loadedClients = await listClientsPage(user, currentOrganizationId, null, isDashboardRoute ? 10 : undefined);
+        const pageSize = isDashboardRoute ? 10 : clientsPageSizeRef.current;
+        clientsPageSizeRef.current = pageSize;
+        const loadedClients = await listClientsPage(user, currentOrganizationId, null, pageSize);
         if (!cancelled && requestId === clientsRequestRef.current) {
           setClients(loadedClients.items);
           setClientsCursor(loadedClients.nextCursor);
@@ -514,7 +529,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setLeadsLoading(true);
       setLeadsError(null);
       try {
-        const loadedLeads = await listLeadsPage(user, currentOrganizationId, null, isDashboardRoute ? 5 : undefined);
+        const pageSize = isDashboardRoute ? 5 : leadsPageSizeRef.current;
+        leadsPageSizeRef.current = pageSize;
+        const loadedLeads = await listLeadsPage(user, currentOrganizationId, null, pageSize);
         if (!cancelled && requestId === leadsRequestRef.current) {
           setLeads(dedupeLeadsById(loadedLeads.items.filter(isActiveLead)));
           setLeadsCursor(loadedLeads.nextCursor);
@@ -532,15 +549,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [canLoadBusinessData, currentOrganizationId, isDashboardRoute, loadsLeads, user]);
 
-  const refreshLeads = useCallback(async (filters: LeadListFilters = {}) => {
+  const refreshLeads = useCallback(async (filters: LeadListFilters = {}, requestedPageSize?: number) => {
     if (!user || !currentOrganizationId) return;
+    const pageSize = requestedPageSize && Number.isFinite(requestedPageSize) ? Math.max(1, Math.floor(requestedPageSize)) : leadsPageSizeRef.current;
+    leadsPageSizeRef.current = pageSize;
     leadFiltersRef.current = filters;
     const requestId = ++leadsRequestRef.current;
     const organizationId = currentOrganizationId;
     setLeadsLoading(true);
     setLeadsError(null);
     try {
-      const loadedLeads = await listLeadsPage(user, organizationId, null, undefined, filters);
+      const loadedLeads = await listLeadsPage(user, organizationId, null, pageSize, filters);
       if (requestId === leadsRequestRef.current && organizationId === currentOrganizationRef.current) {
         setLeads(dedupeLeadsById(loadedLeads.items.filter(isActiveLead)));
         setLeadsCursor(loadedLeads.nextCursor);
@@ -562,7 +581,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const requestId = ++leadsRequestRef.current;
     setLeadsLoading(true);
     try {
-      const page = await listLeadsPage(user, organizationId, leadsCursor, undefined, leadFiltersRef.current);
+      const page = await listLeadsPage(user, organizationId, leadsCursor, leadsPageSizeRef.current, leadFiltersRef.current);
       if (organizationId !== currentOrganizationRef.current || requestId !== leadsRequestRef.current) return;
       setLeads((current) => dedupeLeadsById([...current, ...page.items]).filter(isActiveLead));
       setLeadsCursor(page.nextCursor);
@@ -1090,18 +1109,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setDealsOrganizationId(currentOrganizationId);
   };
 
-  const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; assignedToUid: string; assignedToName: string; lossReason: string }) => {
+  const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; items?: Deal['items']; assignedToUid: string; assignedToName: string; lossReason: string }) => {
     if (!user) return;
     requireWritableLicense();
     const deal = deals.find((item) => item.id === dealId);
     if (!deal) throw new Error('Deal not found. Please refresh and try again.');
     const nextStatus = getDealStatusForStage(dealData.stage);
+    const value = getDealValue(dealData.value, dealData.items);
+    const productServiceName = dealData.productServiceName?.trim() || deal.productServiceName;
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    await updateDealRepository(user, currentOrganizationId, deal, { ...dealData, clientId: deal.clientId, leadId: deal.leadId });
+    await updateDealRepository(user, currentOrganizationId, deal, { ...dealData, value, clientId: deal.clientId, leadId: deal.leadId });
     invalidateDashboardMetrics(currentOrganizationId);
     setDeals(prev => prev.map(item => item.id === dealId ? {
       ...item,
       ...dealData,
+      value,
+      ...(productServiceName !== undefined ? { productServiceName } : {}),
       status: nextStatus,
       wonAt: nextStatus === 'Won' ? item.status === 'Won' ? item.wonAt : new Date().toISOString() : undefined,
       lostAt: nextStatus === 'Lost' ? item.status === 'Lost' ? item.lostAt : new Date().toISOString() : undefined,

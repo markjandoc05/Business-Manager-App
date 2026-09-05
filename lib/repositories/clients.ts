@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, endAt, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
@@ -64,21 +64,82 @@ async function requireClientManager(user: AppUser | null, organizationId: string
   await requireOrganizationAccess(user, organizationId, ['ADMIN', 'MANAGER']);
 }
 
-export async function listClientsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = CLIENT_PAGE_SIZE): Promise<PageResult<Client>> {
+export async function listClientsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = CLIENT_PAGE_SIZE, search = ''): Promise<PageResult<Client>> {
   await requireActiveUser(user, organizationId);
   const clientsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'clients');
+  const term = search.trim().toLowerCase();
+  if (term) {
+    const matches: Client[] = [];
+    const matchingCursors: FirestoreCursor[] = [];
+    let scanCursor = cursor;
+    let lastRawCursor: FirestoreCursor = null;
+    let exhausted = false;
+    for (let page = 0; page < 20 && matches.length <= pageSize; page += 1) {
+      const pageQuery = query(clientsCollection, where('archived', '==', false), orderBy('createdAt', 'desc'), ...(scanCursor ? [startAfter(scanCursor)] : []), limit(pageSize));
+      const pageSnapshot = await getDocs(pageQuery);
+      if (pageSnapshot.empty) { exhausted = true; break; }
+      lastRawCursor = pageSnapshot.docs.at(-1) || null;
+      for (const clientDoc of pageSnapshot.docs) {
+        const client = mapClient(clientDoc.id, clientDoc.data());
+        if (!client.archived && !client.trashed && [client.name, client.company || '', client.email, client.phone].some((value) => value.toLowerCase().includes(term))) {
+          matches.push(client); matchingCursors.push(clientDoc);
+        }
+        if (matches.length > pageSize) break;
+      }
+      if (matches.length > pageSize) break;
+      if (pageSnapshot.docs.length < pageSize) { exhausted = true; break; }
+      scanCursor = lastRawCursor;
+    }
+    const items = matches.slice(0, pageSize);
+    return { items, nextCursor: matches.length > pageSize ? matchingCursors[pageSize - 1] || null : exhausted ? null : matchingCursors.at(-1) || lastRawCursor, hasMore: matches.length > pageSize || !exhausted };
+  }
   const clientsQuery = cursor
     ? query(clientsCollection, where('archived', '==', false), orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize))
     : query(clientsCollection, where('archived', '==', false), orderBy('createdAt', 'desc'), limit(pageSize));
   const snapshot = await getDocs(clientsQuery);
   const items = snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
-    .filter((client) => !client.archived && !client.trashed);
+    .filter((client) => !client.archived && !client.trashed)
+    .filter((client) => !term || [client.name, client.company || '', client.email, client.phone].some((value) => value.toLowerCase().includes(term)));
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 
 export async function listClients(user: AppUser | null, organizationId: string) {
   return (await listClientsPage(user, organizationId)).items;
+}
+
+/**
+ * Bounded server-side prefix search for Client pickers. Firestore has no
+ * cross-field text search, so query each supported field and merge the small
+ * result sets rather than downloading the organization Client collection.
+ */
+export async function searchActiveClients(user: AppUser | null, organizationId: string, value: string, pageSize = 8): Promise<Client[]> {
+  await requireActiveUser(user, organizationId);
+  const term = value.trim();
+  if (!term) return (await listClientsPage(user, organizationId, null, pageSize)).items;
+  const titleTerm = term.replace(/\b\w/g, (character) => character.toUpperCase());
+  const emailTerm = term.toLowerCase();
+  const clientsCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'clients');
+  const fields: Array<[string, string]> = [
+    ['name', term], ['company', term], ['email', emailTerm], ['phone', term],
+    ...(titleTerm === term ? [] : [['name', titleTerm], ['company', titleTerm]] as Array<[string, string]>),
+  ];
+  const snapshots = await Promise.all(fields.map(([field, prefix]) => getDocs(query(
+    clientsCollection,
+    where('status', '==', 'ACTIVE'),
+    where('archived', '==', false),
+    where('trashed', '==', false),
+    orderBy(field),
+    startAt(prefix),
+    endAt(`${prefix}\uf8ff`),
+    limit(pageSize),
+  ))));
+  const matches = new Map<string, Client>();
+  snapshots.flatMap((snapshot) => snapshot.docs).forEach((clientDoc) => {
+    const client = mapClient(clientDoc.id, clientDoc.data());
+    if (!client.archived && !client.trashed && client.status === 'ACTIVE') matches.set(client.id, client);
+  });
+  return [...matches.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, pageSize);
 }
 
 export async function getClientById(user: AppUser | null, organizationId: string, clientId: string) {
@@ -196,7 +257,7 @@ export async function trashClient(user: AppUser | null, organizationId: string, 
   if (decision.outcome === 'BLOCKED') throw new Error(`${decision.reason} ${decision.recommendedAction}`);
   const batch = writeBatch(db);
   batch.update(organizationDocumentInCollection(db, organizationId, 'clients', clientId), {
-    status: 'ARCHIVED', archived: true, trashed: true, trashedAt: serverTimestamp(), trashedBy: user.uid,
+    status: 'ARCHIVED', archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid, trashed: true, trashedAt: serverTimestamp(), trashedBy: user.uid,
     updatedAt: serverTimestamp(), updatedBy: user.uid,
   });
   addActivityToBatch(batch, organizationId, user, { type: 'client_archive', description: `Client moved to Trash: ${clientId}`, entityType: 'Client', entityId: clientId });
@@ -254,27 +315,49 @@ export async function updateClientNote(user: AppUser | null, organizationId: str
   await batch.commit();
 }
 
+function mapClientNote(id: string, clientId: string, data: Record<string, unknown>): Note {
+  return {
+    id,
+    clientId,
+    content: typeof data.content === 'string' ? data.content : '',
+    author: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : '',
+    createdByUid: typeof data.createdByUid === 'string' ? data.createdByUid : typeof data.createdBy === 'string' ? data.createdBy : undefined,
+    createdByName: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : undefined,
+    createdAt: toIsoDate(data.createdAt),
+    archived: data.archived === true,
+    archivedAt: optionalIsoDate(data.archivedAt),
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
+  } satisfies Note;
+}
+
 export async function listClientNotesPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, pageSize = 20): Promise<PageResult<Note>> {
   await requireActiveUser(user, organizationId);
   const notesCollection = organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes');
-  const notesQuery = cursor ? query(notesCollection, orderBy('createdAt', 'desc'), startAfter(cursor), limit(pageSize)) : query(notesCollection, orderBy('createdAt', 'desc'));
-  const snapshot = await getDocs(notesQuery);
-  const items = snapshot.docs.filter((noteDoc) => noteDoc.data().archived !== true).map((noteDoc) => {
-    const data = noteDoc.data();
-    return {
-      id: noteDoc.id,
-      clientId,
-      content: typeof data.content === 'string' ? data.content : '',
-      author: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : '',
-      createdByUid: typeof data.createdByUid === 'string' ? data.createdByUid : typeof data.createdBy === 'string' ? data.createdBy : undefined,
-      createdByName: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : undefined,
-      createdAt: toIsoDate(data.createdAt),
-      archived: data.archived === true,
-      archivedAt: optionalIsoDate(data.archivedAt),
-      archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
-    } satisfies Note;
-  });
-  return { items, nextCursor: null, hasMore: false };
+  const pageLimit = Math.max(1, Math.floor(pageSize));
+  const matches: Note[] = [];
+  const matchingCursors: FirestoreCursor[] = [];
+  let scanCursor = cursor;
+  let lastRawCursor: FirestoreCursor = null;
+  let exhausted = false;
+  for (let page = 0; page < 20 && matches.length <= pageLimit; page += 1) {
+    const notesQuery = query(notesCollection, orderBy('createdAt', 'desc'), ...(scanCursor ? [startAfter(scanCursor)] : []), limit(pageLimit));
+    const snapshot = await getDocs(notesQuery);
+    if (snapshot.empty) { exhausted = true; break; }
+    lastRawCursor = snapshot.docs.at(-1) || null;
+    for (const noteDoc of snapshot.docs) {
+      if (noteDoc.data().archived === true) continue;
+      matches.push(mapClientNote(noteDoc.id, clientId, noteDoc.data()));
+      matchingCursors.push(noteDoc);
+      if (matches.length > pageLimit) break;
+    }
+    if (matches.length > pageLimit) break;
+    if (snapshot.docs.length < pageLimit) { exhausted = true; break; }
+    scanCursor = lastRawCursor;
+  }
+  const items = matches.slice(0, pageLimit);
+  if (matches.length > pageLimit) return { items, nextCursor: matchingCursors[pageLimit - 1] || null, hasMore: true };
+  if (exhausted) return { items, nextCursor: null, hasMore: false };
+  return { items, nextCursor: matchingCursors[items.length - 1] || lastRawCursor, hasMore: true };
 }
 
 export async function listClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
@@ -283,22 +366,8 @@ export async function listClientNotes(user: AppUser | null, organizationId: stri
 
 export async function listArchivedClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'), orderBy('createdAt', 'desc')));
-  return snapshot.docs.filter((noteDoc) => noteDoc.data().archived === true).map((noteDoc) => {
-    const data = noteDoc.data();
-    return {
-      id: noteDoc.id,
-      clientId,
-      content: typeof data.content === 'string' ? data.content : '',
-      author: typeof data.createdByName === 'string' ? data.createdByName : typeof data.authorName === 'string' ? data.authorName : '',
-      createdByUid: typeof data.createdByUid === 'string' ? data.createdByUid : undefined,
-      createdByName: typeof data.createdByName === 'string' ? data.createdByName : undefined,
-      createdAt: toIsoDate(data.createdAt),
-      archived: true,
-      archivedAt: optionalIsoDate(data.archivedAt),
-      archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
-    } satisfies Note;
-  });
+  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'), orderBy('createdAt', 'desc'), limit(100)));
+  return snapshot.docs.filter((noteDoc) => noteDoc.data().archived === true).map((noteDoc) => mapClientNote(noteDoc.id, clientId, noteDoc.data()));
 }
 
 export async function archiveClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
@@ -366,31 +435,53 @@ function clientDocumentMimeType(file: File) {
   } as Record<string, string>)[extension] || 'application/octet-stream';
 }
 
+function mapClientDocument(id: string, clientId: string, data: Record<string, unknown>): DocumentItem {
+  return {
+    id,
+    clientId,
+    name: typeof data.name === 'string' ? data.name : 'Document',
+    storagePath: typeof data.storagePath === 'string' ? data.storagePath : '',
+    downloadURL: typeof data.downloadURL === 'string' ? data.downloadURL : undefined,
+    mimeType: typeof data.mimeType === 'string' ? data.mimeType : 'application/octet-stream',
+    size: typeof data.size === 'number' || typeof data.size === 'string' ? data.size : 0,
+    uploadedAt: toIsoDate(data.uploadedAt),
+    uploadedByUid: typeof data.uploadedByUid === 'string' ? data.uploadedByUid : typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
+    uploadedByName: typeof data.uploadedByName === 'string' ? data.uploadedByName : undefined,
+    uploadedBy: typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
+    archived: data.archived === true,
+    archivedAt: optionalIsoDate(data.archivedAt),
+    archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
+  } satisfies DocumentItem;
+}
+
 export async function listClientDocumentsPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, pageSize = 25): Promise<PageResult<DocumentItem>> {
   await requireActiveUser(user, organizationId);
   const documentsCollection = organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents');
-  const documentsQuery = cursor ? query(documentsCollection, orderBy('uploadedAt', 'desc'), startAfter(cursor), limit(pageSize)) : query(documentsCollection, orderBy('uploadedAt', 'desc'));
-  const snapshot = await getDocs(documentsQuery);
-  const items = snapshot.docs.filter((documentDoc) => documentDoc.data().archived !== true).map((documentDoc) => {
-    const data = documentDoc.data();
-    return {
-      id: documentDoc.id,
-      clientId,
-      name: typeof data.name === 'string' ? data.name : 'Document',
-      storagePath: typeof data.storagePath === 'string' ? data.storagePath : '',
-      downloadURL: typeof data.downloadURL === 'string' ? data.downloadURL : undefined,
-      mimeType: typeof data.mimeType === 'string' ? data.mimeType : 'application/octet-stream',
-      size: typeof data.size === 'number' || typeof data.size === 'string' ? data.size : 0,
-      uploadedAt: toIsoDate(data.uploadedAt),
-      uploadedByUid: typeof data.uploadedByUid === 'string' ? data.uploadedByUid : typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
-      uploadedByName: typeof data.uploadedByName === 'string' ? data.uploadedByName : undefined,
-      uploadedBy: typeof data.uploadedBy === 'string' ? data.uploadedBy : undefined,
-      archived: data.archived === true,
-      archivedAt: optionalIsoDate(data.archivedAt),
-      archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
-    } satisfies DocumentItem;
-  });
-  return { items, nextCursor: null, hasMore: false };
+  const pageLimit = Math.max(1, Math.floor(pageSize));
+  const matches: DocumentItem[] = [];
+  const matchingCursors: FirestoreCursor[] = [];
+  let scanCursor = cursor;
+  let lastRawCursor: FirestoreCursor = null;
+  let exhausted = false;
+  for (let page = 0; page < 20 && matches.length <= pageLimit; page += 1) {
+    const documentsQuery = query(documentsCollection, orderBy('uploadedAt', 'desc'), ...(scanCursor ? [startAfter(scanCursor)] : []), limit(pageLimit));
+    const snapshot = await getDocs(documentsQuery);
+    if (snapshot.empty) { exhausted = true; break; }
+    lastRawCursor = snapshot.docs.at(-1) || null;
+    for (const documentDoc of snapshot.docs) {
+      if (documentDoc.data().archived === true) continue;
+      matches.push(mapClientDocument(documentDoc.id, clientId, documentDoc.data()));
+      matchingCursors.push(documentDoc);
+      if (matches.length > pageLimit) break;
+    }
+    if (matches.length > pageLimit) break;
+    if (snapshot.docs.length < pageLimit) { exhausted = true; break; }
+    scanCursor = lastRawCursor;
+  }
+  const items = matches.slice(0, pageLimit);
+  if (matches.length > pageLimit) return { items, nextCursor: matchingCursors[pageLimit - 1] || null, hasMore: true };
+  if (exhausted) return { items, nextCursor: null, hasMore: false };
+  return { items, nextCursor: matchingCursors[items.length - 1] || lastRawCursor, hasMore: true };
 }
 
 export async function listClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
@@ -466,7 +557,7 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
 
 export async function listArchivedClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'), orderBy('uploadedAt', 'desc')));
+  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'), orderBy('uploadedAt', 'desc'), limit(100)));
   return snapshot.docs.filter((documentDoc) => documentDoc.data().archived === true).map((documentDoc) => {
     const data = documentDoc.data();
     return {

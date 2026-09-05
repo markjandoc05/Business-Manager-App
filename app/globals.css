@@ -184,6 +184,126 @@ textarea:focus-visible {
 .dashboard-kpi-card {
   border-color: var(--app-border-subtle);
   box-shadow: var(--app-shadow-xs);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+/* Shared KPI rhythm for Dashboard, Sales Log, and Reports. This is explicitly
+   scoped so unrelated two-column grids are never affected. */
+.bsm-kpi-grid > * {
+  min-width: 0;
+}
+
+/* Keep the reorder affordance hidden at rest. It is revealed only while the
+   KPI is actively held, with focus-visible retained for keyboard users. */
+.kpi-drag-container:active > .dashboard-card-drag-handle {
+  opacity: 1;
+}
+
+/* Keep the education affordance beside the drag handle while any KPI is
+   actively held. The shared selector covers Dashboard, Sales, and Reports. */
+.kpi-drag-container:active .kpi-info-trigger {
+  right: 1.5rem;
+}
+
+/* Sales Log uses a four-column desktop KPI layout while retaining the shared
+   two-column tablet/mobile rhythm. Scope this to the Sales page so Dashboard
+   and Reports keep their existing layouts. */
+@media (min-width: 768px) and (max-width: 1199px) {
+  .sales-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .sales-kpi-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.bsm-kpi-card {
+  display: flex;
+  min-width: 0;
+  min-height: 8rem;
+  flex-direction: column;
+  padding: 0.875rem;
+}
+
+.bsm-kpi-heading {
+  display: flex;
+  min-width: 0;
+  min-height: 2rem;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--app-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1rem;
+}
+
+.bsm-kpi-heading > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bsm-kpi-icon {
+  display: inline-flex;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--app-radius-control);
+  background: var(--app-accent-soft);
+  color: var(--app-primary);
+}
+
+.bsm-kpi-value {
+  min-width: 0;
+  margin-top: 0.75rem;
+  overflow-wrap: anywhere;
+  color: var(--app-text);
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+
+.bsm-kpi-description {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  color: var(--app-muted);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.dashboard-kpi-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--app-border);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.dashboard-kpi-card:focus-within {
+  border-color: var(--app-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-primary) 14%, transparent);
+}
+
+.kpi-info-trigger {
+  position: absolute;
+  display: inline-flex;
+}
+
+.dashboard-kpi-help {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.dashboard-kpi-info:hover .dashboard-kpi-help,
+.dashboard-kpi-info:focus .dashboard-kpi-help {
+  visibility: visible;
+  opacity: 1;
 }
 
 .dashboard-kpi-heading {
@@ -206,14 +326,25 @@ textarea:focus-visible {
 }
 
 .dashboard-potential-sales-card {
-  border-color: var(--app-accent);
-  background: var(--app-primary-hover);
+  border-color: #003b2b;
+  background: #003b2b;
   color: #ffffff;
   box-shadow: var(--app-shadow-sm);
 }
 
 .dashboard-potential-sales-card:hover {
-  border-color: var(--app-accent);
+  border-color: #003b2b;
+  box-shadow: var(--app-shadow-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-kpi-card {
+    transition: none;
+  }
+
+  .dashboard-kpi-card:hover {
+    transform: none;
+  }
 }
 
 .dashboard-potential-sales-label,
@@ -222,14 +353,23 @@ textarea:focus-visible {
 }
 
 .dashboard-potential-sales-icon {
-  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
-  color: var(--app-accent);
+  background: #B8F13C;
+  color: #003b2b;
 }
 
 .dashboard-range-selector {
   position: relative;
   flex: 0 1 20rem;
   min-width: 0;
+}
+
+.dashboard-key-metrics-controls {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.dashboard-key-metrics-controls > .app-button {
+  flex: 0 0 auto;
 }
 
 .dashboard-range-trigger {
@@ -456,6 +596,52 @@ textarea:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .bsm-kpi-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bsm-kpi-card {
+    min-height: 7.5rem;
+    padding: 0.75rem;
+  }
+
+  .bsm-kpi-heading {
+    gap: 0.375rem;
+    font-size: 0.6875rem;
+    line-height: 0.875rem;
+  }
+
+  .bsm-kpi-icon {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  .bsm-kpi-value {
+    margin-top: 0.625rem;
+    font-size: clamp(1.125rem, 5.8vw, 1.5rem);
+  }
+
+  .bsm-kpi-description {
+    font-size: 0.6875rem;
+    line-height: 0.875rem;
+  }
+
+  .sales-log-header-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sales-log-header-actions > .app-button {
+    min-width: 0;
+    min-height: 2.75rem;
+  }
+
+  .sales-log-primary-action {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
   .dashboard-kpi-heading {
     gap: 0.375rem;
   }
@@ -480,6 +666,23 @@ textarea:focus-visible {
     font-size: 0.75rem;
     line-height: 1.1;
     white-space: nowrap;
+  }
+
+  .dashboard-key-metrics-controls {
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    padding-top: 0.5rem;
+  }
+
+  .dashboard-key-metrics-controls > .app-button {
+    flex: 0 1 auto;
+  }
+
+  .dashboard-key-metrics-controls .dashboard-range-selector {
+    flex: 1 1 10rem;
+    width: auto;
+    max-width: none;
+    margin-left: 0;
   }
 
   .dashboard-range-selector {
@@ -685,13 +888,25 @@ textarea:focus-visible {
     min-width: 760px;
   }
 
+  .sales-data-table {
+    min-width: 860px;
+  }
+
+  .sales-table-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+
   .leads-data-table thead th,
-  .clients-data-table thead th {
+  .clients-data-table thead th,
+  .sales-data-table thead th {
     padding: 0.5rem 0.5rem;
   }
 
   .leads-data-table tbody td,
-  .clients-data-table tbody td {
+  .clients-data-table tbody td,
+  .sales-data-table tbody td {
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
   }
@@ -752,21 +967,6 @@ textarea:focus-visible {
     min-height: 2.75rem;
     justify-content: flex-start;
     overflow-wrap: anywhere;
-  }
-
-  .reports-metric-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .reports-metric-grid > * {
-    min-width: 0;
-  }
-
-  .reports-metric-grid > * > p:last-child {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    font-size: clamp(1rem, 5vw, 1.25rem);
-    font-variant-numeric: tabular-nums;
   }
 
   .client-profile-tab {
@@ -899,6 +1099,19 @@ textarea:focus-visible {
   .app-main-content {
     padding: 0.75rem;
     padding-bottom: 4.5rem;
+  }
+}
+
+@media (max-width: 767px) {
+  .customize-dashboard-overlay {
+    align-items: center !important;
+    overflow: hidden !important;
+  }
+
+  .customize-dashboard-modal .app-modal-footer {
+    position: static;
+    margin: 0;
+    padding: 0.75rem 1rem max(0.75rem, env(safe-area-inset-bottom));
   }
 }
 

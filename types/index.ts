@@ -105,6 +105,81 @@ export interface Client {
   sourceLeadId?: string;
 }
 
+export type CatalogItemType = 'PRODUCT' | 'SERVICE';
+export type CatalogItemStatus = 'ACTIVE' | 'INACTIVE';
+export type CatalogCategoryStatus = 'ACTIVE' | 'INACTIVE';
+
+export interface CatalogCategory {
+  id: string;
+  name: string;
+  normalizedName: string;
+  type: CatalogItemType;
+  status: CatalogCategoryStatus;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface CatalogCategoryInput {
+  name: string;
+  type: CatalogItemType;
+  status?: CatalogCategoryStatus;
+}
+
+export interface CatalogItem {
+  id: string;
+  type: CatalogItemType;
+  name: string;
+  code?: string;
+  categoryId?: string;
+  category?: string;
+  unit?: string;
+  description?: string;
+  regularPrice: number;
+  salePrice?: number | null;
+  effectivePrice: number;
+  status: CatalogItemStatus;
+  archived: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  createdBy: string;
+  createdAt: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+export interface CatalogItemInput {
+  type: CatalogItemType;
+  name: string;
+  code?: string;
+  categoryId?: string;
+  category?: string;
+  unit?: string;
+  description?: string;
+  regularPrice: number;
+  salePrice?: number | null;
+  status?: CatalogItemStatus;
+}
+
+export type DealLineItemSource = 'CATALOG' | 'OTHER';
+
+export interface DealLineItem {
+  source: DealLineItemSource;
+  catalogItemId: string | null;
+  type: CatalogItemType | null;
+  name: string;
+  code: string;
+  categoryId: string | null;
+  category: string;
+  unit: string;
+  regularPrice: number;
+  salePrice: number | null;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
 export interface Deal {
   id: string;
   title: string;
@@ -129,6 +204,7 @@ export interface Deal {
   archived?: boolean;
   archivedAt?: string;
   archivedBy?: string;
+  items?: DealLineItem[];
 }
 
 export type DealTimelineEntryType = 'ACTIVITY' | 'NOTE' | 'SYSTEM';
@@ -144,6 +220,64 @@ export interface DealTimelineEntry {
   createdAt: string;
   createdByUid: string;
   createdByName: string;
+}
+
+export type SaleLineItemSource = 'CATALOG' | 'OTHER';
+export type SaleCustomerType = 'WALK_IN' | 'CLIENT';
+export type SaleSource = 'WALK_IN' | 'CLIENT' | 'DEAL';
+export type SalePaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
+export type SalePaymentMethod = 'CASH' | 'GCASH' | 'MAYA' | 'BANK_TRANSFER' | 'CARD' | 'OTHER';
+export type SaleStatus = 'ACTIVE' | 'VOIDED';
+
+/** A transaction-time snapshot. Catalog changes never rewrite a recorded sale. */
+export interface SaleLineItem {
+  source: SaleLineItemSource;
+  catalogItemId: string | null;
+  type: CatalogItemType | null;
+  name: string;
+  code: string;
+  categoryId: string | null;
+  category: string;
+  unit: string;
+  regularPrice: number;
+  salePrice: number | null;
+  quantity: number;
+  unitPrice: number;
+  subtotal: number;
+}
+
+export interface Sale {
+  id: string;
+  saleNumber: string;
+  saleDate: string;
+  customerType: SaleCustomerType;
+  source: SaleSource;
+  customerName: string;
+  clientId?: string;
+  dealId?: string;
+  items: SaleLineItem[];
+  subtotal: number;
+  total: number;
+  paymentStatus: SalePaymentStatus;
+  paymentMethod?: SalePaymentMethod;
+  amountPaid: number;
+  balance: number;
+  notes?: string;
+  status: SaleStatus;
+  voidedAt?: string;
+  voidedBy?: string;
+  voidReason?: string;
+  /** Record-management metadata. These never change a Sale's financial status. */
+  archived: boolean;
+  archivedAt?: string;
+  archivedBy?: string;
+  trashed: boolean;
+  trashedAt?: string;
+  trashedBy?: string;
+  createdAt: string;
+  createdBy: string;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface Task {
@@ -201,6 +335,12 @@ export interface User {
 }
 
 export interface Settings {
+  salesReferenceMode?: 'SYSTEM_GENERATED' | 'SEQUENTIAL';
+  salesReferencePrefix?: string;
+  salesReferenceStartingNumber?: number;
+  salesReferenceDigits?: number;
+  salesDefaultPaymentStatus?: SalePaymentStatus;
+  salesDefaultPaymentMethod?: SalePaymentMethod;
   // Business Profile
   businessName: string;
   businessType: BusinessType;

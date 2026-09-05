@@ -47,6 +47,25 @@ test('ACTIVE to WON requires a server timestamp and clears lostAt', async () => 
   if (!saved.wonAt || saved.lostAt !== null) throw new Error('Won closure fields were not persisted correctly.');
 });
 
+test('new Deals can be created directly as Won or Lost with canonical closure fields', async () => {
+  const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+  const wonRef = doc(db, `organizations/${ORG_ID}/deals/direct-won`);
+  await assertSucceeds(setDoc(wonRef, { ...activeDeal(), title: 'Direct Won', stage: 'Won', status: 'Won', wonAt: serverTimestamp(), lostAt: null, lossReason: null }));
+  const won = (await getDoc(wonRef)).data();
+  if (won.stage !== 'Won' || won.status !== 'Won' || !won.wonAt || won.lostAt !== null) throw new Error('Direct Won Deal was not stored canonically.');
+
+  const lostRef = doc(db, `organizations/${ORG_ID}/deals/direct-lost`);
+  await assertSucceeds(setDoc(lostRef, { ...activeDeal(), title: 'Direct Lost', stage: 'Lost', status: 'Lost', wonAt: null, lostAt: serverTimestamp(), lossReason: 'Budget was not approved.' }));
+  const lost = (await getDoc(lostRef)).data();
+  if (lost.stage !== 'Lost' || lost.status !== 'Lost' || !lost.lostAt || lost.wonAt !== null || lost.lossReason !== 'Budget was not approved.') throw new Error('Direct Lost Deal was not stored canonically.');
+});
+
+test('new Deals reject invalid stages and client-supplied closure timestamps', async () => {
+  const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
+  await assertFails(setDoc(doc(db, `organizations/${ORG_ID}/deals/invalid-stage`), { ...activeDeal(), stage: 'Opportunity' }));
+  await assertFails(setDoc(doc(db, `organizations/${ORG_ID}/deals/fake-won-date`), { ...activeDeal(), stage: 'Won', status: 'Won', wonAt: baseTimestamp, lostAt: null, lossReason: null }));
+});
+
 test('client cannot provide a fake Won date', async () => {
   const db = testEnv.authenticatedContext(ADMIN_UID).firestore();
   await assertFails(updateDoc(doc(db, dealPath()), { stage: 'Won', status: 'Won', wonAt: Timestamp.fromMillis(1), lostAt: null, lossReason: null }));

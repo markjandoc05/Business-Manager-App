@@ -9,6 +9,7 @@ import { FEEDBACK_TYPES, type FeedbackType } from '@/lib/feedback';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { usePathname } from 'next/navigation';
+import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 
 export default function FeedbackPage() {
   const { user } = useAuth();
@@ -47,7 +48,7 @@ export default function FeedbackPage() {
       }
     } catch (submitError) {
       console.error('Unable to submit feedback', submitError);
-      setError(submitError instanceof Error ? submitError.message : 'Unable to submit feedback. Please try again.');
+      setError(userFacingErrorMessage(submitError, 'Unable to submit feedback. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }

@@ -54,7 +54,37 @@
     {
       "collectionGroup": "clients",
       "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "name", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "clients",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "company", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "clients",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "email", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "clients",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "phone", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "clients",
+      "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "catalogItems",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "catalogCategories",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "type", "order": "ASCENDING" }, { "fieldPath": "normalizedName", "order": "ASCENDING" }]
     },
     {
       "collectionGroup": "deals",
@@ -115,6 +145,133 @@
       "collectionGroup": "deals",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "assignedToUid", "order": "ASCENDING" }, { "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "lostAt", "order": "ASCENDING" }, { "fieldPath": "value", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "saleDate", "order": "ASCENDING" },
+        { "fieldPath": "amountPaid", "order": "ASCENDING" },
+        { "fieldPath": "balance", "order": "ASCENDING" },
+        { "fieldPath": "total", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "clientId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "clientId", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "customerType", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "archived", "order": "ASCENDING" }, { "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "sales",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "trashed", "order": "ASCENDING" }, { "fieldPath": "source", "order": "ASCENDING" }, { "fieldPath": "paymentStatus", "order": "ASCENDING" }, { "fieldPath": "saleDate", "order": "DESCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }]
     },
     {
       "collectionGroup": "tasks",

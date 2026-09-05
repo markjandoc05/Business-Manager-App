@@ -5,5 +5,7 @@ coverage/
 *.log
 .env*
 !.env.example
+!.env.uat.example
 .env.local
 .env*.local
+*.tsbuildinfo

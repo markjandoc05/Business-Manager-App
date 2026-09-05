@@ -1,4 +1,4 @@
-import { getDocs, limit, orderBy, query, startAfter, where } from 'firebase/firestore';
+import { getDocs, limit, orderBy, query, startAfter } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import type { Activity } from '@/types';
@@ -64,24 +64,43 @@ export async function listActivities(user: AppUser | null, organizationId: strin
   return (await listActivitiesPage(user, organizationId, null, pageSize)).items;
 }
 
-export async function listActivitiesForClient(user: AppUser | null, organizationId: string, clientId: string, sourceLeadId?: string) {
+export async function listActivitiesForClientPage(user: AppUser | null, organizationId: string, clientId: string, sourceLeadId?: string, cursor: FirestoreCursor = null, pageSize = ACTIVITY_PAGE_SIZE): Promise<PageResult<Activity>> {
   await requireActiveUser(user, organizationId);
   try {
     const activitiesCollection = organizationCollection<Record<string, unknown>>(db, organizationId, 'activities');
-    const queries = [
-      query(activitiesCollection, where('entityType', '==', 'Client'), where('entityId', '==', clientId)),
-      query(activitiesCollection, where('metadata.clientId', '==', clientId)),
-      ...(sourceLeadId ? [query(activitiesCollection, where('entityType', '==', 'Lead'), where('entityId', '==', sourceLeadId))] : []),
-    ];
-    const snapshots = await Promise.all(queries.map((activityQuery) => getDocs(activityQuery)));
-    const unique = new Map<string, Activity>();
-    snapshots.flatMap((snapshot) => snapshot.docs).forEach((activityDoc) => {
-      const activity = mapActivity(activityDoc.id, activityDoc.data());
-      if (activityBelongsToClient(activity, clientId, sourceLeadId)) unique.set(activity.id, activity);
-    });
-    return [...unique.values()].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+    const pageLimit = Math.max(1, Math.floor(pageSize));
+    const matches: Activity[] = [];
+    const matchingCursors: FirestoreCursor[] = [];
+    let scanCursor = cursor;
+    let lastRawCursor: FirestoreCursor = null;
+    let exhausted = false;
+    for (let page = 0; page < 20 && matches.length <= pageLimit; page += 1) {
+      const activitiesQuery = query(activitiesCollection, orderBy('createdAt', 'desc'), ...(scanCursor ? [startAfter(scanCursor)] : []), limit(pageLimit));
+      const snapshot = await getDocs(activitiesQuery);
+      if (snapshot.empty) { exhausted = true; break; }
+      lastRawCursor = snapshot.docs.at(-1) || null;
+      for (const activityDoc of snapshot.docs) {
+        const activity = mapActivity(activityDoc.id, activityDoc.data());
+        if (activityBelongsToClient(activity, clientId, sourceLeadId)) {
+          matches.push(activity);
+          matchingCursors.push(activityDoc);
+          if (matches.length > pageLimit) break;
+        }
+      }
+      if (matches.length > pageLimit) break;
+      if (snapshot.docs.length < pageLimit) { exhausted = true; break; }
+      scanCursor = lastRawCursor;
+    }
+    const items = matches.slice(0, pageLimit);
+    if (matches.length > pageLimit) return { items, nextCursor: matchingCursors[pageLimit - 1] || null, hasMore: true };
+    if (exhausted) return { items, nextCursor: null, hasMore: false };
+    return { items, nextCursor: matchingCursors[items.length - 1] || lastRawCursor, hasMore: true };
   } catch (error) {
     console.error('Unable to load Client activity history', error);
     throw new Error('Unable to load activity history. Please try again.');
   }
+}
+
+export async function listActivitiesForClient(user: AppUser | null, organizationId: string, clientId: string, sourceLeadId?: string) {
+  return (await listActivitiesForClientPage(user, organizationId, clientId, sourceLeadId)).items;
 }

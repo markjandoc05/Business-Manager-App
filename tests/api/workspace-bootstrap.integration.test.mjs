@@ -53,7 +53,16 @@ async function bootstrap(user, body = { email: 'forged@example.com' }) {
     headers: { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  return { status: response.status, requestId: response.headers.get('x-bootstrap-request-id'), body: await response.json() };
+  const result = {
+    status: response.status,
+    requestId: response.headers.get('x-bootstrap-request-id'),
+    serverTiming: response.headers.get('server-timing'),
+    body: await response.json(),
+  };
+  if (process.env.PRINT_BOOTSTRAP_TIMINGS === '1' && result.body.timings) {
+    console.info(`[bootstrap-timing] ${JSON.stringify(result.body.timings)}`);
+  }
+  return result;
 }
 
 async function recordLoginActivity(user, { orgId, status, bodyFields = {} }) {
@@ -62,7 +71,7 @@ async function recordLoginActivity(user, { orgId, status, bodyFields = {} }) {
     headers: { Authorization: `Bearer ${user.token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ orgId, ...bodyFields }),
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, serverTiming: response.headers.get('server-timing'), body: await response.json() };
 }
 
 async function startNext() {
@@ -99,6 +108,11 @@ test('existing UID membership activates the profile and is discovered without du
   const result = await bootstrap(user);
   assert.equal(result.status, 200);
   assert.match(result.requestId || '', /^[0-9a-f-]{36}$/i);
+  assert.equal(typeof result.body.timings?.total, 'number');
+  assert.equal(typeof result.body.timings?.['token-verification'], 'number');
+  assert.equal(typeof result.body.timings?.['bootstrap-profile-read'], 'number');
+  assert.match(result.serverTiming || '', /token-verification;dur=\d+/);
+  assert.match(result.serverTiming || '', /bootstrap-profile-read;dur=\d+/);
   assert.equal(result.body.data.profileStatus, 'active');
   assert.equal((await adminDb.doc(`users/${user.uid}`).get()).data().active, true);
   assert.equal((await organization.collection('members').where('userId', '==', user.uid).get()).size, 1);
@@ -169,6 +183,39 @@ test('one verified user can claim multiple organization assignments without cros
   assert.deepEqual(new Set(memberships.docs.map((item) => item.ref.parent.parent?.id)), new Set([first.organizationId, second.organizationId]));
 });
 
+test('concurrent bootstrap requests are idempotent for the same user', async () => {
+  const user = await createUser('concurrent-same-user');
+  const { organizationId, organization } = await seedOrganization('concurrent-same-user');
+  const invitation = adminDb.collection('organizationInvitations').doc(id('invitation'));
+  await invitation.set({ organizationId, email: user.email, emailNormalized: user.email.toLowerCase(), role: 'USER', status: 'pending' });
+
+  const results = await Promise.all(Array.from({ length: 5 }, () => bootstrap(user)));
+  assert.ok(results.every((result) => result.status === 200));
+  assert.equal((await organization.collection('members').where('userId', '==', user.uid).get()).size, 1);
+  assert.equal((await invitation.get()).data().status, 'claimed');
+  assert.equal((await adminDb.doc(`users/${user.uid}`).get()).data().active, true);
+});
+
+test('concurrent users cannot over-claim a single available seat', async () => {
+  const firstUser = await createUser('concurrent-seat-first');
+  const secondUser = await createUser('concurrent-seat-second');
+  const { organizationId, organization } = await seedOrganization('concurrent-seat-cap', 1);
+  const firstInvitation = adminDb.collection('organizationInvitations').doc(id('invitation'));
+  const secondInvitation = adminDb.collection('organizationInvitations').doc(id('invitation'));
+  await Promise.all([
+    firstInvitation.set({ organizationId, email: firstUser.email, emailNormalized: firstUser.email.toLowerCase(), role: 'USER', status: 'pending' }),
+    secondInvitation.set({ organizationId, email: secondUser.email, emailNormalized: secondUser.email.toLowerCase(), role: 'USER', status: 'pending' }),
+  ]);
+
+  const results = await Promise.all([bootstrap(firstUser), bootstrap(secondUser)]);
+  assert.ok(results.every((result) => result.status === 200));
+  const members = await organization.collection('members').get();
+  assert.equal(members.docs.filter((member) => member.data().status === 'active').length, 1);
+  const invitationStatuses = await Promise.all([firstInvitation.get(), secondInvitation.get()]);
+  assert.equal(invitationStatuses.filter((snapshot) => snapshot.data().status === 'claimed').length, 1);
+  assert.equal(invitationStatuses.filter((snapshot) => snapshot.data().status === 'pending').length, 1);
+});
+
 test('login activity is server-controlled, preserves history, and cannot cross organizations', async () => {
   const user = await createUser('login-activity');
   const first = await seedOrganization('login-activity-first');
@@ -182,6 +229,10 @@ test('login activity is server-controlled, preserves history, and cannot cross o
   assert.equal(forgedSuccess.status, 400);
   const success = await recordLoginActivity(user, { orgId: first.organizationId, status: 'SUCCESS' });
   assert.equal(success.status, 200);
+  assert.equal(typeof success.body.timings?.total, 'number');
+  assert.equal(typeof success.body.timings?.['token-verification'], 'number');
+  assert.equal(typeof success.body.timings?.['activity-member-read'], 'number');
+  assert.match(success.serverTiming || '', /activity-member-read;dur=\d+/);
   const afterSuccess = (await memberRef.get()).data();
   assert.equal(afterSuccess.lastLoginStatus, 'SUCCESS');
   assert.ok(afterSuccess.lastLoginAt instanceof Timestamp);

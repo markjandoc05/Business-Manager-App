@@ -16,6 +16,7 @@ import { format, isFuture, isPast, isToday } from 'date-fns';
 import { getDefaultAssignment } from '@/lib/ownership';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { IconActionButton } from '@/components/IconActionButton';
+import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 
 type TaskTab = 'Today' | 'Upcoming' | 'Overdue' | 'Completed' | 'Follow-ups' | 'All';
 type TaskForm = Omit<Task, 'id' | 'status'>;
@@ -123,7 +124,7 @@ export default function TasksPage() {
     if (!canCreateTask || !form.title.trim() || !form.dueDate) return;
     setSaving(true); setActionError(null);
     try { if (editingTask) await updateTask(editingTask.id, form); else await addTask(form); setShowModal(false); }
-    catch (error) { console.error('Unable to save task', error); setActionError(error instanceof Error ? error.message : 'Unable to save the task. Please try again.'); }
+    catch (error) { console.error('Unable to save task', error); setActionError(userFacingErrorMessage(error, 'Unable to save the task. Please try again.')); }
     finally { setSaving(false); }
   };
 
@@ -131,7 +132,7 @@ export default function TasksPage() {
     if (!canActOnTask(task) || busyTaskId) return;
     setBusyTaskId(task.id); setActionError(null);
     try { await completeTask(task.id); }
-    catch (error) { console.error('Unable to update task status', error); setActionError(error instanceof Error ? error.message : 'Unable to update the task. Please try again.'); }
+    catch (error) { console.error('Unable to update task status', error); setActionError(userFacingErrorMessage(error, 'Unable to update the task. Please try again.')); }
     finally { setBusyTaskId(null); }
   };
 
@@ -150,7 +151,7 @@ export default function TasksPage() {
       setConfirmAction(null);
     } catch (error) {
       console.error('Unable to complete task lifecycle action', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to complete the task action. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to complete the task action. Please try again.'));
     } finally { setConfirmBusy(false); }
   };
 

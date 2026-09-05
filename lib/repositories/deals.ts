@@ -1,4 +1,4 @@
-import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where, writeBatch, type DocumentData } from 'firebase/firestore';
+import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, sum, where, writeBatch, type DocumentData } from 'firebase/firestore';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
 import { db } from '@/lib/firebase/client';
@@ -6,6 +6,7 @@ import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Deal } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { DEAL_ACTIVE_STAGES, getDealStatusForStage } from '@/lib/deal-workflow';
+import { getDealValue, normalizeDealLineItems, readDealLineItems } from '@/lib/deal-items';
 import { resolveAssignment } from '@/lib/ownership';
 import { dealSystemTimelineData, dealSystemTimelineRef } from '@/lib/repositories/dealTimeline';
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
@@ -15,7 +16,7 @@ export const PIPELINE_DEAL_LIMIT = 100;
 export const DEAL_PAGE_SIZE = 25;
 
 export type DealStatus = 'Active' | 'Won' | 'Lost';
-export type DealInput = Pick<Deal, 'title' | 'clientId' | 'leadId' | 'value' | 'stage' | 'expectedCloseDate' | 'productServiceName' | 'notes' | 'assignedToUid' | 'assignedToName' | 'lossReason'>;
+export type DealInput = Pick<Deal, 'title' | 'clientId' | 'leadId' | 'value' | 'stage' | 'expectedCloseDate' | 'productServiceName' | 'notes' | 'assignedToUid' | 'assignedToName' | 'lossReason' | 'items'>;
 
 function reportFirestoreFailure(operation: string, error: unknown, details?: Record<string, unknown>) {
   const firebaseError = error as { code?: string; message?: string };
@@ -34,6 +35,7 @@ function toOptionalIsoDate(value: unknown) {
 
 function mapDeal(id: string, data: Record<string, unknown>): Deal {
   const status = data.status === 'Won' || data.status === 'Lost' ? data.status : 'Active';
+  const items = readDealLineItems(data.items);
   return {
     id,
     title: typeof data.title === 'string' ? data.title : '',
@@ -58,6 +60,7 @@ function mapDeal(id: string, data: Record<string, unknown>): Deal {
     updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
     archivedAt: toIsoDate(data.archivedAt, ''),
     archivedBy: typeof data.archivedBy === 'string' ? data.archivedBy : undefined,
+    ...(items !== undefined ? { items } : {}),
   };
 }
 
@@ -84,10 +87,42 @@ async function requireExistingClient(organizationId: string, clientId: string) {
   if (!clientSnapshot.exists() || clientSnapshot.data().status === 'ARCHIVED') throw new Error('The selected client is not available.');
 }
 
-async function getDealById(organizationId: string, dealId: string) {
+export async function getDealById(user: AppUser | null, organizationId: string, dealId: string) {
+  await requireOrganizationAccess(user, organizationId);
   const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'deals', dealId));
   if (!snapshot.exists()) throw new Error('The deal was not found.');
   return mapDeal(snapshot.id, snapshot.data());
+}
+
+type DealDisplay = Pick<Deal, 'title' | 'value'>;
+type DealCacheEntry = { deal: DealDisplay; cachedAt: number };
+const DEAL_DISPLAY_CACHE_LIMIT = 50;
+const dealDisplayCache = new Map<string, DealCacheEntry>();
+const dealDisplayRequests = new Map<string, Promise<DealDisplay>>();
+
+function dealCacheKey(organizationId: string, dealId: string) { return `${organizationId}:${dealId}`; }
+
+/** Returns a previously loaded display snapshot without performing a read. */
+export function getCachedDealDisplay(organizationId: string, dealId: string): DealDisplay | null {
+  return dealDisplayCache.get(dealCacheKey(organizationId, dealId))?.deal || null;
+}
+
+/** Loads current Deal data while sharing simultaneous requests for the same organization/Deal. */
+export function refreshDealDisplay(user: AppUser | null, organizationId: string, dealId: string): Promise<DealDisplay> {
+  const key = dealCacheKey(organizationId, dealId);
+  const inFlight = dealDisplayRequests.get(key);
+  if (inFlight) return inFlight;
+  const request = getDealById(user, organizationId, dealId).then((deal) => {
+    if (dealDisplayCache.size >= DEAL_DISPLAY_CACHE_LIMIT && !dealDisplayCache.has(key)) {
+      const oldestKey = [...dealDisplayCache.entries()].sort((left, right) => left[1].cachedAt - right[1].cachedAt)[0]?.[0];
+      if (oldestKey) dealDisplayCache.delete(oldestKey);
+    }
+    const display = { title: deal.title, value: deal.value };
+    dealDisplayCache.set(key, { deal: display, cachedAt: Date.now() });
+    return display;
+  }).finally(() => { dealDisplayRequests.delete(key); });
+  dealDisplayRequests.set(key, request);
+  return request;
 }
 
 export async function listDeals(user: AppUser | null, organizationId: string, pageSize = PIPELINE_DEAL_LIMIT) {
@@ -102,11 +137,38 @@ export async function listDeals(user: AppUser | null, organizationId: string, pa
   }
 }
 
+export type PipelineStageSummary = Record<string, { count: number; value: number }>;
+
+/**
+ * Loads authoritative, organization-scoped Pipeline totals without relying on
+ * the paginated Deal list used to render the board cards.
+ */
+export async function getPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const dealsCollection = organizationCollection<DocumentData>(db, organizationId, 'deals');
+  const assigned = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
+  const stages = [...DEAL_ACTIVE_STAGES, 'Won', 'Lost'] as const;
+  const summaries = await Promise.all(stages.map(async (stage) => {
+    const snapshot = await getAggregateFromServer(
+      query(dealsCollection, where('archived', '==', false), ...assigned, where('stage', '==', stage)),
+      { count: count(), value: sum('value') },
+    );
+    const data = snapshot.data();
+    return [stage, { count: data.count, value: data.value || 0 }] as const;
+  }));
+  return Object.fromEntries(summaries);
+}
+
 export async function createDeal(user: AppUser | null, organizationId: string, input: DealInput) {
   const membership = await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to create a deal.');
-  if (!input.title.trim() || !input.clientId || !Number.isFinite(input.value) || input.value < 0) throw new Error('Deal details are incomplete.');
-  validateDealState(input.stage, 'Active');
+  const items = input.items === undefined ? undefined : normalizeDealLineItems(input.items);
+  const value = getDealValue(input.value, items);
+  const productServiceName = input.productServiceName?.trim() || undefined;
+  const nextStatus = getDealStatusForStage(input.stage);
+  const nextLossReason = nextStatus === 'Lost' ? input.lossReason?.trim() : undefined;
+  if (!input.title.trim() || !input.clientId) throw new Error('Deal details are incomplete.');
+  validateDealState(input.stage, nextStatus, nextLossReason);
   try {
     await requireExistingClient(organizationId, input.clientId);
   } catch (error) {
@@ -122,12 +184,20 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
   try {
     dealRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'));
     const dealData = {
-      ...input,
+      title: input.title.trim(),
+      clientId: input.clientId,
       leadId: input.leadId || null,
+      value,
+      stage: input.stage,
+      expectedCloseDate: input.expectedCloseDate || '',
+      ...(productServiceName !== undefined ? { productServiceName } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes.trim() } : {}),
+      ...(items !== undefined ? { items } : {}),
       ...assignment,
-      status: 'Active',
-      wonAt: null,
-      lostAt: null,
+      status: nextStatus,
+      wonAt: nextStatus === 'Won' ? serverTimestamp() : null,
+      lostAt: nextStatus === 'Lost' ? serverTimestamp() : null,
+      lossReason: nextLossReason || null,
       archived: false,
       createdAt: serverTimestamp(),
       createdBy: user.uid,
@@ -151,7 +221,7 @@ export async function createDeal(user: AppUser | null, organizationId: string, i
     });
     throw error;
   }
-  return mapDeal(dealRef.id, { ...input, ...assignment, status: 'Active', archived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: user.uid, updatedBy: user.uid });
+  return mapDeal(dealRef.id, { title: input.title.trim(), clientId: input.clientId, leadId: input.leadId || null, value, stage: input.stage, expectedCloseDate: input.expectedCloseDate || '', ...(productServiceName !== undefined ? { productServiceName } : {}), ...(input.notes !== undefined ? { notes: input.notes.trim() } : {}), ...(items !== undefined ? { items } : {}), ...assignment, status: nextStatus, wonAt: nextStatus === 'Won' ? new Date().toISOString() : null, lostAt: nextStatus === 'Lost' ? new Date().toISOString() : null, lossReason: nextLossReason || undefined, archived: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), createdBy: user.uid, updatedBy: user.uid });
 }
 
 export async function updateDeal(user: AppUser | null, organizationId: string, deal: Deal, input: DealInput) {
@@ -161,7 +231,10 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
   if (deal.status !== 'Active' && input.stage !== deal.stage && getDealStatusForStage(input.stage) !== 'Active') {
     throw new Error('Won and Lost deals can only be reopened into an active stage.');
   }
-  if (!input.title.trim() || !Number.isFinite(input.value) || input.value < 0) throw new Error('Deal details are incomplete.');
+  const items = input.items === undefined ? undefined : normalizeDealLineItems(input.items);
+  const value = getDealValue(input.value, items);
+  const productServiceName = input.productServiceName?.trim() || undefined;
+  if (!input.title.trim()) throw new Error('Deal details are incomplete.');
   const nextStatus = getDealStatusForStage(input.stage);
   const nextLossReason = nextStatus === 'Lost' ? input.lossReason?.trim() : undefined;
   validateDealState(input.stage, nextStatus, nextLossReason);
@@ -175,12 +248,13 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
     const batch = writeBatch(db);
     batch.update(organizationDocumentInCollection(db, organizationId, 'deals', deal.id), {
       title: input.title.trim(),
-      value: input.value,
+      value,
       stage: input.stage,
       status: nextStatus,
       expectedCloseDate: input.expectedCloseDate || '',
-      ...(input.productServiceName !== undefined ? { productServiceName: input.productServiceName.trim() } : {}),
+      ...(productServiceName !== undefined ? { productServiceName } : {}),
       ...(input.notes !== undefined ? { notes: input.notes.trim() } : {}),
+      ...(items !== undefined ? { items } : {}),
       assignedToUid: input.assignedToUid || '',
       assignedToName: input.assignedToName || '',
       lossReason: nextLossReason || null,
@@ -195,7 +269,7 @@ export async function updateDeal(user: AppUser | null, organizationId: string, d
       const description = isReopened
         ? `Deal reopened: ${deal.stage} → ${input.stage}`
         : nextStatus === 'Won'
-          ? `Deal won: ${input.title} — ${input.value}`
+          ? `Deal won: ${input.title} — ${value}`
           : nextStatus === 'Lost'
             ? `Deal lost: ${input.title}. Reason: ${nextLossReason}`
             : `Stage changed: ${deal.stage} → ${input.stage}`;
@@ -229,7 +303,7 @@ export async function updateDealStage(user: AppUser | null, organizationId: stri
 }
 
 export async function archiveDeal(user: AppUser | null, organizationId: string, dealId: string) {
-  const deal = await getDealById(organizationId, dealId);
+  const deal = await getDealById(user, organizationId, dealId);
   await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to archive a deal.');
   try {
@@ -266,7 +340,7 @@ export async function countActiveDeals(user: AppUser | null, organizationId: str
 }
 
 export async function restoreDeal(user: AppUser | null, organizationId: string, dealId: string) {
-  const deal = await getDealById(organizationId, dealId);
+  const deal = await getDealById(user, organizationId, dealId);
   await requireDealManager(user, organizationId, deal);
   if (!user) throw new Error('You must be signed in to restore a deal.');
   const batch = writeBatch(db);

@@ -36,6 +36,8 @@ const requiredIndexes = [
   ['leads', 'COLLECTION', [['archived', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
   ['leads', 'COLLECTION', [['assignedToUid', 'ASCENDING'], ['archived', 'ASCENDING'], ['status', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
   ['clients', 'COLLECTION', [['archived', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
+  ['catalogItems', 'COLLECTION', [['archived', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
+  ['catalogCategories', 'COLLECTION', [['type', 'ASCENDING'], ['normalizedName', 'ASCENDING']]],
   ['deals', 'COLLECTION', [['archived', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
   ['tasks', 'COLLECTION', [['archived', 'ASCENDING'], ['status', 'ASCENDING'], ['dueDate', 'ASCENDING']]],
   ['tasks', 'COLLECTION', [['assignedToUid', 'ASCENDING'], ['archived', 'ASCENDING'], ['status', 'ASCENDING'], ['dueDate', 'ASCENDING']]],

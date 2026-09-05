@@ -30,7 +30,7 @@ async function seed() {
     for (const uid of [ADMIN, MANAGER, USER, INACTIVE, OTHER_ORG_ADMIN]) {
       await db.doc(`users/${uid}`).set({ uid, status: 'active', active: true });
     }
-    await db.doc(`organizations/${ORG}/clients/client-a`).set({ status: 'ACTIVE' });
+    await db.doc(`organizations/${ORG}/clients/client-a`).set({ name: 'Client A', company: '', email: '', phone: '', assignedToUid: ADMIN, assignedToName: 'Admin', status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, createdAt: now, createdBy: ADMIN, updatedAt: now, updatedBy: ADMIN });
     await db.doc(`organizations/${ORG}/clients/client-a/notes/note-a`).set({ content: 'Keep this note', createdAt: now, createdByUid: ADMIN, createdByName: 'Admin', archived: false, archivedAt: null, archivedBy: null });
     await db.doc(`organizations/${ORG}/clients/client-a/documents/document-a`).set({ name: 'file.pdf', storagePath: `organizations/${ORG}/clients/client-a/documents/document-a/file.pdf`, downloadURL: 'https://example.test/file.pdf', mimeType: 'application/pdf', size: 10, uploadedAt: now, uploadedByUid: ADMIN, uploadedByName: 'Admin', archived: false, archivedAt: null, archivedBy: null });
   });
@@ -96,4 +96,29 @@ test('document lifecycle remains denied for inactive, cross-tenant, blocked-lice
     await context.firestore().doc(`organizations/${ORG}`).update({ licenseStatus: 'EXPIRED', licenseWriteEnabled: false });
   });
   await assertFails(updateDoc(doc(adminDb, documentPath), archivePayload(ADMIN)));
+});
+
+test('Client parent lifecycle accepts canonical transitions and rejects arbitrary or contradictory status writes', async () => {
+  const adminDb = testEnv.authenticatedContext(ADMIN).firestore();
+  const managerDb = testEnv.authenticatedContext(MANAGER).firestore();
+  const userDb = testEnv.authenticatedContext(USER).firestore();
+  const otherDb = testEnv.authenticatedContext(OTHER_ORG_ADMIN).firestore();
+  const clientRef = doc(adminDb, `organizations/${ORG}/clients/client-a`);
+
+  await assertSucceeds(updateDoc(clientRef, { name: 'Client A updated', updatedBy: ADMIN, status: 'ACTIVE', archived: false, trashed: false, trashedAt: null, trashedBy: null }));
+  await assertSucceeds(updateDoc(clientRef, { status: 'ARCHIVED', archived: true, archivedAt: serverTimestamp(), archivedBy: ADMIN, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertSucceeds(updateDoc(clientRef, { status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertSucceeds(updateDoc(clientRef, { status: 'ARCHIVED', archived: true, archivedAt: serverTimestamp(), archivedBy: ADMIN, trashed: true, trashedAt: serverTimestamp(), trashedBy: ADMIN, updatedBy: ADMIN }));
+  await assertFails(updateDoc(clientRef, { status: 'ACTIVE', archived: false, archivedAt: serverTimestamp(), archivedBy: ADMIN, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertSucceeds(updateDoc(clientRef, { status: 'ARCHIVED', archived: true, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertSucceeds(updateDoc(clientRef, { status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+
+  for (const status of ['DELETED', 'DISABLED', 'INVALID']) {
+    await assertFails(updateDoc(clientRef, { status, archived: false, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  }
+  await assertFails(updateDoc(clientRef, { status: 'ACTIVE', archived: true, archivedAt: serverTimestamp(), archivedBy: ADMIN, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertFails(updateDoc(clientRef, { status: 'ARCHIVED', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, updatedBy: ADMIN }));
+  await assertFails(updateDoc(doc(userDb, `organizations/${ORG}/clients/client-a`), { status: 'DISABLED', updatedBy: USER }));
+  await assertFails(updateDoc(doc(otherDb, `organizations/${ORG}/clients/client-a`), { status: 'DISABLED', updatedBy: OTHER_ORG_ADMIN }));
+  await assertFails(updateDoc(doc(managerDb, `organizations/${ORG}/clients/client-a`), { status: 'ACTIVE', archived: true, archivedAt: null, archivedBy: null, updatedBy: MANAGER }));
 });

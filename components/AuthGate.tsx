@@ -8,14 +8,18 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import WorkspaceOnboarding from '@/components/WorkspaceOnboarding';
 import { getNoMembershipDestination, type EntryIntent } from '@/lib/auth/entryFlow';
 import { emitStartupTiming, markStartup } from '@/lib/startupTiming';
+import { isLocalFirebaseEmulatorMode } from '@/lib/firebase/environment';
 
 function LoadingScreen() {
   return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] text-sm text-[var(--app-muted)]">Loading your account…</div>;
 }
 
 function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => void }) {
-  const { firebaseUser, signInWithGoogle, signOut, retryBootstrap, error, authenticating } = useAuth();
+  const { firebaseUser, signInWithGoogle, signInWithLocalUat, signOut, retryBootstrap, error, authenticating } = useAuth();
   const [authAction, setAuthAction] = React.useState<'signin' | 'create-workspace' | null>(null);
+  const [uatEmail, setUatEmail] = React.useState('');
+  const [uatPassword, setUatPassword] = React.useState('');
+  const [uatSubmitting, setUatSubmitting] = React.useState(false);
   const isAuthenticating = authenticating || authAction !== null;
 
   const start = async (intent: 'create' | 'signin') => {
@@ -28,6 +32,19 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
       // AuthContext owns the user-facing error state; this keeps the CTA state recoverable.
     } finally {
       setAuthAction(null);
+    }
+  };
+  const localUatEnabled = isLocalFirebaseEmulatorMode();
+  const submitLocalUat = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (uatSubmitting || isAuthenticating) return;
+    setUatSubmitting(true);
+    try {
+      await signInWithLocalUat(uatEmail, uatPassword);
+    } catch {
+      // AuthContext owns the sanitized user-facing error.
+    } finally {
+      setUatSubmitting(false);
     }
   };
   return (
@@ -59,6 +76,13 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
             {authAction === 'create-workspace' ? 'Creating workspace…' : 'Create Your Workspace'}
           </Button>
         </div>
+
+        {localUatEnabled && <form className="space-y-3 rounded-xl border border-dashed border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-4" onSubmit={(event) => void submitLocalUat(event)}>
+          <div><p className="text-sm font-semibold text-[var(--app-text)]">Local UAT sign-in</p><p className="mt-1 text-xs text-[var(--app-muted)]">Uses the Firebase Auth Emulator. Enter credentials from your local UAT fixture.</p></div>
+          <label className="block text-xs font-medium text-[var(--app-text)]">Email<input aria-label="Local UAT email" type="email" autoComplete="username" value={uatEmail} onChange={(event) => setUatEmail(event.target.value)} className="mt-1 w-full rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm" required /></label>
+          <label className="block text-xs font-medium text-[var(--app-text)]">Password<input aria-label="Local UAT password" type="password" autoComplete="current-password" value={uatPassword} onChange={(event) => setUatPassword(event.target.value)} className="mt-1 w-full rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm" required /></label>
+          <Button type="submit" disabled={uatSubmitting || isAuthenticating} className="w-full">{uatSubmitting ? 'Signing in…' : 'Sign in for local UAT'}</Button>
+        </form>}
 
         {error && <p className="text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
         {error && firebaseUser && <div className="space-y-2"><Button type="button" onClick={() => void retryBootstrap()} className="w-full">Retry workspace access</Button><Button type="button" variant="outline" onClick={signOut} className="w-full">Sign out</Button></div>}

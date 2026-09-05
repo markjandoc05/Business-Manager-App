@@ -15,6 +15,8 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Briefcase,
+  Package,
+  ReceiptText,
   LogOut
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -30,6 +32,8 @@ const baseSidebarItems = [
   { section: 'SALES', name: 'Leads', icon: Users, href: '/leads' },
   { section: 'SALES', name: 'Clients', icon: UserCircle, href: '/clients' },
   { section: 'SALES', name: 'Pipeline', icon: Kanban, href: '/pipeline' },
+  { section: 'SALES', name: 'Catalog', icon: Package, href: '/catalog' },
+  { section: 'SALES', name: 'Sales Log', icon: ReceiptText, href: '/sales' },
   { section: 'SALES', name: 'Tasks', icon: CheckSquare, href: '/tasks' },
   { section: 'INSIGHTS', name: 'Reports', icon: BarChart3, href: '/reports' },
   { section: 'WORKSPACE', name: 'Settings', icon: Settings, href: '/settings' },
@@ -226,7 +230,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
 
       {/* Main Content */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <main className="app-main-content min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 2xl:p-8">
+        <main className="app-main-content min-w-0 flex-1 overflow-y-auto p-3 min-[360px]:p-4 lg:p-5 2xl:p-8">
           <div className="mx-auto w-full min-w-0 max-w-[1536px]">
             {licenseState.reason === 'trial' && licenseState.daysRemaining !== null && licenseState.daysRemaining <= 3 && <div className="mb-4 rounded-lg border border-[color-mix(in_srgb,var(--app-warning)_50%,white)] bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] px-3 py-2 text-sm text-[var(--app-text)]">Your trial ends in {licenseState.daysRemaining} day{licenseState.daysRemaining === 1 ? '' : 's'}.</div>}
             {isReadOnly && <div className="mb-4 rounded-lg border border-[color-mix(in_srgb,var(--app-warning)_50%,white)] bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] px-3 py-2 text-sm text-[var(--app-text)]">{licenseState.status === 'UNKNOWN' ? 'Subscription status could not be verified. This workspace is temporarily read-only.' : licenseState.reason === 'suspended' ? 'This workspace is currently suspended and is read-only.' : 'Your subscription has expired. Your workspace is read-only.'}</div>}

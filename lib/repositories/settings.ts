@@ -33,11 +33,17 @@ export const defaultSettings: Settings = {
   ],
   customFields: [],
   users: [],
+  salesReferenceMode: 'SYSTEM_GENERATED',
+  salesReferencePrefix: 'SALE-',
+  salesReferenceStartingNumber: 1,
+  salesReferenceDigits: 6,
+  salesDefaultPaymentStatus: 'PAID',
+  salesDefaultPaymentMethod: 'CASH',
 };
 
 const persistedKeys = [
   'businessName', 'businessType', 'email', 'phone', 'website', 'address',
-  'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources',
+  'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources', 'salesReferenceMode', 'salesReferencePrefix', 'salesReferenceStartingNumber', 'salesReferenceDigits', 'salesDefaultPaymentStatus', 'salesDefaultPaymentMethod',
 ] as const;
 
 type PersistedSettings = Pick<Settings, typeof persistedKeys[number]>;
@@ -121,6 +127,12 @@ function mapSettings(data: Record<string, unknown>): Settings {
     businessType: isBusinessType(data.businessType) ? data.businessType : defaultSettings.businessType,
     pipelineStages: Array.isArray(data.pipelineStages) ? data.pipelineStages as Settings['pipelineStages'] : defaultSettings.pipelineStages,
     leadSources: Array.isArray(data.leadSources) ? data.leadSources as Settings['leadSources'] : defaultSettings.leadSources,
+    salesReferenceMode: data.salesReferenceMode === 'SEQUENTIAL' ? 'SEQUENTIAL' : 'SYSTEM_GENERATED',
+    salesReferencePrefix: typeof data.salesReferencePrefix === 'string' ? data.salesReferencePrefix.slice(0, 24) : defaultSettings.salesReferencePrefix,
+    salesReferenceStartingNumber: typeof data.salesReferenceStartingNumber === 'number' && data.salesReferenceStartingNumber >= 1 ? Math.floor(data.salesReferenceStartingNumber) : 1,
+    salesReferenceDigits: typeof data.salesReferenceDigits === 'number' && data.salesReferenceDigits >= 1 && data.salesReferenceDigits <= 12 ? Math.floor(data.salesReferenceDigits) : 6,
+    salesDefaultPaymentStatus: ['PAID', 'PARTIAL', 'UNPAID'].includes(data.salesDefaultPaymentStatus as string) ? data.salesDefaultPaymentStatus as Settings['salesDefaultPaymentStatus'] : 'PAID',
+    salesDefaultPaymentMethod: ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER'].includes(data.salesDefaultPaymentMethod as string) ? data.salesDefaultPaymentMethod as Settings['salesDefaultPaymentMethod'] : 'CASH',
     customFields: [],
     users: [],
   };

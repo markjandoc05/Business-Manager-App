@@ -28,10 +28,11 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
-import { canManageClients, canManageDeals, canManageTasks } from '@/lib/permissions';
+import { canManageClients, canManageDeals, canManageSales, canManageTasks } from '@/lib/permissions';
 import { formatCurrency } from '@/lib/formatting';
-import { getActiveDealCreationStages, getDealProbability, getDefaultDealCreationStage } from '@/lib/deal-workflow';
+import { DEAL_ACTIVE_STAGES, getDealCreationStages, getDealProbability, getDefaultDealCreationStage } from '@/lib/deal-workflow';
 import { DealDetailsModal } from '@/components/DealDetailsModal';
+import { DealCatalogItemsField } from '@/components/DealCatalogItemsField';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { TaskCard } from '@/components/TaskCard';
 import { formatCompactDateTime, formatTaskDueDate, getNextFollowUp, sortOpenTasks } from '@/lib/task-utils';
@@ -46,16 +47,22 @@ import { TablePagination } from '@/components/TablePagination';
 import { SortableColumnHeader } from '@/components/SortableColumnHeader';
 import { compareDate, compareNumber, compareText, type SortDirection } from '@/lib/table-sorting';
 import { MoneyInput } from '@/components/MoneyInput';
-import { countClientTabRecords, type ClientTabCounts } from '@/lib/repositories/clientCounts';
-import { listActivitiesForClient } from '@/lib/repositories/activities';
+import { getDealProductServiceName, getDealValue } from '@/lib/deal-items';
+import type { ClientTabCounts } from '@/lib/repositories/clientCounts';
+import { listActivitiesForClientPage } from '@/lib/repositories/activities';
 import { activityBelongsToClient } from '@/lib/activity-history';
+import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
-import { Archive, Download, FileText, RotateCcw, Trash2, Upload } from 'lucide-react';
+import { createSale, getActiveSaleForDeal, listClientSalesPage, getClientSalesSummary, type CreateSaleInput } from '@/lib/repositories/sales';
+import { RecordSaleModal, SaleDetailsModal } from '@/components/SaleRecordModal';
+import { Archive, Download, FileText, ReceiptText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import type { ChangeEvent } from 'react';
-import type { Activity, Client, Task } from '@/types';
+import type { Activity, Client, Deal, DealLineItem, Sale, Task } from '@/types';
 type ClientColumn = 'select' | 'client' | 'company' | 'contact' | 'clientSince' | 'activeDeals' | 'totalSales' | 'action';
 type ClientSortKey = Exclude<ClientColumn, 'select' | 'action'>;
 type ClientSort = { key: ClientSortKey; direction: SortDirection } | null;
+type ClientDealForm = { title: string; value: number; items: DealLineItem[]; stage: string; expectedCloseDate: string; notes: string; lossReason: string };
+const CLIENT_SALES_LOAD_ERROR = 'Unable to load Client Sales History. Please try again.';
 function currentDateTimeValue() {
   const date = new Date();
   const offset = date.getTimezoneOffset();
@@ -169,6 +176,7 @@ export default function ClientsPage() {
   const { currentOrganizationId, membership, canWrite } = useWorkspace();
   const canManage = canManageClients(membership) && canWrite;
   const canManageDeal = canManageDeals(membership) && canWrite;
+  const canManageSale = canManageSales(membership) && canWrite;
   const canManageTask = canManageTasks(membership) && canWrite;
   const canCreateTask = canWrite && (canManageTask || membership?.role === 'USER');
   const [actionError, setActionError] = useState<string | null>(null);
@@ -206,13 +214,15 @@ export default function ClientsPage() {
   const [clientSinceFrom, setClientSinceFrom] = useState('');
   const [clientSinceTo, setClientSinceTo] = useState('');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => searchParams.get('clientId'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes' | 'documents'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes' | 'documents' | 'sales'>('overview');
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showAddDealModal, setShowAddDealModal] = useState(false);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+  const [recordSaleDealId, setRecordSaleDealId] = useState<string | null>(null);
+  const [dealSaleActionId, setDealSaleActionId] = useState<string | null>(null);
   const [showAddTaskModal, setShowAddTaskModal] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [editTaskForm, setEditTaskForm] = useState({ title: '', description: '', type: 'Follow-up' as 'Task' | 'Follow-up', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High', assignedToUid: '', assignedToName: '' });
@@ -228,6 +238,28 @@ export default function ClientsPage() {
   const [clientActivities, setClientActivities] = useState<Activity[]>([]);
   const [clientActivitiesLoading, setClientActivitiesLoading] = useState(false);
   const [clientActivitiesError, setClientActivitiesError] = useState<string | null>(null);
+  const [clientSales, setClientSales] = useState<Sale[]>([]);
+  const [clientSalesCursor, setClientSalesCursor] = useState<import('@/lib/repositories/pagination').FirestoreCursor>(null);
+  const [clientSalesHasMore, setClientSalesHasMore] = useState(false);
+  const [clientSalesLoading, setClientSalesLoading] = useState(false);
+  const [clientSalesError, setClientSalesError] = useState<string | null>(null);
+  const [clientSalesTotal, setClientSalesTotal] = useState(0);
+  const [selectedClientSale, setSelectedClientSale] = useState<Sale | null>(null);
+  const [clientSalesSourceFilter, setClientSalesSourceFilter] = useState<'ALL' | 'DEAL' | 'CLIENT'>('ALL');
+  const [clientSalesPaymentFilter, setClientSalesPaymentFilter] = useState<'ALL' | Sale['paymentStatus']>('ALL');
+  const [clientSalesLifecycleFilter, setClientSalesLifecycleFilter] = useState<'ALL' | 'ACTIVE' | 'VOIDED'>('ALL');
+  const [clientDealSearch, setClientDealSearch] = useState('');
+  const [clientDealStageFilter, setClientDealStageFilter] = useState('ALL');
+  const [clientTaskStatusFilter, setClientTaskStatusFilter] = useState('ALL');
+  const [clientTaskPriorityFilter, setClientTaskPriorityFilter] = useState('ALL');
+  const [clientDealsPage, setClientDealsPage] = useState(1);
+  const [clientTasksPage, setClientTasksPage] = useState(1);
+  const [clientActivitiesCursor, setClientActivitiesCursor] = useState<import('@/lib/repositories/pagination').FirestoreCursor>(null);
+  const [clientActivitiesHasMore, setClientActivitiesHasMore] = useState(false);
+  const clientActivitiesRequestRef = useRef(0);
+  const [clientNotesPage, setClientNotesPage] = useState(1);
+  const [clientDocumentsPage, setClientDocumentsPage] = useState(1);
+  const [clientSalesReloadToken, setClientSalesReloadToken] = useState(0);
   const [activityReloadToken, setActivityReloadToken] = useState(0);
   const [activityFilter, setActivityFilter] = useState<'All' | 'Deals' | 'Tasks' | 'Notes'>('All');
   const clientTabCountsRequestRef = useRef(0);
@@ -236,9 +268,9 @@ export default function ClientsPage() {
   // Form states
   const [clientForm, setClientForm] = useState({ name: '', email: '', phone: '', company: '', assignedToUid: '', assignedToName: '' });
   const [editClientForm, setEditClientForm] = useState({ name: '', email: '', phone: '', company: '', assignedToUid: '', assignedToName: '' });
-  const dealCreationStages = getActiveDealCreationStages(settings.pipelineStages);
+  const dealCreationStages = getDealCreationStages(settings.pipelineStages);
   const defaultDealStage = getDefaultDealCreationStage(settings.pipelineStages);
-  const [dealForm, setDealForm] = useState({ title: '', productServiceName: '', value: 0, stage: defaultDealStage, expectedCloseDate: '', notes: '' });
+  const [dealForm, setDealForm] = useState<ClientDealForm>({ title: '', value: 0, items: [], stage: defaultDealStage, expectedCloseDate: '', notes: '', lossReason: '' });
   const [taskForm, setTaskForm] = useState({ title: '', dueDate: '', priority: 'Medium' as 'Low' | 'Medium' | 'High', description: '' });
   const [noteForm, setNoteForm] = useState({ content: '' });
   const [currentTime] = useState(() => Date.now());
@@ -253,27 +285,7 @@ export default function ClientsPage() {
     currentOrganizationForCountsRef.current = currentOrganizationId;
   }, [currentOrganizationId]);
 
-  const loadClientTabCounts = useCallback(async (clientId: string, sourceLeadId?: string) => {
-    if (!user || !currentOrganizationId) return;
-    const requestId = ++clientTabCountsRequestRef.current;
-    const organizationId = currentOrganizationId;
-    setClientTabCounts(null);
-    setClientTabCountsLoading(true);
-    setClientTabCountsError(null);
-    try {
-      const counts = await countClientTabRecords(user, organizationId, clientId, sourceLeadId);
-      if (requestId === clientTabCountsRequestRef.current && organizationId === currentOrganizationForCountsRef.current) {
-        setClientTabCounts({ clientId, counts });
-      }
-    } catch (error) {
-      console.error('Unable to load Client tab counts', error);
-      if (requestId === clientTabCountsRequestRef.current && organizationId === currentOrganizationForCountsRef.current) {
-        setClientTabCountsError('Unable to load Client record counts.');
-      }
-    } finally {
-      if (requestId === clientTabCountsRequestRef.current) setClientTabCountsLoading(false);
-    }
-  }, [currentOrganizationId, user]);
+  const loadClientTabCounts = useCallback(async (_clientId?: string, _sourceLeadId?: string) => undefined, []);
 
   const displayedClientTabCounts = clientTabCounts?.clientId === selectedClientId ? clientTabCounts.counts : null;
 
@@ -326,7 +338,7 @@ export default function ClientsPage() {
         setClientForm({ name: '', email: '', phone: '', company: '', ...getDefaultAssignment(user) });
         setShowAddModal(true);
       }
-      if (queryTab === 'tasks' || queryTab === 'deals' || queryTab === 'activity' || queryTab === 'notes' || queryTab === 'documents' || queryTab === 'overview') {
+      if (queryTab === 'tasks' || queryTab === 'deals' || queryTab === 'activity' || queryTab === 'notes' || queryTab === 'documents' || queryTab === 'sales' || queryTab === 'overview') {
         setActiveTab(queryTab);
       }
     }, 0);
@@ -344,6 +356,42 @@ export default function ClientsPage() {
       void loadClientNotes(selectedClientId);
     }
   }, [activeTab, loadClientNotes, selectedClientId]);
+
+  useEffect(() => {
+    if (!selectedClientId || !user || !currentOrganizationId) return;
+    let cancelled = false;
+    setClientSalesLoading(true);
+    setClientSalesError(null);
+    setClientSales([]);
+    setClientSalesCursor(null);
+    setClientSalesHasMore(false);
+    void Promise.all([
+      getClientSalesSummary(user, currentOrganizationId, selectedClientId),
+      activeTab === 'sales' ? listClientSalesPage(user, currentOrganizationId, selectedClientId, null, undefined, {
+        source: clientSalesSourceFilter === 'ALL' ? undefined : clientSalesSourceFilter,
+        paymentStatus: clientSalesPaymentFilter === 'ALL' ? undefined : clientSalesPaymentFilter,
+        status: clientSalesLifecycleFilter === 'ALL' ? undefined : clientSalesLifecycleFilter,
+      }) : Promise.resolve(null),
+    ]).then(([summary, page]) => {
+      if (cancelled) return;
+      setClientSalesTotal(summary.total);
+      if (page) { setClientSales(page.items); setClientSalesCursor(page.nextCursor); setClientSalesHasMore(page.hasMore); }
+    }).catch((loadError) => {
+      console.error('Unable to load Client Sales History', loadError);
+      if (!cancelled) setClientSalesError(CLIENT_SALES_LOAD_ERROR);
+    })
+      .finally(() => { if (!cancelled) setClientSalesLoading(false); });
+    return () => { cancelled = true; };
+  }, [activeTab, clientSalesLifecycleFilter, clientSalesPaymentFilter, clientSalesReloadToken, clientSalesSourceFilter, currentOrganizationId, selectedClientId, user]);
+
+  const loadMoreClientSales = async () => {
+    if (!selectedClientId || !user || !currentOrganizationId || !clientSalesCursor || clientSalesLoading) return;
+    setClientSalesLoading(true);
+    try { const page = await listClientSalesPage(user, currentOrganizationId, selectedClientId, clientSalesCursor, undefined, { source: clientSalesSourceFilter === 'ALL' ? undefined : clientSalesSourceFilter, paymentStatus: clientSalesPaymentFilter === 'ALL' ? undefined : clientSalesPaymentFilter, status: clientSalesLifecycleFilter === 'ALL' ? undefined : clientSalesLifecycleFilter }); setClientSales((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]); setClientSalesCursor(page.nextCursor); setClientSalesHasMore(page.hasMore); }
+    catch (loadError) { console.error('Unable to load more Client Sales History', loadError); setClientSalesError(CLIENT_SALES_LOAD_ERROR); }
+    finally { setClientSalesLoading(false); }
+  };
+
 
   useEffect(() => {
     if (clientNotesError) notesLoadedForClientRef.current = null;
@@ -364,20 +412,44 @@ export default function ClientsPage() {
       return;
     }
     let cancelled = false;
+    const requestId = ++clientActivitiesRequestRef.current;
+    setClientActivities([]);
+    setClientActivitiesCursor(null);
+    setClientActivitiesHasMore(false);
     queueMicrotask(() => {
       if (cancelled) return;
       setClientActivitiesLoading(true);
       setClientActivitiesError(null);
-      void listActivitiesForClient(user, currentOrganizationId, selectedClientId, selectedClientSourceLeadId)
-        .then((loadedActivities) => { if (!cancelled) setClientActivities(loadedActivities); })
+      void listActivitiesForClientPage(user, currentOrganizationId, selectedClientId, selectedClientSourceLeadId)
+        .then((page) => { if (!cancelled && requestId === clientActivitiesRequestRef.current) { setClientActivities(page.items); setClientActivitiesCursor(page.nextCursor); setClientActivitiesHasMore(page.hasMore); } })
         .catch((error) => {
           console.error('Unable to load selected Client activities', error);
-          if (!cancelled) setClientActivitiesError(error instanceof Error ? error.message : 'Unable to load activity history.');
+          if (!cancelled && requestId === clientActivitiesRequestRef.current) setClientActivitiesError(userFacingErrorMessage(error, 'Unable to load activity history.'));
         })
-        .finally(() => { if (!cancelled) setClientActivitiesLoading(false); });
+        .finally(() => { if (!cancelled && requestId === clientActivitiesRequestRef.current) setClientActivitiesLoading(false); });
     });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clientActivitiesRequestRef.current += 1; };
   }, [activeTab, activityReloadToken, currentOrganizationId, selectedClientId, selectedClientSourceLeadId, user]);
+
+  const loadMoreClientActivities = async () => {
+    if (!selectedClientId || activeTab !== 'activity' || !currentOrganizationId || !clientActivitiesCursor || clientActivitiesLoading) return;
+    const requestId = ++clientActivitiesRequestRef.current;
+    const organizationId = currentOrganizationId;
+    const clientId = selectedClientId;
+    setClientActivitiesLoading(true);
+    try {
+      const page = await listActivitiesForClientPage(user, organizationId, clientId, selectedClientSourceLeadId, clientActivitiesCursor);
+      if (requestId !== clientActivitiesRequestRef.current || organizationId !== currentOrganizationId || clientId !== selectedClientId) return;
+      setClientActivities((current) => [...current, ...page.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setClientActivitiesCursor(page.nextCursor);
+      setClientActivitiesHasMore(page.hasMore);
+    } catch (error) {
+      console.error('Unable to load more Client activities', error);
+      if (requestId === clientActivitiesRequestRef.current) setClientActivitiesError(userFacingErrorMessage(error, 'Unable to load activity history.'));
+    } finally {
+      if (requestId === clientActivitiesRequestRef.current) setClientActivitiesLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (!selectedClientId) {
@@ -422,7 +494,7 @@ export default function ClientsPage() {
       await uploadDocument(selectedClientId, file);
       refreshSelectedClientTabCounts();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Unable to upload the document. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to upload the document. Please try again.'));
     } finally {
       setDocumentSaving(false);
     }
@@ -444,6 +516,24 @@ export default function ClientsPage() {
   }, [tasks]);
   const clientDeals = useMemo(() => selectedClientId ? dealsByClientId.get(selectedClientId) || [] : [], [dealsByClientId, selectedClientId]);
   const selectedDeal = selectedDealId ? deals.find((deal) => deal.id === selectedDealId) : undefined;
+  const openDealSale = async (deal: Deal) => {
+    if (!user || !currentOrganizationId || deal.status !== 'Won' || !canManageSale || dealSaleActionId) return;
+    setDealSaleActionId(deal.id);
+    try {
+      const existingSale = await getActiveSaleForDeal(user, currentOrganizationId, deal.id);
+      if (existingSale) setSelectedClientSale(existingSale);
+      else setRecordSaleDealId(deal.id);
+    } catch (saleError) {
+      setActionError(userFacingErrorMessage(saleError, 'Unable to check the Deal Sale.'));
+    } finally {
+      setDealSaleActionId(null);
+    }
+  };
+  const submitClientDealSale = async (input: CreateSaleInput) => {
+    if (!user || !currentOrganizationId) return;
+    await createSale(user, currentOrganizationId, input);
+    setRecordSaleDealId(null);
+  };
   const pendingDealTaskCounts = useMemo(() => {
     const counts = new Map<string, number>();
     tasks.forEach((task) => {
@@ -452,9 +542,9 @@ export default function ClientsPage() {
     });
     return counts;
   }, [tasks]);
-  const activeDealsCount = clientDeals.filter(d => d.stage !== 'Won' && d.stage !== 'Lost').length;
-  const totalSalesValue = clientDeals.filter(d => d.status === 'Won').reduce((sum, d) => sum + d.value, 0);
-  const activePipelineDeals = clientDeals.filter((deal) => ['New', 'Qualified', 'Proposal', 'Negotiation'].includes(deal.stage));
+  const activeDealsCount = clientDeals.filter((deal) => DEAL_ACTIVE_STAGES.includes(deal.stage as typeof DEAL_ACTIVE_STAGES[number])).length;
+  const totalSalesValue = clientSalesTotal;
+  const activePipelineDeals = clientDeals.filter((deal) => DEAL_ACTIVE_STAGES.includes(deal.stage as typeof DEAL_ACTIVE_STAGES[number]));
   const activePipelineValue = activePipelineDeals.reduce((sum, deal) => sum + deal.value, 0);
   const weightedForecast = activePipelineDeals.reduce((sum, deal) => sum + deal.value * getDealProbability(deal.stage) / 100, 0);
   const wonValue = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
@@ -463,6 +553,12 @@ export default function ClientsPage() {
   const selectedClientTasks = useMemo(() => selectedClientId ? tasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId) : [], [selectedClientId, tasks]);
   const clientTasks = useMemo(() => selectedClientTasks.filter((task) => task.status === 'Pending'), [selectedClientTasks]);
   const openClientTasks = useMemo(() => sortOpenTasks(clientTasks, currentTime), [clientTasks, currentTime]);
+  const visibleClientSales = clientSales.filter((sale) => (clientSalesSourceFilter === 'ALL' || sale.source === clientSalesSourceFilter) && (clientSalesPaymentFilter === 'ALL' || sale.paymentStatus === clientSalesPaymentFilter) && (clientSalesLifecycleFilter === 'ALL' || sale.status === clientSalesLifecycleFilter));
+  const visibleClientDeals = clientDeals.filter((deal) => (!clientDealSearch.trim() || `${deal.title} ${deal.productServiceName || ''}`.toLowerCase().includes(clientDealSearch.trim().toLowerCase())) && (clientDealStageFilter === 'ALL' || deal.stage === clientDealStageFilter));
+  const visibleOpenClientTasks = openClientTasks.filter((task) => (clientTaskStatusFilter === 'ALL' || task.status === clientTaskStatusFilter) && (clientTaskPriorityFilter === 'ALL' || task.priority === clientTaskPriorityFilter));
+  const clientDetailPageSize = 10;
+  const pagedClientDeals = visibleClientDeals.slice(0, clientDealsPage * clientDetailPageSize);
+  const pagedClientTasks = visibleOpenClientTasks.slice(0, clientTasksPage * clientDetailPageSize);
   const completedClientTasks = useMemo(() => selectedClientTasks.filter((task) => task.status === 'Completed').sort((left, right) => (right.updatedAt || right.dueDate).localeCompare(left.updatedAt || left.dueDate)), [selectedClientTasks]);
   const nextTask = getNextFollowUp(clientTasks, currentTime);
   const nextFollowUp = nextTask ? `${Date.parse(nextTask.dueDate) <= currentTime ? 'Overdue: ' : ''}${new Date(nextTask.dueDate).toLocaleString()}` : 'No pending follow-ups';
@@ -470,7 +566,7 @@ export default function ClientsPage() {
   const visibleClients = clients.filter(client => client.status !== 'ARCHIVED' && !client.trashed);
   const clientRows = useMemo(() => visibleClients.map((client) => {
     const clientDeals = dealsByClientId.get(client.id) || [];
-    const activeDeals = clientDeals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost').length;
+    const activeDeals = clientDeals.filter((deal) => DEAL_ACTIVE_STAGES.includes(deal.stage as typeof DEAL_ACTIVE_STAGES[number])).length;
     const totalSales = clientDeals.filter((deal) => deal.status === 'Won').reduce((sum, deal) => sum + deal.value, 0);
     const pendingFollowUps = pendingClientTasksByClientId.get(client.id) || [];
     const nextClientTask = getNextFollowUp(pendingFollowUps, currentTime);
@@ -501,6 +597,11 @@ export default function ClientsPage() {
       || (clientQuickFilter === 'No Follow-up' && !hasFollowUp);
     return matchesSearch && matchesCompany && matchesDate && matchesQuickFilter;
   }), [clientQuickFilter, clientRows, clientSinceFrom, clientSinceTo, companyFilter, searchTerm]);
+  useEffect(() => {
+    if (showArchived || showTrash || !currentOrganizationId || !user) return;
+    const timer = window.setTimeout(() => void refreshClients(undefined, searchTerm, clientPageSize), searchTerm.trim() ? 220 : 0);
+    return () => window.clearTimeout(timer);
+  }, [clientPageSize, currentOrganizationId, refreshClients, searchTerm, showArchived, showTrash, user]);
   const sortedClientRows = useMemo(() => {
     if (!clientSort) return filteredClientRows;
     const sorted = [...filteredClientRows];
@@ -586,7 +687,7 @@ export default function ClientsPage() {
       setBulkClientConfirmation({ action: bulkClientAction, ids: selectedMatchingClientIds, results });
     } catch (error) {
       console.error('Unable to preview bulk Client action', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to preview the bulk Client action. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to preview the bulk Client action. Please try again.'));
     } finally {
       setBulkClientBusy(false);
     }
@@ -605,7 +706,7 @@ export default function ClientsPage() {
       if (failed.length > 0) setActionError(`${succeeded.length} Client${succeeded.length === 1 ? '' : 's'} processed. ${failed.length} failed: ${failed.map((result) => result.error || result.id).join(' ')}`);
     } catch (error) {
       console.error('Unable to execute bulk Client action', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to complete the bulk Client action. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to complete the bulk Client action. Please try again.'));
     } finally {
       setBulkClientBusy(false);
       setBulkClientAction('');
@@ -685,7 +786,7 @@ export default function ClientsPage() {
       setConfirmAction(null);
     } catch (error) {
       console.error('Unable to complete client lifecycle action', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to complete the client action. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to complete the client action. Please try again.'));
     } finally {
       setConfirmBusy(false);
     }
@@ -708,7 +809,7 @@ export default function ClientsPage() {
       setConfirmAction({ kind: 'delete', id: client.id, name: client.name, decision });
     } catch (error) {
       console.error('Unable to evaluate client deletion', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to evaluate client deletion. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to evaluate client deletion. Please try again.'));
     } finally {
       setConfirmBusy(false);
     }
@@ -758,9 +859,7 @@ export default function ClientsPage() {
             ? 'Unable to restore the document. Please try again.'
             : documentAction === 'delete'
               ? 'Unable to permanently delete the document. Please try again.'
-              : error instanceof Error
-                ? error.message
-                : 'Unable to complete the record action. Please try again.',
+              : userFacingErrorMessage(error, 'Unable to complete the record action. Please try again.'),
       );
     } finally {
       setDetailConfirmBusy(false);
@@ -779,15 +878,16 @@ export default function ClientsPage() {
       await addDeal({
         title: dealForm.title,
         clientId: selectedClientId,
-        productServiceName: dealForm.productServiceName,
         value: Number(dealForm.value),
+        items: dealForm.items,
         stage: dealForm.stage,
         expectedCloseDate: dealForm.expectedCloseDate,
         notes: dealForm.notes,
+        lossReason: dealForm.lossReason,
       });
       adjustSelectedClientTabCounts({ deals: 1 });
       refreshClientActivity();
-      setDealForm({ title: '', productServiceName: '', value: 0, stage: defaultDealStage, expectedCloseDate: '', notes: '' });
+      setDealForm({ title: '', value: 0, items: [], stage: defaultDealStage, expectedCloseDate: '', notes: '', lossReason: '' });
       setShowAddDealModal(false);
     } catch (error) {
       console.error('Unable to create deal', error);
@@ -841,7 +941,7 @@ export default function ClientsPage() {
       refreshClientActivity();
     } catch (error) {
       console.error('Unable to update client task status', error);
-      setActionError(error instanceof Error ? error.message : 'Unable to update the task. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to update the task. Please try again.'));
       throw error;
     } finally {
       setBusyTaskId(null);
@@ -895,7 +995,7 @@ export default function ClientsPage() {
       setEditingTask(null);
       refreshClientActivity();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Unable to update the task. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to update the task. Please try again.'));
     } finally {
       setSavingTaskEdit(false);
     }
@@ -916,7 +1016,7 @@ export default function ClientsPage() {
       setEditingNoteId(null);
       refreshClientActivity();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Unable to update the note. Please try again.');
+      setActionError(userFacingErrorMessage(error, 'Unable to update the note. Please try again.'));
     } finally {
       setSavingNoteEdit(false);
     }
@@ -995,7 +1095,7 @@ export default function ClientsPage() {
               </div>
             </div>
             <div className="min-w-0 space-y-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Total Sales / Deals</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Active Sales / Deals</p>
               <p className="text-base font-semibold text-[var(--app-primary)]">{formatCurrency(totalSalesValue, settings.currency)}</p>
               <p className="text-xs text-[var(--app-muted)]">{activeDealsCount} Active Deals / {clientDeals.length} Total</p>
             </div>
@@ -1014,14 +1114,15 @@ export default function ClientsPage() {
           </Card>
 
           {/* Profile Navigation Tabs */}
-          <div className="client-profile-tabs flex border-b border-[var(--app-border)] gap-6" aria-busy={clientTabCountsLoading}>
+          <div className="client-profile-tabs flex gap-6 overflow-x-auto border-b border-[var(--app-border)]" aria-label="Client detail sections">
             {[
               { id: 'overview', label: 'Overview' },
-                { id: 'deals', label: `Deals (${displayedClientTabCounts ? displayedClientTabCounts.deals : '—'})` },
-                { id: 'tasks', label: `Tasks (${displayedClientTabCounts ? displayedClientTabCounts.tasks : '—'})` },
-                { id: 'activity', label: `Activity Log (${displayedClientTabCounts ? displayedClientTabCounts.activities : '—'})` },
-                { id: 'notes', label: `Notes (${displayedClientTabCounts ? displayedClientTabCounts.notes : '—'})` },
-                { id: 'documents', label: `Documents (${displayedClientTabCounts ? displayedClientTabCounts.documents : '—'})` },
+                { id: 'deals', label: 'Deals' },
+                { id: 'sales', label: 'Sales' },
+                { id: 'tasks', label: 'Tasks' },
+                { id: 'activity', label: 'Activity Log' },
+                { id: 'notes', label: 'Notes' },
+                { id: 'documents', label: 'Documents' },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -1036,7 +1137,6 @@ export default function ClientsPage() {
               </button>
             ))}
           </div>
-          {clientTabCountsError && <p className="text-xs text-[var(--app-muted)]" role="status">Client record counts are temporarily unavailable.</p>}
 
           {/* Tab Content */}
           <div className="space-y-6">
@@ -1058,17 +1158,29 @@ export default function ClientsPage() {
               <div className="space-y-4">
                 <Card className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[var(--app-text)]">Client Deals</h3><div className="flex flex-wrap gap-2">{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedDeals((current) => !current); if (!showArchivedDeals) void loadArchivedRecords(); }}>{showArchivedDeals ? 'Active Deals' : 'Archived Deals'}</Button></div></div>
+                  <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><input aria-label="Search client deals" className="min-w-[12rem] flex-1" placeholder="Search deals" value={clientDealSearch} onChange={(event) => setClientDealSearch(event.target.value)} /><select aria-label="Filter client deals by stage" value={clientDealStageFilter} onChange={(event) => setClientDealStageFilter(event.target.value)}><option value="ALL">All stages</option>{['New', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'].map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select><span className="text-xs text-[var(--app-muted)]">Filters apply to loaded results</span></div>
                   {dealsLoading ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">Loading deals…</p> : dealsError ? <p className="rounded-xl bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-8 text-center text-sm text-[var(--app-danger)]" role="alert">{dealsError}</p> : clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center"><p className="text-sm text-[var(--app-muted)]">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-[var(--app-muted)]">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">
-                  {clientDeals.map(deal => {
+                  {pagedClientDeals.map(deal => {
                     const openTaskCount = pendingDealTaskCounts.get(deal.id) || 0;
+                    const productServiceName = getDealProductServiceName(deal.items || [], deal.productServiceName);
                     return (
-                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-[var(--app-surface-subtle)]"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-[var(--app-text)] hover:text-[var(--app-primary)]">{deal.title}</button></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{deal.productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-[var(--app-text)]">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right">{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" disabled={detailConfirmBusy} onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</td></tr>
+                    <tr key={deal.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select')) setSelectedDealId(deal.id); }} className="cursor-pointer transition-colors hover:bg-[var(--app-surface-subtle)]"><td className="px-3 py-3"><button type="button" onClick={() => setSelectedDealId(deal.id)} className="font-semibold text-[var(--app-text)] hover:text-[var(--app-primary)]">{deal.title}</button></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{productServiceName || '—'}</td><td className="px-3 py-3"><Badge variant={deal.stage === 'Won' ? 'green' : deal.stage === 'Lost' ? 'red' : 'purple'}>{deal.stage}</Badge></td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{getDealProbability(deal.stage)}%</td><td className="px-3 py-3 text-sm font-bold text-[var(--app-text)]">{formatCurrency(deal.value, settings.currency)}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{deal.expectedCloseDate ? new Date(deal.expectedCloseDate).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '—'}</td><td className="px-3 py-3 text-sm text-[var(--app-muted)]">{openTaskCount > 0 ? `${openTaskCount} ${openTaskCount === 1 ? 'Task' : 'Tasks'}` : '—'}</td><td className="px-3 py-3 text-right"><div className="flex justify-end gap-1">{deal.stage === 'Won' && canManageSale && <IconActionButton icon={<ReceiptText size={15} />} label="Record Sale" variant="primary" disabled={dealSaleActionId === deal.id} onClick={() => void openDealSale(deal)} />}{canManageDeal && <IconActionButton icon={<Archive size={15} />} label="Archive Deal" disabled={detailConfirmBusy} onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'archive', id: deal.id, name: deal.title })} />}</div></td></tr>
                     );
                   })}
                   </tbody></table></div>}
+                  {pagedClientDeals.length < visibleClientDeals.length && <div className="text-center"><Button size="sm" variant="outline" onClick={() => setClientDealsPage((page) => page + 1)}>Load more deals</Button></div>}
                   {showArchivedDeals && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Deals</p>{archivedDeals.filter((deal) => deal.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived deals.</p> : archivedDeals.filter((deal) => deal.clientId === selectedClientId).map((deal) => <div key={deal.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{deal.title}</p><p className="text-xs text-[var(--app-muted)]">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>{canManageDeal && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Deal" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'restore', id: deal.id, name: deal.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Deal permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Deal', kind: 'delete', id: deal.id, name: deal.title })} /></div>}</div>)}</div>}
                 </Card>
               </div>
+            )}
+
+            {activeTab === 'sales' && (
+              <Card className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold text-[var(--app-text)]">Client Sales History</h3><p className="text-xs text-[var(--app-muted)]">Recorded transactions for this Client. Voided Sales remain visible.</p></div><p className="text-sm font-bold text-[var(--app-text)]">Active total: {formatCurrency(clientSalesTotal, settings.currency)}</p></div>
+                <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><select aria-label="Filter client sales by source" value={clientSalesSourceFilter} onChange={(event) => setClientSalesSourceFilter(event.target.value as typeof clientSalesSourceFilter)}><option value="ALL">All sources</option><option value="DEAL">Deal</option><option value="CLIENT">Client</option></select><select aria-label="Filter client sales by payment" value={clientSalesPaymentFilter} onChange={(event) => setClientSalesPaymentFilter(event.target.value as typeof clientSalesPaymentFilter)}><option value="ALL">All payments</option><option value="PAID">Paid</option><option value="PARTIAL">Partial</option><option value="UNPAID">Unpaid</option></select><select aria-label="Filter client sales by lifecycle" value={clientSalesLifecycleFilter} onChange={(event) => setClientSalesLifecycleFilter(event.target.value as typeof clientSalesLifecycleFilter)}><option value="ALL">All statuses</option><option value="ACTIVE">Active</option><option value="VOIDED">Voided</option></select></div>
+                {clientSalesLoading && clientSales.length === 0 ? <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading Sales…</p> : clientSalesError ? <div className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert"><p>{CLIENT_SALES_LOAD_ERROR}</p><Button className="mt-2" size="sm" variant="outline" onClick={() => setClientSalesReloadToken((token) => token + 1)}>Retry</Button></div> : clientSales.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">No sales recorded for this client yet.</p> : <div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Sale #</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Date</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Source</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Sale Total</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Amount Paid</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Balance</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Payment</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Status</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">{visibleClientSales.map((sale) => <tr key={sale.id} className="cursor-pointer hover:bg-[var(--app-surface-subtle)]" onClick={() => setSelectedClientSale(sale)}><td className="px-3 py-3 font-semibold">{sale.saleNumber}</td><td className="px-3 py-3 text-sm">{sale.saleDate}</td><td className="px-3 py-3"><Badge variant="gray">{sale.source === 'DEAL' ? 'Deal' : sale.source === 'CLIENT' ? 'Client' : 'Walk-in'}</Badge></td><td className="px-3 py-3 text-sm font-semibold">{formatCurrency(sale.total, settings.currency)}</td><td className="px-3 py-3 text-sm">{formatCurrency(sale.amountPaid, settings.currency)}</td><td className="px-3 py-3 text-sm">{formatCurrency(sale.balance, settings.currency)}</td><td className="px-3 py-3"><Badge variant={sale.paymentStatus === 'PAID' ? 'green' : sale.paymentStatus === 'PARTIAL' ? 'orange' : 'gray'}>{sale.paymentStatus === 'PAID' ? 'Paid' : sale.paymentStatus === 'PARTIAL' ? 'Partial' : 'Unpaid'}</Badge></td><td className="px-3 py-3"><Badge variant={sale.status === 'VOIDED' ? 'red' : 'green'}>{sale.status === 'VOIDED' ? 'Voided' : 'Active'}</Badge></td></tr>)}</tbody></table></div>}
+                {clientSalesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientSales()} disabled={clientSalesLoading}>{clientSalesLoading ? 'Loading…' : 'Load More'}</Button></div>}
+              </Card>
             )}
 
             {activeTab === 'tasks' && (
@@ -1077,11 +1189,13 @@ export default function ClientsPage() {
                   <h3 className="font-bold text-[var(--app-text)]">Client Tasks & Follow-ups</h3>
                   <div className="flex flex-wrap gap-2">{canCreateTask && <Button size="sm" onClick={openAddTask} className="gap-2"><Plus size={14} /> Add Task</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedTasks((current) => !current); if (!showArchivedTasks) void loadArchivedRecords(); }}>{showArchivedTasks ? 'Active Tasks' : 'Archived Tasks'}</Button></div>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><select aria-label="Filter client tasks by status" value={clientTaskStatusFilter} onChange={(event) => setClientTaskStatusFilter(event.target.value)}><option value="ALL">All statuses</option><option value="Pending">Pending</option><option value="Completed">Completed</option></select><select aria-label="Filter client tasks by priority" value={clientTaskPriorityFilter} onChange={(event) => setClientTaskPriorityFilter(event.target.value)}><option value="ALL">All priorities</option><option value="Low">Low</option><option value="Medium">Medium</option><option value="High">High</option></select><span className="text-xs text-[var(--app-muted)]">Filters apply to loaded results</span></div>
                   <>
-                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">{openClientTasks.length} Open Tasks</p>{nextTask && <p className="text-xs text-[var(--app-muted)]">Next: {nextTask.title}</p>}</div>
+                    <div className="flex items-center justify-between"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">{visibleOpenClientTasks.length} Open Tasks</p>{nextTask && <p className="text-xs text-[var(--app-muted)]">Next: {nextTask.title}</p>}</div>
                     <div className="space-y-3">
-                      {openClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}
-                      {openClientTasks.length === 0 && <p className="rounded-xl border border-dashed border-[var(--app-border)] p-6 text-center text-sm text-[var(--app-muted)]">No open tasks for this client.</p>}
+                      {pagedClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}
+                      {visibleOpenClientTasks.length === 0 && <p className="rounded-xl border border-dashed border-[var(--app-border)] p-6 text-center text-sm text-[var(--app-muted)]">No open tasks for this client.</p>}
+                      {pagedClientTasks.length < visibleOpenClientTasks.length && <div className="text-center"><Button size="sm" variant="outline" onClick={() => setClientTasksPage((page) => page + 1)}>Load more tasks</Button></div>}
                     </div>
                     {completedClientTasks.length > 0 && <details className="rounded-xl border border-[var(--app-border-subtle)] p-3"><summary className="cursor-pointer text-sm font-semibold text-[var(--app-muted)]">Completed ({completedClientTasks.length})</summary><div className="mt-3 space-y-3">{completedClientTasks.map((task) => <TaskCard key={task.id} task={task} now={currentTime} busy={busyTaskId === task.id} canManage={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid)} onEdit={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? openEditTask : undefined} onToggle={(taskId) => void handleCompleteTask(taskId).catch(() => undefined)} onArchive={canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid) ? (taskId) => setDetailConfirmAction({ entity: 'Task', kind: 'archive', id: taskId, name: task.title }) : undefined} />)}</div></details>}
                     {showArchivedTasks && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Tasks</p>{archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived tasks.</p> : archivedTasks.filter((task) => task.relatedTo?.type === 'Client' && task.relatedTo.id === selectedClientId).map((task) => { const taskCanManage = canManageTask || (membership?.role === 'USER' && task.assignedToUid === user?.uid); return <div key={task.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{task.title}</p><p className="text-xs text-[var(--app-muted)]">{task.status} · {formatTaskDueDate(task.dueDate, settings.timezone)}</p></div>{taskCanManage && <div className="flex shrink-0 gap-1"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Task" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'restore', id: task.id, name: task.title })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Task permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Task', kind: 'delete', id: task.id, name: task.title })} /></div>}</div>; })}</div>}
@@ -1091,7 +1205,7 @@ export default function ClientsPage() {
 
             {activeTab === 'activity' && (
               <Card className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[var(--app-text)]">Activity History</h3><select aria-label="Activity filter" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as typeof activityFilter)}><option>All</option><option>Deals</option><option>Tasks</option><option>Notes</option></select></div>
+                <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold text-[var(--app-text)]">Activity History</h3><p className="text-xs text-[var(--app-muted)]">Showing the latest loaded activity. Load more for older entries.</p></div><select aria-label="Activity filter" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm" value={activityFilter} onChange={(event) => setActivityFilter(event.target.value as typeof activityFilter)}><option>All</option><option>Deals</option><option>Tasks</option><option>Notes</option></select></div>
                 <div className="space-y-3">
                   {clientActivitiesLoading ? <p className="text-sm text-[var(--app-muted)]">Loading activity history…</p> : clientActivitiesError ? <div className="space-y-2"><p className="text-sm text-[var(--app-danger)]">{clientActivitiesError}</p><Button size="sm" variant="outline" onClick={refreshClientActivity}>Retry</Button></div> : clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).map(act => (
                     <div key={act.id} className="flex items-start gap-3 p-3 bg-[var(--app-surface-subtle)] border border-[var(--app-border-subtle)] rounded-xl">
@@ -1103,6 +1217,7 @@ export default function ClientsPage() {
                     </div>
                   ))}
                   {!clientActivitiesLoading && !clientActivitiesError && clientActivities.filter((activity) => activityBelongsToClient(activity, selectedClient.id, selectedClient.sourceLeadId)).filter((activity) => activityFilter === 'All' || (activityFilter === 'Deals' && activity.entityType === 'Deal') || (activityFilter === 'Tasks' && activity.entityType === 'Task') || (activityFilter === 'Notes' && activity.entityType === 'Note')).length === 0 && <p className="text-sm text-[var(--app-muted)]">No activity history for this Client{activityFilter === 'All' ? '' : ` in ${activityFilter.toLowerCase()}`}.</p>}
+                  {!clientActivitiesLoading && !clientActivitiesError && clientActivitiesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientActivities()} disabled={clientActivitiesLoading}>Load More</Button></div>}
                 </div>
               </Card>
             )}
@@ -1170,6 +1285,7 @@ export default function ClientsPage() {
                 <option>Follow-up Due</option>
                 <option>No Follow-up</option>
               </select>
+              {clientQuickFilter !== 'All' && <span className="self-center text-[11px] text-[var(--app-muted)]">Applies to loaded clients</span>}
               <Button variant="outline" onClick={() => setShowClientFilters((current) => !current)} className="gap-2"><Filter size={18} /> Filter</Button>
               <Button variant="outline" onClick={() => void refreshClients()} disabled={clientsLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button>
             </div>
@@ -1207,7 +1323,7 @@ export default function ClientsPage() {
                     <SortableColumnHeader label="Contact" direction={clientSort?.key === 'contact' ? clientSort.direction : undefined} onSort={() => handleClientSort('contact')} compact fullWidth />
                     <SortableColumnHeader label="Client Since" direction={clientSort?.key === 'clientSince' ? clientSort.direction : undefined} onSort={() => handleClientSort('clientSince')} compact fullWidth />
                     <SortableColumnHeader label="Active Deals" direction={clientSort?.key === 'activeDeals' ? clientSort.direction : undefined} onSort={() => handleClientSort('activeDeals')} align="center" compact fullWidth />
-                    <SortableColumnHeader label="Total Sales" direction={clientSort?.key === 'totalSales' ? clientSort.direction : undefined} onSort={() => handleClientSort('totalSales')} align="right" compact fullWidth />
+                    <SortableColumnHeader label="Won Deal Value" direction={clientSort?.key === 'totalSales' ? clientSort.direction : undefined} onSort={() => handleClientSort('totalSales')} align="right" compact fullWidth />
                     <th scope="col" className="whitespace-nowrap px-4 py-3 text-right text-xs font-bold uppercase text-[var(--app-muted)]"><span>Action</span></th>
                   </tr>
                 </thead>
@@ -1257,7 +1373,7 @@ export default function ClientsPage() {
                   onChange={e => setClientForm({...clientForm, name: e.target.value})}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Email</label>
                   <input 
@@ -1304,7 +1420,8 @@ export default function ClientsPage() {
           </div>
         )}
 
-        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingDeal} tasks={tasks} canAddTask={canCreateTask} onAddTask={async (task) => { await addTask(task); refreshClientActivity(); }} onCompleteTask={handleCompleteTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingDeal(true); try { await updateDeal(selectedDeal.id, input); refreshClientActivity(); } finally { setSavingDeal(false); } }} />}
+        {selectedDeal && user && currentOrganizationId && <DealDetailsModal deal={selectedDeal} organizationId={currentOrganizationId} clientName={selectedClient?.name} leadName={leads.find((lead) => lead.id === selectedDeal.leadId)?.name} users={users} pipelineStages={settings.pipelineStages} currency={settings.currency} timezone={settings.timezone} canWrite={canWrite} canEdit={canManage || (membership?.role === 'USER' && selectedDeal.assignedToUid === user.uid && canWrite)} canAssign={canManage} saving={savingDeal} productsCollapsedByDefault={true} tasks={tasks} canAddTask={canCreateTask} onAddTask={async (task) => { await addTask(task); refreshClientActivity(); }} onCompleteTask={handleCompleteTask} currentUser={user} onClose={() => setSelectedDealId(null)} onSave={async (input) => { setSavingDeal(true); try { await updateDeal(selectedDeal.id, input); refreshClientActivity(); } finally { setSavingDeal(false); } }} />}
+        {recordSaleDealId && user && currentOrganizationId && (() => { const deal = deals.find((item) => item.id === recordSaleDealId); return deal ? <RecordSaleModal user={user} organizationId={currentOrganizationId} currency={settings.currency} prefill={{ dealId: deal.id, dealTitle: deal.title, clientId: deal.clientId, clientName: selectedClient?.name || 'Client', items: deal.items, value: deal.value }} onClose={() => setRecordSaleDealId(null)} onSubmit={submitClientDealSale} /> : null; })()}
 
         {showEditModal && (
           <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Edit Client dialog">
@@ -1369,8 +1486,8 @@ export default function ClientsPage() {
         )}
 
         {showAddDealModal && (
-          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="dialog" aria-modal="true" aria-label="Add Deal dialog">
-            <form onSubmit={handleCreateDeal} className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl space-y-4">
+          <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-3 sm:p-4" role="dialog" aria-modal="true" aria-label="Add Deal dialog">
+            <form onSubmit={handleCreateDeal} className="max-h-[calc(100dvh-1.5rem)] w-full max-w-2xl space-y-4 overflow-y-auto rounded-2xl bg-white p-4 shadow-xl sm:max-h-[calc(100dvh-2rem)] sm:p-6">
               <ModalHeader title="Add Deal for Client" onClose={() => setShowAddDealModal(false)} />
               <div className="rounded-xl bg-[var(--app-surface-subtle)] px-4 py-3"><p className="text-xs font-bold uppercase text-[var(--app-muted)]">Client</p><p className="mt-1 text-sm font-semibold text-[var(--app-text)]">{selectedClient?.name || 'Client'}</p></div>
               <div className="space-y-2">
@@ -1383,21 +1500,12 @@ export default function ClientsPage() {
                   onChange={e => setDealForm({...dealForm, title: e.target.value})}
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Product / Service (Optional)</label>
-                <input type="text" className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" value={dealForm.productServiceName} onChange={e => setDealForm({...dealForm, productServiceName: e.target.value})} placeholder="e.g. Website Development" />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
+              {user && currentOrganizationId && <DealCatalogItemsField user={user} organizationId={currentOrganizationId} items={dealForm.items} currency={settings.currency} disabled={savingDeal} onChange={(items) => setDealForm((current) => ({ ...current, items, value: getDealValue(current.value, items) }))} />}
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                     <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Deal Value</label>
-                  <MoneyInput
-                    aria-label="Deal value"
-                    value={dealForm.value}
-                    currency={settings.currency}
-                    required
-                    className="px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm"
-                    onChange={value => setDealForm({...dealForm, value})}
-                  />
+                  {dealForm.items.length > 0 ? <div className="rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-subtle)] px-4 py-2 text-sm font-semibold text-[var(--app-text)]">{formatCurrency(getDealValue(dealForm.value, dealForm.items), settings.currency)}</div> : <MoneyInput aria-label="Deal value" value={dealForm.value} currency={settings.currency} required className="px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm" onChange={value => setDealForm({...dealForm, value})} />}
+                  {dealForm.items.length > 0 && <p className="text-xs text-[var(--app-muted)]">Calculated from Products &amp; Services.</p>}
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Stage</label>
@@ -1411,6 +1519,7 @@ export default function ClientsPage() {
                   <p className="text-xs font-semibold text-[var(--app-primary)]">{getDealProbability(dealForm.stage)}% Probability</p>
                 </div>
               </div>
+              {dealForm.stage === 'Lost' && <div className="space-y-2"><label className="text-xs font-bold uppercase text-[var(--app-muted)]">Loss Reason</label><input required className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm" value={dealForm.lossReason} onChange={(event) => setDealForm({ ...dealForm, lossReason: event.target.value })} placeholder="Why was this Deal lost?" /></div>}
               <div className="space-y-2">
                 <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Expected Close Date</label>
                 <input 
@@ -1536,6 +1645,7 @@ export default function ClientsPage() {
       </AnimatePresence>
       {confirmAction && <ConfirmActionDialog open title={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Permanent deletion blocked' : `${confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${confirmAction.name}”${confirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={confirmAction.decision ? `${confirmAction.decision.reason} ${Object.entries(confirmAction.decision.cleanupRecords).map(([label, count]) => `${count} ${label}`).join(', ')} ${Object.entries(confirmAction.decision.preservedRecords).map(([label, value]) => `${label}${typeof value === 'number' ? ` (${value})` : ` “${value}”`}`).join(', ')} ${confirmAction.decision.recommendedAction}` : confirmAction.kind === 'restore' ? 'This Client will be restored without changing the state of its related records.' : 'This action cannot be undone.'} confirmLabel={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED' ? 'Unavailable' : confirmAction.kind === 'archive' ? 'Archive' : confirmAction.kind === 'trash' ? 'Move to Trash' : confirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} confirmDisabled={confirmAction.kind === 'delete' && confirmAction.decision?.outcome === 'BLOCKED'} variant={confirmAction.kind === 'delete' || confirmAction.kind === 'trash' ? 'danger' : confirmAction.kind === 'archive' ? 'warning' : 'default'} loading={confirmBusy} onCancel={() => setConfirmAction(null)} onConfirm={() => void executeConfirmedAction()} />}
       {bulkClientConfirmation && <ConfirmActionDialog open title={(bulkClientConfirmation.action === 'permanent-delete' ? 'Permanently delete' : bulkClientConfirmation.action === 'restore' ? 'Restore' : bulkClientConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive') + ' ' + bulkClientConfirmation.ids.length + ' Clients?'} description={'Preview: ' + (bulkClientConfirmation.ids.length - bulkClientBlocked) + ' ready, ' + bulkClientBlocked + ' blocked or unavailable. ' + bulkClientPreviewDescription + (bulkClientConfirmation.action === 'permanent-delete' && bulkClientAffected > 0 ? ` Total eligible related records: ${bulkClientAffected}.` : '')} confirmLabel={bulkClientConfirmation.action === 'permanent-delete' ? 'Delete Permanently' : bulkClientConfirmation.action === 'restore' ? 'Restore' : bulkClientConfirmation.action === 'trash' ? 'Move to Trash' : 'Archive'} variant={bulkClientConfirmation.action === 'permanent-delete' || bulkClientConfirmation.action === 'trash' ? 'danger' : bulkClientConfirmation.action === 'archive' ? 'warning' : 'default'} loading={bulkClientBusy} onCancel={() => setBulkClientConfirmation(null)} onConfirm={() => void executeBulkClientAction()} />}
+      {selectedClientSale && <SaleDetailsModal sale={selectedClientSale} currency={settings.currency} canManage={false} onClose={() => setSelectedClientSale(null)} />}
       {detailConfirmAction && <ConfirmActionDialog open title={`${detailConfirmAction.kind === 'archive' ? 'Archive' : detailConfirmAction.kind === 'restore' ? 'Restore' : 'Delete'} “${detailConfirmAction.name}”${detailConfirmAction.kind === 'delete' ? ' Permanently' : ''}?`} description={detailConfirmAction.kind === 'archive' ? `This ${detailConfirmAction.entity.toLowerCase()} will be moved to Archived and can be restored later.` : detailConfirmAction.kind === 'restore' ? `This ${detailConfirmAction.entity.toLowerCase()} will be restored to the active list.` : `This action cannot be undone. This archived ${detailConfirmAction.entity.toLowerCase()} will be permanently deleted.`} confirmLabel={detailConfirmAction.kind === 'archive' ? 'Archive' : detailConfirmAction.kind === 'restore' ? 'Restore' : 'Delete Permanently'} variant={detailConfirmAction.kind === 'delete' ? 'danger' : detailConfirmAction.kind === 'archive' ? 'warning' : 'default'} loading={detailConfirmBusy} onCancel={() => setDetailConfirmAction(null)} onConfirm={() => void executeDetailConfirmedAction()} />}
     </div>
   );

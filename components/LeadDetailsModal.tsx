@@ -7,6 +7,7 @@ import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { TaskCard } from '@/components/TaskCard';
 import { completeLeadTimelineActivity, createLeadTimelineEntry, listLeadTimeline, type LeadTimelineCursor } from '@/lib/repositories/leadTimeline';
 import type { AppUser } from '@/types/auth';
+import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import type { Lead, LeadActivityType, LeadTimelineEntry, Task } from '@/types';
 
 const activityTypes: LeadActivityType[] = ['Call', 'Email', 'Meeting', 'Follow-up', 'Message', 'Other'];
@@ -111,7 +112,7 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, tasks, 
       closeForm();
     } catch (saveError) {
       console.error('Unable to save lead timeline entry', saveError);
-      setError(saveError instanceof Error ? saveError.message : 'Unable to save the timeline entry. Please try again.');
+      setError(userFacingErrorMessage(saveError, 'Unable to save the timeline entry. Please try again.'));
     } finally {
       setSaving(false);
     }
@@ -130,7 +131,7 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, tasks, 
       await onCompleteTask(taskId);
     } catch (completionError) {
       console.error('Unable to complete Lead task', completionError);
-      setError(completionError instanceof Error ? completionError.message : 'Unable to update the task. Please try again.');
+      setError(userFacingErrorMessage(completionError, 'Unable to update the task. Please try again.'));
     } finally {
       setCompletingTaskId(null);
     }
@@ -145,7 +146,7 @@ export function LeadDetailsModal({ lead, user, organizationId, canWrite, tasks, 
       setEntries((current) => current.map((item) => item.id === completed.id ? completed : item));
     } catch (completionError) {
       console.error('Unable to complete lead activity', completionError);
-      setError(completionError instanceof Error ? completionError.message : 'Unable to mark the activity complete. Please try again.');
+      setError(userFacingErrorMessage(completionError, 'Unable to mark the activity complete. Please try again.'));
     } finally {
       setCompletingEntryId(null);
     }

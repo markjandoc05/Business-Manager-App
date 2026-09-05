@@ -12,7 +12,7 @@ import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositorie
 
 export const LEAD_PAGE_SIZE = 25;
 export type LeadViewFilter = 'All' | 'Active' | 'Converted' | 'Lost';
-export type LeadListFilters = { view?: LeadViewFilter; status?: LeadStatus | 'All'; source?: string };
+export type LeadListFilters = { view?: LeadViewFilter; status?: LeadStatus | 'All'; source?: string; search?: string };
 
 export type LeadInput = Pick<Lead, 'name' | 'company' | 'email' | 'phone' | 'source' | 'assignedToUid' | 'assignedToName'>;
 
@@ -94,14 +94,41 @@ export async function listLeadsPage(user: AppUser | null, organizationId: string
   const constraints: QueryConstraint[] = membership.role === 'USER'
     ? [where('assignedToUid', '==', user?.uid), where('archived', '==', false), ...leadFilterConstraints(filters), orderBy('createdAt', 'desc')]
     : [where('archived', '==', false), ...leadFilterConstraints(filters), orderBy('createdAt', 'desc')];
-  const leadsQuery = cursor
-    ? query(leadsCollection, ...constraints, startAfter(cursor), limit(pageSize))
-    : query(leadsCollection, ...constraints, limit(pageSize));
-  const snapshot = await getDocs(leadsQuery);
-  const items = snapshot.docs
-    .map((leadDoc) => mapLead(leadDoc.id, leadDoc.data()))
-    .filter((lead) => !lead.archived && !lead.trashed);
-  return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+  const term = filters.search?.trim().toLowerCase() || '';
+  if (!term) {
+    const leadsQuery = cursor
+      ? query(leadsCollection, ...constraints, startAfter(cursor), limit(pageSize))
+      : query(leadsCollection, ...constraints, limit(pageSize));
+    const snapshot = await getDocs(leadsQuery);
+    const items = snapshot.docs.map((leadDoc) => mapLead(leadDoc.id, leadDoc.data())).filter((lead) => !lead.archived && !lead.trashed);
+    return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
+  }
+  // Search is a bounded ordered scan so substring matching remains compatible
+  // with historical records that have no normalized search fields.
+  const matches: Lead[] = [];
+  const matchingCursors: FirestoreCursor[] = [];
+  let scanCursor = cursor;
+  let lastRawCursor: FirestoreCursor = null;
+  let exhausted = false;
+  for (let page = 0; page < 20 && matches.length <= pageSize; page += 1) {
+    const leadsQuery = query(leadsCollection, ...constraints, ...(scanCursor ? [startAfter(scanCursor)] : []), limit(pageSize));
+    const snapshot = await getDocs(leadsQuery);
+    if (snapshot.empty) { exhausted = true; break; }
+    lastRawCursor = snapshot.docs.at(-1) || null;
+    for (const leadDoc of snapshot.docs) {
+      const lead = mapLead(leadDoc.id, leadDoc.data());
+      if ([lead.name, lead.email, lead.phone, lead.company || ''].some((value) => value.toLowerCase().includes(term))) {
+        matches.push(lead);
+        matchingCursors.push(leadDoc);
+      }
+      if (matches.length > pageSize) break;
+    }
+    if (matches.length > pageSize) break;
+    if (snapshot.docs.length < pageSize) { exhausted = true; break; }
+    scanCursor = lastRawCursor;
+  }
+  const items = matches.slice(0, pageSize);
+  return { items, nextCursor: matches.length > pageSize ? matchingCursors[pageSize - 1] || null : exhausted ? null : matchingCursors.at(-1) || lastRawCursor, hasMore: matches.length > pageSize || !exhausted };
 }
 
 export async function listLeads(user: AppUser | null, organizationId: string) {

@@ -26,7 +26,8 @@ export function SortableColumnHeader({
         type="button"
         onClick={onSort}
         className={`group inline-flex items-center gap-1 rounded-[var(--app-radius-sm)] py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] ${align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'text-left'}`}
-        aria-label={`Sort by ${label}`}
+        aria-label={`Sort loaded results by ${label}`}
+        title="Sorts the currently loaded results"
       >
         <span>{label}</span>
         <span aria-hidden="true" className="text-[var(--app-tertiary)] group-hover:text-[var(--app-primary)]">

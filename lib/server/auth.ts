@@ -6,6 +6,14 @@ export interface AuthenticatedUser {
   uid: string;
   email?: string;
   name?: string;
+  /**
+   * These fields come from the ID token that was just verified with
+   * checkRevoked=true. Keeping them with the authenticated identity lets the
+   * bootstrap route reuse that verification instead of issuing a second
+   * Admin Auth getUser request.
+   */
+  emailVerified: boolean;
+  disabled: boolean;
 }
 
 export function authorizationHeaderDiagnostics(request: Pick<NextRequest, 'headers'>) {
@@ -37,6 +45,11 @@ export async function getAuthenticatedUser(
       uid: decoded.uid,
       ...(typeof decoded.email === 'string' ? { email: decoded.email } : {}),
       ...(typeof decoded.name === 'string' ? { name: decoded.name } : {}),
+      // verifyIdToken(..., true) rejects disabled and revoked sessions before
+      // returning these claims. The disabled flag is therefore safely false
+      // for a request that reached this point.
+      emailVerified: decoded.email_verified === true,
+      disabled: false,
     };
   } catch (error) {
     options.onVerificationFailure?.(describeFirebaseAuthError(error));

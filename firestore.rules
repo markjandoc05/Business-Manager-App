@@ -514,6 +514,154 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    function catalogItemHasValidCategory(organizationId) {
+      return !request.resource.data.keys().hasAny(['categoryId'])
+        || request.resource.data.categoryId == null
+        || (request.resource.data.categoryId is string
+          && exists(/databases/$(database)/documents/organizations/$(organizationId)/catalogCategories/$(request.resource.data.categoryId))
+          && get(/databases/$(database)/documents/organizations/$(organizationId)/catalogCategories/$(request.resource.data.categoryId)).data.type == request.resource.data.type);
+    }
+
+    function catalogItemHasValidFields() {
+      return request.resource.data.type in ['PRODUCT', 'SERVICE']
+        && request.resource.data.name is string
+        && request.resource.data.name != ''
+        && (!request.resource.data.keys().hasAny(['code']) || request.resource.data.code is string)
+        && (!request.resource.data.keys().hasAny(['category']) || request.resource.data.category is string)
+        && (!request.resource.data.keys().hasAny(['categoryId']) || request.resource.data.categoryId == null || request.resource.data.categoryId is string)
+        && (!request.resource.data.keys().hasAny(['unit']) || request.resource.data.unit is string)
+        && (!request.resource.data.keys().hasAny(['description']) || request.resource.data.description is string)
+        && request.resource.data.regularPrice is number
+        && request.resource.data.regularPrice >= 0
+        && (!request.resource.data.keys().hasAny(['salePrice']) || request.resource.data.salePrice == null || (request.resource.data.salePrice is number && request.resource.data.salePrice >= 0 && request.resource.data.salePrice <= request.resource.data.regularPrice))
+        && request.resource.data.status in ['ACTIVE', 'INACTIVE'];
+    }
+
+    function dealHasValidItems() {
+      // Snapshot maps are validated and normalized by the Deal repository. Rules
+      // can bound the list but cannot iterate an arbitrary list of maps.
+      return !request.resource.data.keys().hasAny(['items'])
+        || (request.resource.data.items is list && request.resource.data.items.size() <= 50);
+    }
+
+    function saleHasValidPayment() {
+      return (request.resource.data.paymentStatus == 'PAID'
+        && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
+          && request.resource.data.amountPaid == request.resource.data.total
+          && request.resource.data.balance == 0)
+        || (request.resource.data.paymentStatus == 'PARTIAL'
+          && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
+          && request.resource.data.amountPaid > 0
+          && request.resource.data.amountPaid < request.resource.data.total
+          && request.resource.data.balance == request.resource.data.total - request.resource.data.amountPaid)
+        || (request.resource.data.paymentStatus == 'UNPAID'
+          && request.resource.data.amountPaid == 0
+          && request.resource.data.balance == request.resource.data.total
+          && request.resource.data.paymentMethod == null);
+    }
+
+    function saleHasValidCreationData(organizationId) {
+      // Individual snapshot maps are normalized by the Sales repository; rules
+      // bound their count and lock the financial/lifecycle invariants.
+      return request.resource.data.saleNumber is string
+        && request.resource.data.saleDate is string
+        && request.resource.data.customerType in ['WALK_IN', 'CLIENT']
+        && request.resource.data.customerName is string
+        && request.resource.data.items is list
+        && request.resource.data.items.size() >= 1
+        && request.resource.data.items.size() <= 50
+        && request.resource.data.subtotal is number
+        && request.resource.data.total is number
+        && request.resource.data.subtotal >= 0
+        && request.resource.data.total == request.resource.data.subtotal
+        && request.resource.data.amountPaid is number
+        && request.resource.data.balance is number
+        && request.resource.data.amountPaid >= 0
+        && request.resource.data.balance >= 0
+        && saleHasValidPayment()
+        && (!request.resource.data.keys().hasAny(['source']) || request.resource.data.source in ['WALK_IN', 'CLIENT', 'DEAL'])
+        && ((request.resource.data.customerType == 'WALK_IN' && request.resource.data.clientId == null)
+          || (request.resource.data.customerType == 'CLIENT'
+            && request.resource.data.clientId is string
+            && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId))
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId)).data.status != 'ARCHIVED'))
+        && ((!request.resource.data.keys().hasAny(['source']) || request.resource.data.source != 'DEAL')
+          || (request.resource.data.source == 'DEAL'
+            && request.resource.data.customerType == 'CLIENT'
+            && request.resource.data.dealId is string
+            && exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId))
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.status == 'Won'
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.stage == 'Won'
+            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.clientId == request.resource.data.clientId))
+        && (!request.resource.data.keys().hasAny(['dealId'])
+          || (request.resource.data.keys().hasAny(['source'])
+            && request.resource.data.source == 'DEAL'
+            && request.resource.data.dealId is string));
+    }
+
+    match /organizations/{organizationId}/catalogCategories/{categoryId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['name', 'normalizedName', 'type', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name != ''
+        && request.resource.data.normalizedName is string
+        && request.resource.data.normalizedName != ''
+        && request.resource.data.type in ['PRODUCT', 'SERVICE']
+        && request.resource.data.status in ['ACTIVE', 'INACTIVE']
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['name', 'normalizedName', 'type', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name != ''
+        && request.resource.data.normalizedName is string
+        && request.resource.data.normalizedName != ''
+        && request.resource.data.type in ['PRODUCT', 'SERVICE']
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.status in ['ACTIVE', 'INACTIVE']
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /organizations/{organizationId}/catalogItems/{itemId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['type', 'name', 'code', 'category', 'categoryId', 'unit', 'description', 'regularPrice', 'salePrice', 'status', 'archived', 'archivedAt', 'archivedBy', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && catalogItemHasValidFields()
+        && catalogItemHasValidCategory(organizationId)
+        && request.resource.data.archived == false
+        && request.resource.data.archivedAt == null
+        && request.resource.data.archivedBy == null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['type', 'name', 'code', 'category', 'categoryId', 'unit', 'description', 'regularPrice', 'salePrice', 'status', 'archived', 'archivedAt', 'archivedBy', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
+        && catalogItemHasValidFields()
+        && catalogItemHasValidCategory(organizationId)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && (request.resource.data.archived == resource.data.archived
+          ? request.resource.data.archivedAt == resource.data.archivedAt
+            && request.resource.data.archivedBy == resource.data.archivedBy
+          : request.resource.data.archived == true
+            ? request.resource.data.archivedAt is timestamp
+              && request.resource.data.archivedBy == request.auth.uid
+            : request.resource.data.archived == false
+              && request.resource.data.archivedAt == null
+              && request.resource.data.archivedBy == null);
+      allow delete: if false;
+    }
+
     match /organizations/{organizationId}/clients/{clientId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManageWrite(organizationId)
@@ -530,6 +678,17 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.status in ['ACTIVE', 'ARCHIVED']
+        && (request.resource.data.archived == true
+          ? request.resource.data.status == 'ARCHIVED'
+            && (resource.data.archived == true
+              ? request.resource.data.archivedAt is timestamp
+                && request.resource.data.archivedBy is string
+                && request.resource.data.archivedAt == resource.data.archivedAt
+                && request.resource.data.archivedBy == resource.data.archivedBy
+              : request.resource.data.archivedAt == request.time
+                && request.resource.data.archivedBy == request.auth.uid)
+          : request.resource.data.status == 'ACTIVE')
         && (!request.resource.data.keys().hasAny(['archived']) || request.resource.data.archived is bool)
         && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed is bool)
         && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed != true
@@ -537,6 +696,12 @@ service cloud.firestore {
             && request.resource.data.status == 'ARCHIVED'
             && request.resource.data.trashedAt is timestamp
             && request.resource.data.trashedBy == request.auth.uid))
+        && (!request.resource.data.keys().hasAny(['trashed']) || request.resource.data.trashed == true
+          || ((!request.resource.data.keys().hasAny(['trashedAt']) || request.resource.data.trashedAt == null)
+            && (!request.resource.data.keys().hasAny(['trashedBy']) || request.resource.data.trashedBy == null)))
+        && (request.resource.data.archived == true
+          || ((!request.resource.data.keys().hasAny(['archivedAt']) || request.resource.data.archivedAt == null)
+            && (!request.resource.data.keys().hasAny(['archivedBy']) || request.resource.data.archivedBy == null)))
         && request.resource.data.assignedToUid is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
         && ((!resource.data.keys().hasAny(['sourceLeadId']) && !request.resource.data.keys().hasAny(['sourceLeadId']))
@@ -701,10 +866,132 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Sales are immutable transaction snapshots. Financial status and record
+    // management are deliberately separate: archive never changes totals, and
+    // only an already voided Sale may be put in Trash.
+    match /organizations/{organizationId}/sales/{saleId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['saleNumber', 'saleDate', 'customerType', 'source', 'customerName', 'clientId', 'dealId', 'items', 'subtotal', 'total', 'paymentStatus', 'paymentMethod', 'amountPaid', 'balance', 'notes', 'status', 'archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
+        && saleHasValidCreationData(organizationId)
+        && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.archived == false
+        && request.resource.data.archivedAt == null
+        && request.resource.data.archivedBy == null
+        && request.resource.data.trashed == false
+        && request.resource.data.trashedAt == null
+        && request.resource.data.trashedBy == null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && ((!request.resource.data.keys().hasAny(['source']) || request.resource.data.source != 'DEAL')
+          || (getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(request.resource.data.dealId)).data.status == 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(request.resource.data.dealId)).data.saleId == saleId));
+      allow update: if organizationCanManageWrite(organizationId)
+        && (
+          // The only financial transition. Deal-linked Sales also release their
+          // lock in this same atomic write.
+          (resource.data.status == 'ACTIVE'
+            && request.resource.data.status == 'VOIDED'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voidedAt', 'voidedBy', 'voidReason', 'updatedAt', 'updatedBy'])
+            && request.resource.data.voidedAt is timestamp
+            && request.resource.data.voidedAt == request.time
+            && request.resource.data.voidedBy == request.auth.uid
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt is timestamp
+            && ((!resource.data.keys().hasAny(['source']) || resource.data.source != 'DEAL')
+              || (resource.data.dealId is string
+                && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(resource.data.dealId)).data.status == 'AVAILABLE'
+                && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(resource.data.dealId)).data.saleId == saleId)))
+          // Record-management operations preserve all transaction fields,
+          // including status. They never touch the Deal sale lock.
+          || (request.resource.data.status == resource.data.status
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt is timestamp
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'updatedAt', 'updatedBy'])
+            && (
+              // Archive a normal Sale.
+              ((!resource.data.keys().hasAny(['trashed']) || resource.data.trashed != true)
+                && request.resource.data.archived == true
+                && request.resource.data.archivedAt is timestamp
+                && request.resource.data.archivedBy == request.auth.uid
+                && request.resource.data.trashed == false
+                && request.resource.data.trashedAt == null
+                && request.resource.data.trashedBy == null)
+              // Restore an archived Sale without changing its financial status.
+              || (resource.data.keys().hasAny(['archived'])
+                && resource.data.archived == true
+                && (!resource.data.keys().hasAny(['trashed']) || resource.data.trashed != true)
+                && request.resource.data.archived == false
+                && request.resource.data.archivedAt == null
+                && request.resource.data.archivedBy == null
+                && request.resource.data.trashed == false
+                && request.resource.data.trashedAt == null
+                && request.resource.data.trashedBy == null)
+              // Trash only a voided record; archive state is deliberately kept.
+              || (resource.data.status == 'VOIDED'
+                && resource.data.trashed != true
+                && request.resource.data.trashed == true
+                && request.resource.data.trashedAt is timestamp
+                && request.resource.data.trashedBy == request.auth.uid
+                && request.resource.data.archived == resource.data.archived
+                && request.resource.data.archivedAt == resource.data.archivedAt
+                && request.resource.data.archivedBy == resource.data.archivedBy)
+              // A trash restore remains VOIDED and keeps any prior archive state.
+              || (resource.data.status == 'VOIDED'
+                && resource.data.trashed == true
+                && request.resource.data.trashed == false
+                && request.resource.data.trashedAt == null
+                && request.resource.data.trashedBy == null
+                && request.resource.data.archived == resource.data.archived
+                && request.resource.data.archivedAt == resource.data.archivedAt
+                && request.resource.data.archivedBy == resource.data.archivedBy)
+            ))
+        );
+      allow delete: if false;
+    }
+
+    // A small per-Deal marker makes the active-sale constraint transactional.
+    // It is never deleted; voiding a linked Sale changes it to AVAILABLE so a
+    // later conversion can safely create a fresh historical Sale document.
+    match /organizations/{organizationId}/dealSaleLocks/{dealId} {
+      allow read: if organizationCanView(organizationId);
+      allow create: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['dealId', 'saleId', 'status', 'updatedAt', 'updatedBy'])
+        && request.resource.data.dealId == dealId
+        && request.resource.data.saleId is string
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && ((request.resource.data.status == 'ACTIVE'
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.source == 'DEAL'
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.dealId == dealId
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.status == 'ACTIVE')
+          || (request.resource.data.status == 'AVAILABLE'
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.source == 'DEAL'
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.dealId == dealId
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.status == 'VOIDED'));
+      allow update: if organizationCanManageWrite(organizationId)
+        && request.resource.data.keys().hasOnly(['dealId', 'saleId', 'status', 'updatedAt', 'updatedBy'])
+        && request.resource.data.dealId == resource.data.dealId
+        && request.resource.data.saleId is string
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && ((request.resource.data.status == 'AVAILABLE'
+          && resource.data.status == 'ACTIVE'
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(resource.data.saleId)).data.status == 'VOIDED')
+          || (request.resource.data.status == 'ACTIVE'
+            && resource.data.status == 'AVAILABLE'
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.status == 'ACTIVE'
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(request.resource.data.saleId)).data.dealId == resource.data.dealId));
+      allow delete: if false;
+    }
+
     match /organizations/{organizationId}/deals/{dealId} {
       allow read: if organizationCanViewDeal(organizationId);
       allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'wonAt', 'lostAt', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'items', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'wonAt', 'lostAt', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
+        && dealHasValidItems()
         && request.resource.data.clientId is string
         && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId))
         && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId)).data.status != 'ARCHIVED'
@@ -714,14 +1001,22 @@ service cloud.firestore {
         && request.resource.data.assignedToUid is string
         && request.resource.data.assignedToName is string
         && organizationCanAssign(organizationId, request.resource.data.assignedToUid)
-        && request.resource.data.status == 'Active'
-        && request.resource.data.stage in ['New', 'Qualified', 'Proposal', 'Negotiation']
-        && request.resource.data.stage != 'Won'
-        && request.resource.data.stage != 'Lost'
-        && (!request.resource.data.keys().hasAny(['wonAt']) || request.resource.data.wonAt == null)
-        && (!request.resource.data.keys().hasAny(['lostAt']) || request.resource.data.lostAt == null);
+        && ((request.resource.data.status == 'Active' && request.resource.data.stage in ['New', 'Qualified', 'Proposal', 'Negotiation']
+          && (!request.resource.data.keys().hasAny(['wonAt']) || request.resource.data.wonAt == null)
+          && (!request.resource.data.keys().hasAny(['lostAt']) || request.resource.data.lostAt == null))
+          || (request.resource.data.status == 'Won' && request.resource.data.stage == 'Won'
+            && request.resource.data.wonAt is timestamp
+            && request.resource.data.wonAt == request.time
+            && (!request.resource.data.keys().hasAny(['lostAt']) || request.resource.data.lostAt == null)
+            && (!request.resource.data.keys().hasAny(['lossReason']) || request.resource.data.lossReason == null))
+          || (request.resource.data.status == 'Lost' && request.resource.data.stage == 'Lost'
+            && request.resource.data.lostAt is timestamp
+            && request.resource.data.lostAt == request.time
+            && (!request.resource.data.keys().hasAny(['wonAt']) || request.resource.data.wonAt == null)
+            && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
       allow update: if organizationCanUpdateDeal(organizationId) && licenseAllowsWrites(organizationId)
-        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'wonAt', 'lostAt', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
+        && request.resource.data.keys().hasOnly(['title', 'clientId', 'leadId', 'value', 'stage', 'status', 'expectedCloseDate', 'productServiceName', 'notes', 'items', 'assignedTo', 'assignedToUid', 'assignedToName', 'lossReason', 'wonAt', 'lostAt', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'archived', 'archivedAt', 'archivedBy'])
+        && dealHasValidItems()
         && request.resource.data.clientId == resource.data.clientId
         && request.resource.data.leadId == resource.data.leadId
         && request.resource.data.createdBy == resource.data.createdBy
@@ -796,18 +1091,41 @@ service cloud.firestore {
     match /organizations/{organizationId}/settings/{settingsId} {
       allow read: if isActivePlatformAdmin() || organizationCanView(organizationId);
       allow create: if (isBootstrapOrganizationCreate(organizationId)
-          || (isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)))
+        || (isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)))
         && settingsId == 'settings'
+        && (!request.resource.data.keys().hasAny(['salesReferenceMode']) || request.resource.data.salesReferenceMode in ['SYSTEM_GENERATED', 'SEQUENTIAL'])
+        && (!request.resource.data.keys().hasAny(['salesReferencePrefix']) || request.resource.data.salesReferencePrefix is string)
+        && (!request.resource.data.keys().hasAny(['salesReferenceStartingNumber']) || (request.resource.data.salesReferenceStartingNumber is int && request.resource.data.salesReferenceStartingNumber >= 1))
+        && (!request.resource.data.keys().hasAny(['salesReferenceDigits']) || (request.resource.data.salesReferenceDigits is int && request.resource.data.salesReferenceDigits >= 1 && request.resource.data.salesReferenceDigits <= 12))
+        && (!request.resource.data.keys().hasAny(['salesDefaultPaymentStatus']) || request.resource.data.salesDefaultPaymentStatus in ['PAID', 'PARTIAL', 'UNPAID'])
+        && (!request.resource.data.keys().hasAny(['salesDefaultPaymentMethod']) || request.resource.data.salesDefaultPaymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER'])
         && request.resource.data.keys().hasOnly([
           'businessName', 'businessType', 'email', 'phone', 'website', 'address',
-          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources'
+          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources',
+          'salesReferenceMode', 'salesReferencePrefix', 'salesReferenceStartingNumber', 'salesReferenceDigits',
+          'salesDefaultPaymentStatus', 'salesDefaultPaymentMethod'
         ]);
       allow update: if isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)
         && settingsId == 'settings'
+        && (!request.resource.data.keys().hasAny(['salesReferenceMode']) || request.resource.data.salesReferenceMode in ['SYSTEM_GENERATED', 'SEQUENTIAL'])
+        && (!request.resource.data.keys().hasAny(['salesReferencePrefix']) || request.resource.data.salesReferencePrefix is string)
+        && (!request.resource.data.keys().hasAny(['salesReferenceStartingNumber']) || (request.resource.data.salesReferenceStartingNumber is int && request.resource.data.salesReferenceStartingNumber >= 1))
+        && (!request.resource.data.keys().hasAny(['salesReferenceDigits']) || (request.resource.data.salesReferenceDigits is int && request.resource.data.salesReferenceDigits >= 1 && request.resource.data.salesReferenceDigits <= 12))
+        && (!request.resource.data.keys().hasAny(['salesDefaultPaymentStatus']) || request.resource.data.salesDefaultPaymentStatus in ['PAID', 'PARTIAL', 'UNPAID'])
+        && (!request.resource.data.keys().hasAny(['salesDefaultPaymentMethod']) || request.resource.data.salesDefaultPaymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER'])
         && request.resource.data.keys().hasOnly([
           'businessName', 'businessType', 'email', 'phone', 'website', 'address',
-          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources'
+          'currency', 'timezone', 'logoUrl', 'accentColor', 'pipelineStages', 'leadSources',
+          'salesReferenceMode', 'salesReferencePrefix', 'salesReferenceStartingNumber', 'salesReferenceDigits',
+          'salesDefaultPaymentStatus', 'salesDefaultPaymentMethod'
         ]);
+      allow create, update: if organizationCanManage(organizationId) && licenseAllowsWrites(organizationId)
+        && settingsId == 'salesSequence'
+        && request.resource.data.keys().hasOnly(['nextNumber', 'updatedAt', 'updatedBy'])
+        && request.resource.data.nextNumber is int
+        && request.resource.data.nextNumber >= 1
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid;
       allow delete: if false;
     }
 

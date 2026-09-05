@@ -15,6 +15,8 @@ export const canManageClients = (membership: OrganizationMembership | null) => h
 export const canManageLeads = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
 export const canManageDeals = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
 export const canManageTasks = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
+export const canManageCatalogItems = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
+export const canManageSales = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
 export const canAssignOrganizationRecords = (membership: OrganizationMembership | null) => hasOrganizationRole(membership, ['ADMIN', 'MANAGER']);
 export const canViewBusinessData = (membership: OrganizationMembership | null, status?: OrganizationStatus | null) => canAccessOrganization(membership, status ?? 'active');
 

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Info } from 'lucide-react';
 import { Card, Badge } from '@/components/ui/core';
 import { formatCurrency } from '@/lib/formatting';
 import { DEAL_STAGES, getDealProbability } from '@/lib/deal-workflow';
@@ -15,18 +16,27 @@ const STAGE_DESCRIPTIONS: Record<typeof DEAL_STAGES[number], string> = {
   Qualified: 'Opportunities that have been reviewed and identified as potential sales.',
   Proposal: 'Opportunities where a proposal, quotation, or solution has been presented.',
   Negotiation: 'Opportunities where pricing, terms, or other details are being discussed.',
-  Won: 'Deals that have been successfully closed and won.',
-  Lost: 'Deals that were not successfully closed.',
+  Won: 'Deals that have been successfully closed and won. The value shown is the Won Deal Value.',
+  Lost: 'Deals that were not successfully closed. The value shown is the Lost Deal Value.',
 };
 
 export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[]; currency: string; stageSummary?: Record<string, { count: number; value: number }> }) {
   const [activeStage, setActiveStage] = useState<typeof DEAL_STAGES[number] | null>(null);
+  const pipelineInfoId = useId();
+  const hasAuthoritativeSummary = stageSummary !== undefined;
 
-  return <Card className="h-full overflow-hidden border-[var(--app-border)] p-4 sm:p-5">
+  return <Card className="h-full overflow-visible border-[var(--app-border)] p-4 sm:p-5">
     <div className="flex items-start justify-between gap-4 border-b border-[var(--app-border-subtle)] pb-4">
-      <div>
-        <h2 className="text-base font-semibold tracking-tight text-[var(--app-text)]">Pipeline Overview</h2>
-        <p className="mt-1 text-sm text-[var(--app-muted)]">Deal count and value as opportunities progress</p>
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-base font-semibold tracking-tight text-[var(--app-text)]">Pipeline Overview</h2>
+          <button type="button" aria-label="About Pipeline Overview" aria-describedby={pipelineInfoId} title="Pipeline values represent Deal Value from opportunities. Won Deal Value may differ from actual Sales recorded in Sales Log." className="group relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-tertiary)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
+            <Info size={15} aria-hidden="true" />
+            <span id={pipelineInfoId} role="tooltip" className="pointer-events-none absolute left-0 top-7 z-20 hidden w-64 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] p-3 text-left text-xs font-normal leading-5 text-[var(--app-text)] shadow-[var(--app-shadow-sm)] group-hover:block group-focus-visible:block">Pipeline values represent Deal Value from opportunities. Won Deal Value may differ from actual Sales recorded in Sales Log.</span>
+          </button>
+        </div>
+        <p className="mt-1 text-sm text-[var(--app-muted)]">Deal count and value as opportunities move through your sales pipeline.</p>
+        <p className="mt-1 text-xs text-[var(--app-tertiary)]">Values shown are Deal Value, not recorded Sales.</p>
       </div>
       <Badge variant="blue">{PIPELINE_STAGES.length} stages</Badge>
     </div>
@@ -34,8 +44,8 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
       {PIPELINE_STAGES.map((stage, index) => {
         const stageDeals = deals.filter((deal) => deal.stage === stage);
         const summary = stageSummary?.[stage];
-        const dealCount = summary?.count ?? stageDeals.length;
-        const totalValue = summary?.value ?? stageDeals.reduce((sum, deal) => sum + deal.value, 0);
+        const dealCount = hasAuthoritativeSummary ? summary?.count ?? 0 : stageDeals.length;
+        const totalValue = hasAuthoritativeSummary ? summary?.value ?? 0 : stageDeals.reduce((sum, deal) => sum + deal.value, 0);
         const width = `${100 - index * 10}%`;
         const dealLabel = `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`;
 
@@ -170,7 +180,7 @@ function FunnelStage({ stage, color, width, dealLabel, totalValue, probability, 
           <span aria-hidden="true" className="h-4 w-px shrink-0 bg-current/25" />
           <span className="shrink-0 tabular-nums">{totalValue}</span>
         </div>
-        <p className="truncate text-xs opacity-80">{dealLabel} · {probability}% probability</p>
+        <p className="truncate text-xs opacity-80">{dealLabel} · {probability}% probability{stage === 'Won' ? ' · Won Deal Value' : stage === 'Lost' ? ' · Lost Deal Value' : ''}</p>
       </div>
     </div>
     {active && typeof document !== 'undefined' && createPortal(

@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { getOrganization, listUserMemberships, subscribeToOrganization, subscribeToOrganizationMembership } from '@/lib/repositories/workspaces';
 import { invalidateCachedRequest } from '@/lib/repositories/requestCache';
 import { resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
-import { firestoreWorkspaceErrorMessage, isFirestoreIndexError } from '@/lib/repositories/pagination';
+import { firestoreWorkspaceErrorMessage, isFirestoreIndexError, userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { recordClientLoginActivity } from '@/lib/auth/loginActivity';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
 import { finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
@@ -184,7 +184,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         console.error('Unable to resolve organization', snapshotError);
       }
       recordLoginActivity(selectedOrganizationId, 'FAILED');
-      setError(firestoreWorkspaceErrorMessage(snapshotError, snapshotError.message));
+      setError(firestoreWorkspaceErrorMessage(snapshotError, userFacingErrorMessage(snapshotError, 'Workspace information is not available yet.')));
       setLoading(false);
     });
     const unsubscribeLicense = subscribeToOrganizationLicense(selectedOrganizationId, (nextLicense) => {

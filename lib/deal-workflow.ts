@@ -14,6 +14,10 @@ export function getActiveDealCreationStages(_pipelineStages?: PipelineStage[]) {
   return DEAL_ACTIVE_STAGES.map((name) => ({ name, isActive: true }));
 }
 
+export function getDealCreationStages(_pipelineStages?: PipelineStage[]) {
+  return DEAL_STAGES.map((name) => ({ name, isActive: true }));
+}
+
 export function getDefaultDealCreationStage(_pipelineStages?: PipelineStage[]) {
   return 'New';
 }

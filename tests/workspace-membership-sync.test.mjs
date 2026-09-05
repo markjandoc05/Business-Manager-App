@@ -7,6 +7,7 @@ const context = fs.readFileSync(new URL('../context/WorkspaceContext.tsx', impor
 const auth = fs.readFileSync(new URL('../context/AuthContext.tsx', import.meta.url), 'utf8');
 const bootstrapRequest = fs.readFileSync(new URL('../lib/auth/bootstrap-request.ts', import.meta.url), 'utf8');
 const bootstrap = fs.readFileSync(new URL('../lib/server/workspace-bootstrap.ts', import.meta.url), 'utf8');
+const bootstrapRoute = fs.readFileSync(new URL('../app/api/auth/bootstrap/route.ts', import.meta.url), 'utf8');
 const loginActivity = fs.readFileSync(new URL('../lib/server/login-activity.ts', import.meta.url), 'utf8');
 const loginActivityRoute = fs.readFileSync(new URL('../app/api/auth/login-activity/route.ts', import.meta.url), 'utf8');
 const rules = fs.readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
@@ -39,6 +40,19 @@ test('trusted profile bootstrap runs before protected membership discovery', () 
   assert.match(bootstrap, /emailVerified/);
   assert.match(bootstrap, /organizationInvitations/);
   assert.doesNotMatch(auth, /setDoc\(userRef/);
+});
+
+test('bootstrap reuses the verified token identity and transaction profile', () => {
+  assert.match(auth, /bootstrapResult\.data\?\.profile/);
+  assert.match(bootstrapRoute, /authUser: authenticatedUser/);
+  assert.match(bootstrap, /options\.authUser/);
+  assert.match(bootstrap, /verifyIdToken\(\.\.\., true\)/);
+  assert.match(bootstrap, /profile: nextProfile/);
+});
+
+test('auth bootstrap coalesces duplicate same-user startup callbacks', () => {
+  assert.match(auth, /bootstrapInFlightRef/);
+  assert.match(auth, /current auth-state callback.*same UID|same UID.*reuse the promise/s);
 });
 
 test('login activity is server-controlled and organization-scoped', () => {

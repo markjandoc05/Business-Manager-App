@@ -17,7 +17,11 @@ import {
   Calendar, 
   ChevronDown,
   ArrowRight,
-  GripVertical
+  GripVertical,
+  Settings2,
+  ArrowUp,
+  ArrowDown,
+  Info
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { formatCurrency, formatCurrencyParts } from '@/lib/formatting';
@@ -27,20 +31,24 @@ import { canManageClients, canManageLeads, canManageTasks } from '@/lib/permissi
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
 import { loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
+import { userFacingErrorMessage } from '@/lib/repositories/pagination';
+import { getPipelineStageSummaries, type PipelineStageSummary } from '@/lib/repositories/deals';
+import { DASHBOARD_KPI_STORAGE_KEY, DEFAULT_DASHBOARD_KPI_IDS, getKpiDefinition, KPI_REGISTRY, MAX_DASHBOARD_KPIS, MIN_DASHBOARD_KPIS, normalizeDashboardKpiIds, readDashboardKpiPreference, type DashboardKpiId } from '@/lib/dashboard-kpis';
+import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
 import { IconActionButton } from '@/components/IconActionButton';
 import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
 import { emitStartupTiming, markStartup, observeStartupLcp } from '@/lib/startupTiming';
+import { MovableKpiCard } from '@/components/KpiCard';
 
 type DashboardFollowUpItem =
   | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
 
 type PrimaryDashboardCard = 'pipeline' | 'followups';
 type SecondaryDashboardCard = 'leads' | 'clients' | 'deals' | 'activity';
-type KpiDashboardCard = 'leadsKpi' | 'openDealsKpi' | 'followupsKpi' | 'wonDealsKpi' | 'potentialSalesKpi' | 'salesMonthKpi';
 type DashboardRangePreset = '7' | '28' | '60' | '365' | 'custom';
 const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
-const DEFAULT_DASHBOARD_LAYOUT = { kpis: ['potentialSalesKpi', 'leadsKpi', 'openDealsKpi', 'followupsKpi', 'wonDealsKpi', 'salesMonthKpi'] as KpiDashboardCard[], primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
+const DEFAULT_DASHBOARD_LAYOUT = { primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: string; days?: number }> = [
   { value: '7', label: '7 Days', days: 7 },
   { value: '28', label: '28 Days', days: 28 },
@@ -80,9 +88,8 @@ function getDashboardDateRange(preset: DashboardRangePreset, customStartDate: st
 function getDashboardLayoutPreference() {
   if (typeof window === 'undefined') return DEFAULT_DASHBOARD_LAYOUT;
   try {
-    const saved = JSON.parse(window.localStorage.getItem(DASHBOARD_LAYOUT_KEY) || '{}') as { kpis?: KpiDashboardCard[]; primary?: PrimaryDashboardCard[]; secondary?: SecondaryDashboardCard[] };
+    const saved = JSON.parse(window.localStorage.getItem(DASHBOARD_LAYOUT_KEY) || '{}') as { primary?: PrimaryDashboardCard[]; secondary?: SecondaryDashboardCard[] };
     return {
-      kpis: saved.kpis?.length === 6 && DEFAULT_DASHBOARD_LAYOUT.kpis.every((card) => saved.kpis?.includes(card)) ? saved.kpis : DEFAULT_DASHBOARD_LAYOUT.kpis,
       primary: saved.primary?.length === 2 && saved.primary.includes('pipeline') && saved.primary.includes('followups') ? saved.primary : DEFAULT_DASHBOARD_LAYOUT.primary,
       secondary: saved.secondary?.length === 4 && DEFAULT_DASHBOARD_LAYOUT.secondary.every((card) => saved.secondary?.includes(card)) ? saved.secondary : DEFAULT_DASHBOARD_LAYOUT.secondary,
     };
@@ -105,16 +112,27 @@ export default function DashboardPage() {
   const [customEndDate, setCustomEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
-  const [kpiCardOrder, setKpiCardOrder] = useState<KpiDashboardCard[]>(() => getDashboardLayoutPreference().kpis);
+  const [selectedKpis, setSelectedKpis] = useState<DashboardKpiId[]>(() => readDashboardKpiPreference(typeof window === 'undefined' ? null : window.localStorage));
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [draftKpis, setDraftKpis] = useState<DashboardKpiId[]>([]);
+  const [openKpiModules, setOpenKpiModules] = useState<Set<string>>(new Set(['Sales', 'Deals']));
+  const [savingKpis, setSavingKpis] = useState(false);
+  const [customizeMessage, setCustomizeMessage] = useState<string | null>(null);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
   const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
   const [dashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
+  const [pipelineStageSummary, setPipelineStageSummary] = useState<PipelineStageSummary | null>(null);
+  const [pipelineMetricsError, setPipelineMetricsError] = useState<string | null>(null);
+  const pipelineRequestVersion = useRef(0);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [dashboardRangeOpen, setDashboardRangeOpen] = useState(false);
   const quickActionsMenuRef = useRef<HTMLDivElement>(null);
   const dashboardRangeMenuRef = useRef<HTMLDivElement>(null);
   const dashboardPaintMeasured = useRef(false);
+  const dashboardRequestVersion = useRef(0);
   const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
+  const selectedKpiMetricKey = useMemo(() => [...selectedKpis].sort().join('|'), [selectedKpis]);
+  const selectedKpisForMetrics = useMemo(() => selectedKpiMetricKey.split('|').filter(Boolean) as DashboardKpiId[], [selectedKpiMetricKey]);
   const dashboardRangeLabel = rangePreset === 'custom' ? 'Custom range' : `Last ${rangePreset} days`;
   const dashboardDateRangeLabel = dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid range';
 
@@ -151,10 +169,22 @@ export default function DashboardPage() {
   }, [dashboardRangeOpen]);
 
   useEffect(() => {
-    window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ kpis: kpiCardOrder, primary: primaryCardOrder, secondary: secondaryCardOrder }));
-  }, [kpiCardOrder, primaryCardOrder, secondaryCardOrder]);
+    window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ primary: primaryCardOrder, secondary: secondaryCardOrder }));
+  }, [primaryCardOrder, secondaryCardOrder]);
+
+  useEffect(() => { window.localStorage.setItem(DASHBOARD_KPI_STORAGE_KEY, JSON.stringify(selectedKpis)); }, [selectedKpis]);
+
+  useEffect(() => {
+    if (!customizeOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') setCustomizeOpen(false); };
+    document.body.style.overflow = 'hidden';
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.body.style.overflow = originalOverflow; document.removeEventListener('keydown', onKeyDown); };
+  }, [customizeOpen]);
 
   const reloadDashboardMetrics = useCallback(async () => {
+    const requestVersion = ++dashboardRequestVersion.current;
     if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
       setDashboardMetrics(null);
       return;
@@ -166,17 +196,19 @@ export default function DashboardPage() {
     }
     setDashboardMetricsError(null);
     try {
-      const metrics = await loadDashboardMetrics(user, currentOrganizationId, dashboardDateRange);
+      const metrics = await loadDashboardMetrics(user, currentOrganizationId, selectedKpisForMetrics, dashboardDateRange);
+      if (requestVersion !== dashboardRequestVersion.current) return;
       setDashboardMetrics(metrics);
       markStartup('dashboard-data-ready');
       emitStartupTiming();
     } catch (error) {
+      if (requestVersion !== dashboardRequestVersion.current) return;
       console.error('Unable to load dashboard metrics', error);
       setDashboardMetrics(null);
       setDashboardMetricsError('Dashboard metrics could not be loaded. Please refresh and try again.');
     } finally {
     }
-  }, [currentOrganizationId, dashboardDateRange, user, workspaceLoading, workspaceReady]);
+  }, [currentOrganizationId, dashboardDateRange, selectedKpisForMetrics, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -192,6 +224,38 @@ export default function DashboardPage() {
       window.removeEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
     };
   }, [reloadDashboardMetrics]);
+
+  const reloadPipelineStageSummary = useCallback(async () => {
+    const requestVersion = ++pipelineRequestVersion.current;
+    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
+      setPipelineStageSummary(null);
+      return;
+    }
+    setPipelineMetricsError(null);
+    try {
+      const summary = await getPipelineStageSummaries(user, currentOrganizationId);
+      if (requestVersion !== pipelineRequestVersion.current) return;
+      setPipelineStageSummary(summary);
+    } catch (error) {
+      if (requestVersion !== pipelineRequestVersion.current) return;
+      console.error('Unable to load Pipeline Overview aggregates', error);
+      setPipelineMetricsError('Pipeline Overview could not be refreshed. Please try again.');
+    }
+  }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
+
+  useEffect(() => {
+    void reloadPipelineStageSummary();
+    const handleInvalidation = () => { void reloadPipelineStageSummary(); };
+    const handleFocus = () => { void reloadPipelineStageSummary(); };
+    window.addEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      window.removeEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
+      window.removeEventListener('focus', handleFocus);
+      pipelineRequestVersion.current += 1;
+    };
+  }, [reloadPipelineStageSummary]);
+
   useEffect(() => {
     const stopObservingLcp = observeStartupLcp('[data-startup-lcp="dashboard-kpi"]');
     const frame = window.requestAnimationFrame(() => {
@@ -209,7 +273,7 @@ export default function DashboardPage() {
   const moveDashboardCard = (target: string, group: 'kpis' | 'primary' | 'secondary') => {
     if (!draggingCard || draggingCard === target) return;
     if (group === 'kpis') {
-      setKpiCardOrder((current) => reorderCards(current, draggingCard as KpiDashboardCard, target as KpiDashboardCard));
+      setSelectedKpis((current) => reorderCards(current, draggingCard as DashboardKpiId, target as DashboardKpiId));
     } else if (group === 'primary') {
       setPrimaryCardOrder((current) => reorderCards(current, draggingCard as PrimaryDashboardCard, target as PrimaryDashboardCard));
     } else {
@@ -255,20 +319,7 @@ export default function DashboardPage() {
     const time = Date.parse(value);
     return Number.isFinite(time) && time >= dashboardDateRange.start.getTime() && time <= dashboardDateRange.end.getTime();
   };
-  const totalLeads = dashboardMetrics?.totalLeads ?? leads.filter((lead) => !lead.archived && isWithinDashboardRange(lead.createdAt)).length;
-  const openDealStages = new Set(['New', 'Qualified', 'Proposal', 'Negotiation']);
-  const openDeals = deals.filter((deal) => !deal.archived && openDealStages.has(deal.stage) && isWithinDashboardRange(deal.createdAt));
-  const activeOpportunities = dashboardMetrics?.activeDeals ?? openDeals.length;
-  const wonDealsCount = dashboardMetrics?.wonDeals ?? deals.filter((deal) => deal.status === 'Won' && isWithinDashboardRange(deal.wonAt)).length;
-  const pipelineValue = dashboardMetrics?.pipelineValue ?? openDeals.reduce((sum, d) => sum + d.value, 0);
-
-  const salesThisMonthFromLoadedDeals = deals
-    .filter((deal) => {
-      if (deal.status !== 'Won') return false;
-      return isWithinDashboardRange(deal.wonAt);
-    })
-    .reduce((sum, deal) => sum + deal.value, 0);
-  const salesThisMonth = dashboardMetrics?.salesThisMonth ?? salesThisMonthFromLoadedDeals;
+  const totalLeads = leads.filter((lead) => !lead.archived).length;
 
   const followUpItems = useMemo<DashboardFollowUpItem[]>(() => {
     const now = currentTime;
@@ -324,8 +375,15 @@ export default function DashboardPage() {
     }
   };
 
-  const followUpsDue = dashboardMetrics?.pendingFollowUps ?? followUpItems.filter((item) => isWithinDashboardRange(item.scheduledAt)).length;
   const sourceBadgeVariant = (source: DashboardFollowUpItem['source']) => source === 'LEAD' ? 'blue' : source === 'CLIENT' ? 'green' : source === 'DEAL' ? 'purple' : 'gray';
+  const openCustomize = () => { setDraftKpis(selectedKpis); setOpenKpiModules(new Set(['Sales', 'Deals'])); setCustomizeMessage(null); setCustomizeOpen(true); };
+  const toggleDraftKpi = (id: DashboardKpiId) => {
+    setDraftKpis((current) => {
+      if (current.includes(id)) return current.length <= MIN_DASHBOARD_KPIS ? current : current.filter((item) => item !== id);
+      if (current.length >= MAX_DASHBOARD_KPIS) { setCustomizeMessage(`You can display up to ${MAX_DASHBOARD_KPIS} KPI cards.`); return current; }
+      setCustomizeMessage(null); return [...current, id];
+    });
+  };
 
   const handleCreateLead = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -352,7 +410,7 @@ export default function DashboardPage() {
       setActiveModal(null);
     } catch (error) {
       console.error('Unable to create dashboard lead', error);
-      setLeadError(error instanceof Error ? error.message : 'Unable to save the lead. Please try again.');
+      setLeadError(userFacingErrorMessage(error, 'Unable to save the lead. Please try again.'));
     } finally {
       setLeadSaving(false);
     }
@@ -419,13 +477,15 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* KPI Cards Grid (6 cards required) */}
+      {/* KPI cards are selected and ordered independently from the rest of the dashboard. */}
       <div className="space-y-3">
         <div className="dashboard-key-metrics-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="dashboard-key-metrics-title">
             <h2 className="text-sm font-semibold text-[var(--app-text)]">Key Metrics</h2>
             <p className="sr-only">{dashboardDateRangeLabel}</p>
           </div>
+          <div className="dashboard-key-metrics-controls flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" onClick={openCustomize} className="gap-2"><Settings2 size={16} /> Customize Dashboard</Button>
           <div ref={dashboardRangeMenuRef} className="dashboard-range-selector">
             <button type="button" className="dashboard-range-trigger" aria-haspopup="listbox" aria-expanded={dashboardRangeOpen} aria-label={`Dashboard time range: ${dashboardRangeLabel}, ${dashboardDateRangeLabel}`} onClick={() => setDashboardRangeOpen((open) => !open)}>
               <span className="dashboard-range-trigger-preset">{dashboardRangeLabel}</span>
@@ -454,62 +514,18 @@ export default function DashboardPage() {
               </div>}
             </div>}
           </div>
+          </div>
         </div>
       </div>
-      <div data-startup-lcp="dashboard-kpi" className="dashboard-kpi-grid grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-6">
-        <MovableDashboardCard cardId="leadsKpi" order={kpiCardOrder.indexOf('leadsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leadsKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><Users size={14} /></span><span>Leads</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{totalLeads}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Potential customers</p>
-        </Card>
-        </MovableDashboardCard>
-
-        <MovableDashboardCard cardId="openDealsKpi" order={kpiCardOrder.indexOf('openDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('openDealsKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><TrendingUp size={14} /></span><span>Open Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{activeOpportunities}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Deals currently in progress</p>
-        </Card>
-        </MovableDashboardCard>
-
-        <MovableDashboardCard cardId="followupsKpi" order={kpiCardOrder.indexOf('followupsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followupsKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[color-mix(in_srgb,var(--app-warning)_14%,white)] p-1 text-[var(--app-warning)]"><Clock size={14} /></span><span>Follow-ups Due</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{followUpsDue}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Tasks needing your attention</p>
-        </Card>
-        </MovableDashboardCard>
-
-        <MovableDashboardCard cardId="wonDealsKpi" order={kpiCardOrder.indexOf('wonDealsKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('wonDealsKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><CheckCircle2 size={14} /></span><span>Won Deals</span></div>
-          <span className="mt-3 whitespace-nowrap text-2xl font-semibold leading-none tracking-tight text-[var(--app-text)] tabular-nums sm:text-[28px]">{wonDealsCount}</span>
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Successfully closed deals</p>
-        </Card>
-        </MovableDashboardCard>
-
-        <MovableDashboardCard cardId="potentialSalesKpi" order={kpiCardOrder.indexOf('potentialSalesKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('potentialSalesKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card dashboard-potential-sales-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-accent)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading dashboard-potential-sales-label flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="dashboard-potential-sales-icon rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><DollarSign size={14} /></span><span>Potential Sales</span></div>
-          <DashboardCurrencyValue value={pipelineValue} currency={settings.currency} className="dashboard-potential-sales-value" />
-          <p className="dashboard-potential-sales-description mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Total value of open deals</p>
-        </Card>
-        </MovableDashboardCard>
-
-        <MovableDashboardCard cardId="salesMonthKpi" order={kpiCardOrder.indexOf('salesMonthKpi')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('salesMonthKpi', 'kpis')}>
-        <Card className="dashboard-kpi-card flex h-full min-h-[118px] flex-col rounded-[var(--app-radius-card)] p-3 transition-[transform,box-shadow,border-color] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--app-border)] hover:shadow-[var(--app-shadow-sm)] sm:min-h-[128px] sm:p-4">
-          <div className="dashboard-kpi-heading flex items-center gap-2 pr-8 text-xs font-semibold text-[var(--app-muted)]"><span className="rounded-md bg-[var(--app-accent-soft)] p-1 text-[var(--app-primary)]"><Briefcase size={14} /></span><span>Sales This Month</span></div>
-          <DashboardCurrencyValue value={salesThisMonth} currency={settings.currency} />
-          <p className="mt-2 min-h-[1.25rem] truncate text-xs text-[var(--app-muted)]">Sales closed this month</p>
-        </Card>
-        </MovableDashboardCard>
+      <div data-startup-lcp="dashboard-kpi" className="bsm-kpi-grid dashboard-kpi-grid grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-6">
+        {selectedKpis.map((id, index) => <MovableKpiCard key={id} cardId={id} order={index} className="dashboard-kpi-drag-container" onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard(id, 'kpis')}><DashboardKpiCard id={id} value={dashboardMetrics?.values[id]} failed={dashboardMetrics?.failedKpis.includes(id) || false} currency={settings.currency} /></MovableKpiCard>)}
       </div>
 
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}
       <div className="grid items-stretch gap-4 lg:grid-cols-2">
         <MovableDashboardCard cardId="pipeline" order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
-          <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={dashboardMetrics?.pipelineByStage} />
+          {pipelineMetricsError && <p className="mb-2 rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-2 text-xs text-[var(--app-danger)]" role="alert">{pipelineMetricsError} <button type="button" className="font-semibold underline" onClick={() => void reloadPipelineStageSummary()}>Retry</button></p>}
+          <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={pipelineStageSummary ?? {}} />
         </MovableDashboardCard>
 
         {/* Follow-ups Due */}
@@ -657,6 +673,48 @@ export default function DashboardPage() {
         </Card>
         </MovableDashboardCard>
       </div>
+
+      {customizeOpen && <div className="app-modal customize-dashboard-overlay fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-3 sm:p-6">
+        <div className="app-modal-panel customize-dashboard-modal relative flex w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-1.5rem)] max-w-[780px] flex-col overflow-hidden p-0 sm:w-[calc(100vw-3rem)] sm:max-h-[calc(100dvh-3rem)]" role="dialog" aria-modal="true" aria-label="Customize Dashboard">
+          <header className="shrink-0 border-b border-[var(--app-border-subtle)] px-4 py-4 sm:px-6">
+            <div className="absolute right-2 top-2"><ModalCloseButton onClose={() => setCustomizeOpen(false)} /></div>
+            <h3 className="pr-10 text-lg font-bold text-[var(--app-text)]">Customize Dashboard</h3>
+            <p className="mt-1 text-sm text-[var(--app-muted)]">Choose the metrics you want to see on your dashboard.</p>
+            <p className="mt-1 text-sm font-medium text-[var(--app-text)]">Selected {draftKpis.length} of {MAX_DASHBOARD_KPIS}</p>
+            {draftKpis.length === MAX_DASHBOARD_KPIS && <p className="mt-1 text-xs text-[var(--app-tertiary)]">Maximum {MAX_DASHBOARD_KPIS} KPI cards.</p>}
+            {draftKpis.length < MIN_DASHBOARD_KPIS && <p className="mt-1 text-xs text-[var(--app-warning)]">Select at least {MIN_DASHBOARD_KPIS} KPI cards.</p>}
+          </header>
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+            {customizeMessage && <p role="status" className="mb-3 rounded-lg bg-[var(--app-accent-soft)] p-2 text-sm text-[var(--app-text)]">{customizeMessage}</p>}
+            <div className="grid min-w-0 gap-5 md:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+              <section aria-label="KPI cards" className="min-w-0 space-y-2">
+                {(['Sales', 'Deals', 'Leads', 'Clients', 'Tasks'] as const).map((module) => {
+                  const moduleKpis = KPI_REGISTRY.filter((kpi) => kpi.module === module);
+                  const selectedCount = moduleKpis.filter((kpi) => draftKpis.includes(kpi.id)).length;
+                  const isOpen = openKpiModules.has(module);
+                  const subtitle = module === 'Sales' ? 'Actual sales and payment metrics' : module === 'Deals' ? 'Sales opportunities and pipeline performance' : module === 'Leads' ? 'Lead activity and acquisition' : module === 'Clients' ? 'Customer growth and activity' : 'Follow-ups and actions requiring attention';
+                  return <section key={module} className="overflow-hidden rounded-lg border border-[var(--app-border-subtle)]">
+                    <button type="button" aria-expanded={isOpen} aria-controls={`dashboard-kpis-${module}`} onClick={() => setOpenKpiModules((current) => { const next = new Set(current); if (next.has(module)) next.delete(module); else next.add(module); return next; })} className="flex min-h-12 w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30">
+                      <span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-[var(--app-text)]">{module}</span><span className="block text-xs text-[var(--app-muted)]">{subtitle}</span></span>
+                      <span className="text-xs font-medium text-[var(--app-muted)]">{selectedCount}/{moduleKpis.length}</span><ChevronDown size={16} aria-hidden="true" className={isOpen ? 'rotate-180 transition-transform' : 'transition-transform'} />
+                    </button>
+                    {isOpen && <div id={`dashboard-kpis-${module}`} className="border-t border-[var(--app-border-subtle)] px-2 py-1">
+                      {moduleKpis.map((kpi) => { const checked = draftKpis.includes(kpi.id); const atMaximum = !checked && draftKpis.length >= MAX_DASHBOARD_KPIS; return <label key={kpi.id} className={`flex min-h-11 cursor-pointer items-start gap-3 rounded-md px-2 py-2.5 hover:bg-[var(--app-surface-subtle)] ${atMaximum ? 'cursor-not-allowed opacity-55' : ''}`}><input type="checkbox" className="mt-0.5 shrink-0" checked={checked} disabled={atMaximum} onChange={() => toggleDraftKpi(kpi.id)} /><span className="min-w-0"><span className="block text-sm font-medium text-[var(--app-text)]">{kpi.label}</span><span className="mt-0.5 block text-xs leading-5 text-[var(--app-muted)]">{kpi.description}</span><span className="mt-1 block text-[11px] text-[var(--app-tertiary)]">{kpi.dateBehavior === 'RANGE' ? 'Selected period' : 'Current'}</span></span></label>; })}
+                    </div>}
+                  </section>;
+                })}
+              </section>
+              <section aria-label="Card order" className="min-w-0 border-t border-[var(--app-border-subtle)] pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
+                <h4 className="text-sm font-semibold text-[var(--app-text)]">Card Order</h4><p className="mb-3 text-xs text-[var(--app-muted)]">Choose the order your KPI cards appear.</p>
+                <div className="space-y-1">
+                  {draftKpis.map((id, index) => <div key={id} className="flex min-h-10 items-center gap-2 rounded-md bg-[var(--app-surface-subtle)] px-2"><span className="w-4 text-xs font-semibold text-[var(--app-tertiary)]">{index + 1}</span><span className="min-w-0 flex-1 truncate text-sm text-[var(--app-text)]">{getKpiDefinition(id)?.label}</span><span className="flex shrink-0 gap-1"><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} up`} disabled={index === 0} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index - 1]))} className="rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowUp size={16} /></button><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} down`} disabled={index === draftKpis.length - 1} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index + 1]))} className="rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowDown size={16} /></button></span></div>)}
+                </div>
+              </section>
+            </div>
+          </div>
+          <footer className="app-modal-footer shrink-0 justify-between border-t border-[var(--app-border-subtle)] bg-[var(--app-surface)] px-4 py-3 sm:px-6"><Button type="button" variant="outline" onClick={() => { setDraftKpis([...DEFAULT_DASHBOARD_KPI_IDS]); setCustomizeMessage(null); }}>Reset to Default</Button><span className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" onClick={() => setCustomizeOpen(false)}>Cancel</Button><Button type="button" disabled={savingKpis || draftKpis.length < MIN_DASHBOARD_KPIS} onClick={() => { if (savingKpis) return; setSavingKpis(true); setSelectedKpis(normalizeDashboardKpiIds(draftKpis)); setCustomizeOpen(false); setSavingKpis(false); }}>{savingKpis ? 'Saving…' : 'Save Changes'}</Button></span></footer>
+        </div>
+      </div>}
 
       {/* Modals for Quick Actions */}
       {dashboardMetricsError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] p-3 text-sm text-[var(--app-text)]" role="status">{dashboardMetricsError}</p>}
@@ -837,6 +895,23 @@ export default function DashboardPage() {
   );
 }
 
+function DashboardKpiCard({ id, value, failed, currency }: { id: DashboardKpiId; value: number | undefined; failed: boolean; currency: string }) {
+  const definition = getKpiDefinition(id);
+  if (!definition) return null;
+  const Icon = definition.icon;
+  const isPotentialSales = id === 'deals.potentialSales';
+  const shownValue = value ?? 0;
+  return <Card className={cn('dashboard-kpi-card flex min-h-[118px] min-w-0 flex-col rounded-[var(--app-radius-card)] p-3 sm:min-h-[128px] sm:p-4', isPotentialSales && 'dashboard-potential-sales-card')}>
+    <div className="dashboard-kpi-heading relative flex min-w-0 items-center gap-2 pr-5">
+      <span className={cn('dashboard-kpi-icon inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--app-accent-soft)] text-[var(--app-primary)]', isPotentialSales && 'dashboard-potential-sales-icon')}><Icon size={18} aria-hidden="true" /></span>
+      <span className={cn('min-w-0 flex-1 text-xs font-semibold leading-4', isPotentialSales ? 'dashboard-potential-sales-label' : 'text-[var(--app-muted)]')}>{definition.label}</span>
+      <span tabIndex={0} role="img" aria-label={`About ${definition.label}`} className={cn('kpi-info-trigger dashboard-kpi-info absolute right-0 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--app-tertiary)] transition-[right,color] duration-150 hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30', isPotentialSales && 'text-white/75 hover:text-white')}><Info size={14} /><span role="tooltip" className="dashboard-kpi-help absolute right-0 top-9 z-20 w-56 rounded-md border border-[var(--app-border)] bg-[var(--app-surface)] p-2 text-xs font-normal leading-snug text-[var(--app-text)] shadow-[var(--app-shadow-sm)]">{definition.description}</span></span>
+    </div>
+    {failed ? <span className={cn('mt-3 text-sm', isPotentialSales ? 'text-white/75' : 'text-[var(--app-muted)]')}>Unavailable</span> : definition.format === 'currency' ? <DashboardCurrencyValue value={shownValue} currency={currency} className={isPotentialSales ? 'dashboard-potential-sales-value' : undefined} /> : <span className={cn('mt-3 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:text-[28px]', isPotentialSales ? 'text-white' : 'text-[var(--app-text)]')}>{definition.format === 'percent' ? `${shownValue.toFixed(0)}%` : shownValue}</span>}
+    <p className={cn('mt-2 min-h-[1.25rem] text-xs', isPotentialSales ? 'dashboard-potential-sales-description' : 'text-[var(--app-muted)]')}>{definition.cardContext}</p>
+  </Card>;
+}
+
 function reorderCards<T extends string>(cards: T[], source: T, target: T) {
   const next = [...cards];
   const sourceIndex = next.indexOf(source);
@@ -848,8 +923,8 @@ function reorderCards<T extends string>(cards: T[], source: T, target: T) {
 }
 
 function MovableDashboardCard({ cardId, order, onDragStart, onDragEnd, onDrop, children }: { cardId: string; order: number; onDragStart: (cardId: string) => void; onDragEnd: () => void; onDrop: () => void; children: React.ReactNode }) {
-  return <div style={{ order }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} className="relative min-w-0">
-    <button type="button" draggable aria-label={`Move ${cardId} dashboard card`} title="Drag to move card" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="absolute right-3 top-3 z-20 rounded-md p-1 text-[var(--app-tertiary)] opacity-0 transition-opacity hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-muted)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 group-hover:opacity-100 sm:opacity-60">
+  return <div style={{ order }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} className="kpi-drag-container relative min-w-0">
+    <button type="button" draggable aria-label={`Hold and drag ${cardId} to reorder dashboard cards`} title="Hold to reveal, then drag to reorder" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="dashboard-card-drag-handle absolute right-3 top-3 z-20 cursor-grab rounded-md p-1 text-[var(--app-tertiary)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-muted)] active:cursor-grabbing focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
       <GripVertical size={16} />
     </button>
     {children}

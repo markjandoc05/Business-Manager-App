@@ -3,11 +3,21 @@
 import { useEffect, useRef, useState, type ChangeEvent, type InputHTMLAttributes } from 'react';
 import { getCurrencySymbol } from '@/lib/formatting';
 
-type MoneyInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'inputMode'> & {
-  value: number;
+type MoneyInputBaseProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange' | 'inputMode'> & {
   currency: string;
-  onChange: (value: number) => void;
   containerClassName?: string;
+};
+
+type RequiredMoneyInputProps = MoneyInputBaseProps & {
+  value: number;
+  onChange: (value: number) => void;
+  allowEmpty?: false | undefined;
+};
+
+type OptionalMoneyInputProps = MoneyInputBaseProps & {
+  value: number | null | undefined;
+  onChange: (value: number | null) => void;
+  allowEmpty: true;
 };
 
 function sanitizeMoneyInput(value: string) {
@@ -62,15 +72,21 @@ function getCursorPosition(formattedValue: string, meaningfulCharacterCount: num
   return formattedValue.length;
 }
 
-export function MoneyInput({ value, currency, onChange, containerClassName = '', className = '', ...inputProps }: MoneyInputProps) {
-  const [draft, setDraft] = useState(() => formatMoneyInput(String(value)));
+export function MoneyInput(props: RequiredMoneyInputProps): React.JSX.Element;
+export function MoneyInput(props: OptionalMoneyInputProps): React.JSX.Element;
+export function MoneyInput({ value, currency, onChange, allowEmpty = false, containerClassName = '', className = '', ...inputProps }: RequiredMoneyInputProps | OptionalMoneyInputProps) {
+  const formatValue = (nextValue: number | null | undefined) => nextValue === null || nextValue === undefined
+    ? (allowEmpty ? '' : '0')
+    : formatMoneyInput(String(nextValue));
+  const reportChange = (nextValue: number | null) => (onChange as (value: number | null) => void)(nextValue);
+  const [draft, setDraft] = useState(() => formatValue(value));
   const inputRef = useRef<HTMLInputElement>(null);
   const focusedRef = useRef(false);
   const currencySymbol = getCurrencySymbol(currency);
 
   useEffect(() => {
-    if (!focusedRef.current) setDraft(formatMoneyInput(String(value)));
-  }, [value]);
+    if (!focusedRef.current) setDraft(formatValue(value));
+  }, [allowEmpty, value]);
 
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const rawValue = event.target.value;
@@ -81,7 +97,7 @@ export function MoneyInput({ value, currency, onChange, containerClassName = '',
     const nextCursor = getCursorPosition(formattedValue, meaningfulBeforeCursor);
 
     setDraft(formattedValue);
-    onChange(parseMoneyInput(normalizedValue));
+    reportChange(!normalizedValue && allowEmpty ? null : parseMoneyInput(normalizedValue));
     window.requestAnimationFrame(() => {
       if (document.activeElement === inputRef.current) inputRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
@@ -90,9 +106,14 @@ export function MoneyInput({ value, currency, onChange, containerClassName = '',
   const handleBlur = () => {
     focusedRef.current = false;
     const normalizedValue = sanitizeMoneyInput(draft);
+    if (!normalizedValue && allowEmpty) {
+      setDraft('');
+      reportChange(null);
+      return;
+    }
     const numericValue = parseMoneyInput(normalizedValue || '0');
     setDraft(formatMoneyInput(normalizedValue || '0'));
-    onChange(numericValue);
+    reportChange(numericValue);
   };
 
   return <div className={'relative ' + containerClassName}>

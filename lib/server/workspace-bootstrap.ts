@@ -8,7 +8,35 @@ const ACTIVE_LICENSE_STATUSES = ['TRIAL', 'ACTIVE'] as const;
 const ORGANIZATION_STATUSES = ['trial', 'active', 'expired', 'suspended'] as const;
 
 type BootstrapMembership = { organizationId: string; role: typeof MEMBER_ROLES[number]; status: string };
+type BootstrapAuthUser = {
+  uid: string;
+  email?: string | null;
+  emailVerified: boolean;
+  disabled: boolean;
+  displayName?: string | null;
+  photoURL?: string | null;
+  name?: string | null;
+};
 export type WorkspaceBootstrapStage = 'auth-user-load' | 'auth-user-loaded' | 'profile-read' | 'memberships-read' | 'invitations-read' | 'organization-context-read' | 'profile-write' | 'completed';
+export type WorkspaceBootstrapTimingMetric =
+  | 'auth-user-lookup'
+  | 'profile-read'
+  | 'memberships-read'
+  | 'invitations-read'
+  | 'organization-context-read'
+  | 'organization-context-batch-read'
+  | 'organization-documents-read'
+  | 'license-documents-read'
+  | 'canonical-memberships-read'
+  | 'invitation-member-collections-read'
+  | 'profile-write-staged'
+  | 'transaction-callback'
+  | 'transaction-total'
+  | 'transaction-commit-overhead'
+  | 'login-failure-activity'
+  | 'bootstrap-total';
+
+export type WorkspaceBootstrapTimings = Partial<Record<WorkspaceBootstrapTimingMetric, number>>;
 
 export class WorkspaceBootstrapError extends Error {
   readonly code: string;
@@ -66,13 +94,38 @@ async function recordBootstrapFailures(uid: string, activities: Array<{ organiza
 
 /**
  * Trusted first-login synchronization. The browser supplies only its Firebase
- * ID token to the route; this function obtains the authoritative email and
- * account state from Firebase Admin, then claims Console assignments and
- * normalizes the root profile before Client membership discovery runs.
+ * ID token to the route; the route verifies it (including revoked/disabled
+ * checks) and passes that verified identity here, avoiding a second Admin Auth
+ * lookup. Direct server callers without a verified identity retain the
+ * authoritative Admin lookup. The function then claims Console assignments
+ * and normalizes the root profile before Client membership discovery runs.
  */
-export async function bootstrapWorkspaceAccess(uid: string, options: { onStage?: (stage: WorkspaceBootstrapStage) => void } = {}) {
+export async function bootstrapWorkspaceAccess(
+  uid: string,
+  options: {
+    authUser?: BootstrapAuthUser;
+    onStage?: (stage: WorkspaceBootstrapStage) => void;
+    onTiming?: (metric: WorkspaceBootstrapTimingMetric, durationMs: number) => void;
+  } = {},
+) {
   let stage: WorkspaceBootstrapStage = 'auth-user-load';
   let associatedOrganizationIds: string[] = [];
+  const bootstrapStartedAt = performance.now();
+  const timings: WorkspaceBootstrapTimings = {};
+  const recordTiming = (metric: WorkspaceBootstrapTimingMetric, startedAt: number) => {
+    const durationMs = Math.max(0, Math.round(performance.now() - startedAt));
+    timings[metric] = durationMs;
+    options.onTiming?.(metric, durationMs);
+    return durationMs;
+  };
+  const measure = async <T,>(metric: WorkspaceBootstrapTimingMetric, operation: () => Promise<T>) => {
+    const startedAt = performance.now();
+    try {
+      return await operation();
+    } finally {
+      recordTiming(metric, startedAt);
+    }
+  };
   const markStage = (nextStage: WorkspaceBootstrapStage) => {
     stage = nextStage;
     options.onStage?.(nextStage);
@@ -80,7 +133,22 @@ export async function bootstrapWorkspaceAccess(uid: string, options: { onStage?:
 
   try {
     markStage('auth-user-load');
-    const authUser = await adminAuth.getUser(uid);
+    if (options.authUser && options.authUser.uid !== uid) {
+      throw new WorkspaceBootstrapError('auth-user-load', 'AUTH_UID_MISMATCH', 'Authenticated user does not match the bootstrap request.');
+    }
+    const authUser = options.authUser
+      ? (() => {
+        // The route has already verified this identity with
+        // verifyIdToken(..., true). Report a zero-duration lookup for the
+        // server timing contract while avoiding a duplicate network call.
+        options.onTiming?.('auth-user-lookup', 0);
+        return {
+          ...options.authUser,
+          displayName: options.authUser.displayName || options.authUser.name || '',
+          photoURL: options.authUser.photoURL || '',
+        };
+      })()
+      : await measure('auth-user-lookup', () => adminAuth.getUser(uid));
     markStage('auth-user-loaded');
     const email = authUser.email?.trim() || '';
     const emailNormalized = normalizeEmail(email);
@@ -91,19 +159,23 @@ export async function bootstrapWorkspaceAccess(uid: string, options: { onStage?:
       : null;
     const now = Timestamp.now();
 
+    const transactionStartedAt = performance.now();
+    let transactionCallbackDurationMs = 0;
     const result = await adminDb.runTransaction(async (transaction) => {
-      markStage('profile-read');
-      const profileSnapshot = await transaction.get(profileRef);
-      markStage('memberships-read');
-      const membershipSnapshot = await transaction.get(membershipQuery);
-      markStage('invitations-read');
-      const invitationSnapshot = invitationQuery ? await transaction.get(invitationQuery) : null;
-      const invitations = (invitationSnapshot?.docs || []).filter((item) => item.data().status === 'pending');
-      const membershipRows = membershipSnapshot.docs
-        .map((item) => ({ snapshot: item, organizationId: item.ref.parent.parent?.id || '' }))
-        .filter((item) => item.organizationId && item.snapshot.data().userId === uid);
-      associatedOrganizationIds = [...new Set(membershipRows.map((item) => item.organizationId))];
-      const existingMemberships = membershipRows.filter((item) => validRole(item.snapshot.data().role));
+      const callbackStartedAt = performance.now();
+      try {
+        markStage('profile-read');
+        const profileSnapshot = await measure('profile-read', () => transaction.get(profileRef));
+        markStage('memberships-read');
+        const membershipSnapshot = await measure('memberships-read', () => transaction.get(membershipQuery));
+        markStage('invitations-read');
+        const invitationSnapshot = invitationQuery ? await measure('invitations-read', () => transaction.get(invitationQuery)) : null;
+        const invitations = (invitationSnapshot?.docs || []).filter((item) => item.data().status === 'pending');
+        const membershipRows = membershipSnapshot.docs
+          .map((item) => ({ snapshot: item, organizationId: item.ref.parent.parent?.id || '' }))
+          .filter((item) => item.organizationId && item.snapshot.data().userId === uid);
+        associatedOrganizationIds = [...new Set(membershipRows.map((item) => item.organizationId))];
+        const existingMemberships = membershipRows.filter((item) => validRole(item.snapshot.data().role));
 
       const organizationIds = new Set<string>(existingMemberships.map((item) => item.organizationId));
       for (const invitation of invitations) {
@@ -116,14 +188,33 @@ export async function bootstrapWorkspaceAccess(uid: string, options: { onStage?:
       const licenseRefs = organizationIdList.map((organizationId) => adminDb.doc(`organizations/${organizationId}/license/current`));
       const memberRefs = organizationIdList.map((organizationId) => adminDb.doc(`organizations/${organizationId}/members/${uid}`));
       markStage('organization-context-read');
-      const organizationSnapshots = await Promise.all(organizationRefs.map((ref) => transaction.get(ref)));
-      const licenseSnapshots = await Promise.all(licenseRefs.map((ref) => transaction.get(ref)));
-      const memberSnapshots = await Promise.all(memberRefs.map((ref) => transaction.get(ref)));
-      const membersByOrganization = new Map<string, QuerySnapshot>();
-      for (const organizationId of invitations.map((item) => item.data().organizationId).filter((value): value is string => typeof value === 'string' && Boolean(value))) {
-        if (membersByOrganization.has(organizationId)) continue;
-        membersByOrganization.set(organizationId, await transaction.get(adminDb.collection(`organizations/${organizationId}/members`)));
-      }
+      const organizationContextStartedAt = performance.now();
+      const contextRefs = [...organizationRefs, ...licenseRefs, ...memberRefs];
+      const contextBatchStartedAt = performance.now();
+      const contextSnapshots = contextRefs.length ? await transaction.getAll(...contextRefs) : [];
+      const contextBatchDurationMs = recordTiming('organization-context-batch-read', contextBatchStartedAt);
+      // These were previously three separately awaited batches. getAll keeps
+      // the reads inside the retryable transaction while issuing one atomic
+      // document-read RPC; preserve the existing result grouping and timing
+      // names for comparison with the audit baseline.
+      const organizationSnapshots = contextSnapshots.slice(0, organizationRefs.length);
+      const licenseSnapshots = contextSnapshots.slice(organizationRefs.length, organizationRefs.length + licenseRefs.length);
+      const memberSnapshots = contextSnapshots.slice(organizationRefs.length + licenseRefs.length);
+      timings['organization-documents-read'] = contextBatchDurationMs;
+      options.onTiming?.('organization-documents-read', contextBatchDurationMs);
+      timings['license-documents-read'] = contextBatchDurationMs;
+      options.onTiming?.('license-documents-read', contextBatchDurationMs);
+      timings['canonical-memberships-read'] = contextBatchDurationMs;
+      options.onTiming?.('canonical-memberships-read', contextBatchDurationMs);
+      const membersByOrganization = await measure('invitation-member-collections-read', async () => {
+        const result = new Map<string, QuerySnapshot>();
+        for (const organizationId of invitations.map((item) => item.data().organizationId).filter((value): value is string => typeof value === 'string' && Boolean(value))) {
+          if (result.has(organizationId)) continue;
+          result.set(organizationId, await transaction.get(adminDb.collection(`organizations/${organizationId}/members`)));
+        }
+        return result;
+      });
+      recordTiming('organization-context-read', organizationContextStartedAt);
 
       const existingActiveOrganizations = new Set<string>();
       existingMemberships.forEach(({ organizationId, snapshot }) => {
@@ -212,22 +303,37 @@ export async function bootstrapWorkspaceAccess(uid: string, options: { onStage?:
             .map(({ organizationId }) => ({ organizationId, failureCode: 'MEMBERSHIP_INACTIVE' }))
           : [];
       markStage('profile-write');
+      const profileWriteStartedAt = performance.now();
       if (!profileSnapshot.exists) transaction.set(profileRef, { ...nextProfile, createdAt: FieldValue.serverTimestamp() });
       else transaction.set(profileRef, nextProfile, { merge: true });
+      // Firestore queues transaction writes locally. The actual write latency is
+      // reported separately as transaction-commit-overhead after this callback.
+      recordTiming('profile-write-staged', profileWriteStartedAt);
 
-      return { profileStatus: nextProfile.status, profileActive: nextProfile.active, claimedOrganizations, pendingOrganizations, blockedOrganizations, existingMembershipCount: existingMemberships.length, loginFailureActivities };
+      return { profileStatus: nextProfile.status, profileActive: nextProfile.active, profile: nextProfile, claimedOrganizations, pendingOrganizations, blockedOrganizations, existingMembershipCount: existingMemberships.length, loginFailureActivities };
+      } finally {
+        const durationMs = Math.max(0, Math.round(performance.now() - callbackStartedAt));
+        transactionCallbackDurationMs += durationMs;
+        timings['transaction-callback'] = transactionCallbackDurationMs;
+        options.onTiming?.('transaction-callback', transactionCallbackDurationMs);
+      }
     });
+    const transactionTotalMs = recordTiming('transaction-total', transactionStartedAt);
+    timings['transaction-commit-overhead'] = Math.max(0, transactionTotalMs - transactionCallbackDurationMs);
+    options.onTiming?.('transaction-commit-overhead', timings['transaction-commit-overhead']);
 
-    await recordBootstrapFailures(uid, result.loginFailureActivities);
+    await measure('login-failure-activity', () => recordBootstrapFailures(uid, result.loginFailureActivities));
     markStage('completed');
+    recordTiming('bootstrap-total', bootstrapStartedAt);
     const { loginFailureActivities: _loginFailureActivities, ...publicResult } = result;
-    return { uid, email: authUser.email || '', emailVerified: authUser.emailVerified, disabled: authUser.disabled, ...publicResult };
+    return { uid, email: authUser.email || '', emailVerified: authUser.emailVerified, disabled: authUser.disabled, ...publicResult, timings };
   } catch (error) {
     const bootstrapError = asWorkspaceBootstrapError(stage, error);
     if (associatedOrganizationIds.length) {
       const failureCode = sanitizeMemberLoginFailureCode(bootstrapError.code);
       await recordBootstrapFailures(uid, associatedOrganizationIds.map((organizationId) => ({ organizationId, failureCode })));
     }
+    recordTiming('bootstrap-total', bootstrapStartedAt);
     throw bootstrapError;
   }
 }

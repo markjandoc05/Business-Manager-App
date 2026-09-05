@@ -4,115 +4,73 @@ import type { AppUser } from '@/types/auth';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
 import { cachedRequest, invalidateCachedRequest } from '@/lib/repositories/requestCache';
-import { DEAL_ACTIVE_STAGES, DEAL_STAGES } from '@/lib/deal-workflow';
-import { getDashboardLeadTotal } from '@/lib/dashboard-metrics';
+import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
+import { getLocalCalendarDate } from '@/lib/sale-workflow';
+import type { DashboardKpiId } from '@/lib/dashboard-kpis';
 
-export { getDashboardLeadTotal } from '@/lib/dashboard-metrics';
+export type DashboardDateRange = { start: Date; end: Date };
+export type DashboardMetricValues = Partial<Record<DashboardKpiId, number>>;
+export type DashboardMetrics = { values: DashboardMetricValues; failedKpis: DashboardKpiId[] };
+type QueryGroup = 'salesRange' | 'salesOutstanding' | 'dealsOpen' | 'dealsWon' | 'dealsLost' | 'leadsTotal' | 'leadsNew' | 'leadsFollowup' | 'clientsTotal' | 'clientsNew' | 'tasksFollowups' | 'tasksOverdue';
 
-const OPEN_STAGES = DEAL_ACTIVE_STAGES;
-
-export type DashboardMetrics = {
-  totalLeads: number;
-  activeLeads: number;
-  convertedLeads: number;
-  clients: number;
-  activeDeals: number;
-  wonDeals: number;
-  lostDeals: number;
-  pendingTasks: number;
-  overdueTasks: number;
-  pendingFollowUps: number;
-  overdueFollowUps: number;
-  pipelineValue: number;
-  salesThisMonth: number;
-  pipelineByStage: Record<string, { count: number; value: number }>;
+const GROUPS: Record<QueryGroup, DashboardKpiId[]> = {
+  salesRange: ['sales.total', 'sales.transactions', 'sales.collected'], salesOutstanding: ['sales.outstanding'],
+  dealsOpen: ['deals.open', 'deals.potentialSales'], dealsWon: ['deals.won', 'deals.winRate'], dealsLost: ['deals.lost', 'deals.winRate'],
+  leadsTotal: ['leads.total'], leadsNew: ['leads.new'], leadsFollowup: ['leads.followup'],
+  clientsTotal: ['clients.total'], clientsNew: ['clients.new'], tasksFollowups: ['tasks.followupsDue'], tasksOverdue: ['tasks.overdue'],
 };
 
-export type DashboardDateRange = {
-  start: Date;
-  end: Date;
-};
+export function planDashboardQueryGroups(selected: readonly DashboardKpiId[]): QueryGroup[] {
+  const wanted = new Set(selected);
+  return (Object.keys(GROUPS) as QueryGroup[]).filter((group) => GROUPS[group].some((id) => wanted.has(id)));
+}
 
 export function getDefaultDashboardDateRange(now = new Date()): DashboardDateRange {
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
-  const start = new Date(end);
-  start.setDate(start.getDate() - 27);
-  start.setHours(0, 0, 0, 0);
+  const end = new Date(now); end.setHours(23, 59, 59, 999);
+  const start = new Date(end); start.setDate(start.getDate() - 27); start.setHours(0, 0, 0, 0);
   return { start, end };
 }
 
-export async function loadDashboardMetrics(user: AppUser | null, organizationId: string, range = getDefaultDashboardDateRange()): Promise<DashboardMetrics> {
-  const cacheKey = `dashboard-metrics:${user?.uid || 'anonymous'}:${organizationId}:${range.start.toISOString()}-${range.end.toISOString()}`;
-  return cachedRequest(cacheKey, 60_000, () => loadDashboardMetricsUncached(user, organizationId, range));
-}
-
-async function loadDashboardMetricsUncached(user: AppUser | null, organizationId: string, range: DashboardDateRange): Promise<DashboardMetrics> {
-  const { membership } = await requireOrganizationAccess(user, organizationId);
-  const leads = organizationCollection(db, organizationId, 'leads');
-  const clients = organizationCollection(db, organizationId, 'clients');
-  const deals = organizationCollection(db, organizationId, 'deals');
-  const tasks = organizationCollection(db, organizationId, 'tasks');
-  const now = new Date();
-  const dueDateStart = range.start.toISOString();
-  const dueDateEnd = range.end.toISOString();
-  const dueDateNow = now.toISOString();
-  const assignedDeal = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
-  const assignedTask = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
-  const assignedLead = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
-  const createdAtRange = [where('createdAt', '>=', range.start), where('createdAt', '<=', range.end)] as const;
-  const wonAtRange = [where('wonAt', '>=', range.start), where('wonAt', '<=', range.end)] as const;
-  const lostAtRange = [where('lostAt', '>=', range.start), where('lostAt', '<=', range.end)] as const;
-  const dueDateRange = [where('dueDate', '>=', dueDateStart), where('dueDate', '<=', dueDateEnd)] as const;
-  const overdueDueDateRange = [where('dueDate', '>=', dueDateStart), where('dueDate', '<=', dueDateNow)] as const;
-
-  const [leadTotals, activeLeadTotals, convertedLeadTotals, clientTotals, wonDealTotals, lostDealTotals, pendingTaskTotals, overdueTaskTotals, pendingFollowUpTotals, overdueFollowUpTotals, salesTotals, rangePipelineTotals, pipelineStageTotals] = await Promise.all([
-    getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead, ...createdAtRange), { count: count() }),
-    getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead, where('status', 'in', ['New', 'Follow-up', 'Opportunity']), ...createdAtRange), { count: count() }),
-    getAggregateFromServer(query(leads, where('archived', '==', false), ...assignedLead, where('status', '==', 'Client'), ...createdAtRange), { count: count() }),
-    getAggregateFromServer(query(clients, where('archived', '==', false), ...createdAtRange), { count: count() }),
-    getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('status', '==', 'Won'), ...wonAtRange), { count: count() }),
-    getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('status', '==', 'Lost'), ...lostAtRange), { count: count() }),
-    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), ...dueDateRange), { count: count() }),
-    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), ...overdueDueDateRange), { count: count() }),
-    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), ...dueDateRange), { count: count() }),
-    getAggregateFromServer(query(tasks, where('archived', '==', false), ...assignedTask, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), ...overdueDueDateRange), { count: count() }),
-    getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('status', '==', 'Won'), ...wonAtRange), { value: sum('value') }),
-    getAggregateFromServer(query(deals, where('archived', '==', false), ...assignedDeal, where('stage', 'in', [...OPEN_STAGES]), ...createdAtRange), { count: count(), value: sum('value') }),
-    Promise.all(DEAL_STAGES.map((stage) => getAggregateFromServer(
-      query(deals, where('archived', '==', false), ...assignedDeal, where('stage', '==', stage)),
-      { count: count(), value: sum('value') },
-    ))),
+export async function loadDashboardMetrics(user: AppUser | null, organizationId: string, selected: readonly DashboardKpiId[], range = getDefaultDashboardDateRange()): Promise<DashboardMetrics> {
+  const groups = planDashboardQueryGroups(selected);
+  const rangeGroups: QueryGroup[] = ['salesRange', 'dealsWon', 'dealsLost', 'leadsNew', 'clientsNew'];
+  const current = groups.filter((group) => !rangeGroups.includes(group));
+  const ranged = groups.filter((group) => rangeGroups.includes(group));
+  const prefix = `dashboard-metrics-v2:${user?.uid || 'anonymous'}:${organizationId}`;
+  const [currentMetrics, rangeMetrics] = await Promise.all([
+    current.length ? cachedRequest(`${prefix}:current:${current.join(',')}`, 60_000, () => loadDashboardMetricsUncached(user, organizationId, current, range)) : Promise.resolve({ values: {}, failedKpis: [] }),
+    ranged.length ? cachedRequest(`${prefix}:range:${ranged.join(',')}:${range.start.toISOString()}-${range.end.toISOString()}`, 60_000, () => loadDashboardMetricsUncached(user, organizationId, ranged, range)) : Promise.resolve({ values: {}, failedKpis: [] }),
   ]);
-
-  const activeDeals = rangePipelineTotals.data().count;
-  const pipelineValue = rangePipelineTotals.data().value || 0;
-
-  return {
-    totalLeads: leadTotals.data().count,
-    activeLeads: activeLeadTotals.data().count,
-    convertedLeads: convertedLeadTotals.data().count,
-    clients: clientTotals.data().count,
-    activeDeals,
-    wonDeals: wonDealTotals.data().count,
-    lostDeals: lostDealTotals.data().count,
-    pendingTasks: pendingTaskTotals.data().count,
-    overdueTasks: overdueTaskTotals.data().count,
-    pendingFollowUps: pendingFollowUpTotals.data().count,
-    overdueFollowUps: overdueFollowUpTotals.data().count,
-    pipelineValue,
-    salesThisMonth: salesTotals.data().value || 0,
-    pipelineByStage: Object.fromEntries(DEAL_STAGES.map((stage, index) => [stage, {
-      count: pipelineStageTotals[index].data().count,
-      value: pipelineStageTotals[index].data().value || 0,
-    }])),
-  };
+  return { values: { ...currentMetrics.values, ...rangeMetrics.values }, failedKpis: [...currentMetrics.failedKpis, ...rangeMetrics.failedKpis] };
 }
 
-export function invalidateDashboardMetrics(organizationId: string) {
-  // The organization argument documents the mutation scope; clearing the small dashboard cache
-  // globally also prevents a later user switch from observing a prior user's cached metrics.
-  void organizationId;
-  invalidateCachedRequest('dashboard-metrics:');
-  if (typeof window !== 'undefined') window.dispatchEvent(new Event('bsm-dashboard-metrics-invalidated'));
+async function loadDashboardMetricsUncached(user: AppUser | null, organizationId: string, groups: QueryGroup[], range: DashboardDateRange): Promise<DashboardMetrics> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const assigned = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
+  const c = { leads: organizationCollection(db, organizationId, 'leads'), clients: organizationCollection(db, organizationId, 'clients'), deals: organizationCollection(db, organizationId, 'deals'), sales: organizationCollection(db, organizationId, 'sales'), tasks: organizationCollection(db, organizationId, 'tasks') };
+  const saleRange = [where('saleDate', '>=', getLocalCalendarDate(range.start)), where('saleDate', '<=', getLocalCalendarDate(range.end))] as const;
+  const createdRange = [where('createdAt', '>=', range.start), where('createdAt', '<=', range.end)] as const;
+  const dueNow = new Date().toISOString();
+  const results = await Promise.allSettled(groups.map(async (group) => {
+    switch (group) {
+      case 'salesRange': { const d = (await getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE'), ...saleRange), { count: count(), total: sum('total'), paid: sum('amountPaid') })).data(); return [group, { 'sales.transactions': d.count, 'sales.total': d.total || 0, 'sales.collected': d.paid || 0 }] as const; }
+      case 'salesOutstanding': { const d = (await getAggregateFromServer(query(c.sales, where('status', '==', 'ACTIVE')), { balance: sum('balance') })).data(); return [group, { 'sales.outstanding': d.balance || 0 }] as const; }
+      case 'dealsOpen': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('stage', 'in', [...DEAL_ACTIVE_STAGES])), { count: count(), value: sum('value') })).data(); return [group, { 'deals.open': d.count, 'deals.potentialSales': d.value || 0 }] as const; }
+      case 'dealsWon': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Won'), where('wonAt', '>=', range.start), where('wonAt', '<=', range.end)), { count: count() })).data(); return [group, { 'deals.won': d.count }] as const; }
+      case 'dealsLost': { const d = (await getAggregateFromServer(query(c.deals, where('archived', '==', false), ...assigned, where('status', '==', 'Lost'), where('lostAt', '>=', range.start), where('lostAt', '<=', range.end)), { count: count() })).data(); return [group, { 'deals.lost': d.count }] as const; }
+      case 'leadsTotal': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned), { count: count() })).data(); return [group, { 'leads.total': d.count }] as const; }
+      case 'leadsNew': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, ...createdRange), { count: count() })).data(); return [group, { 'leads.new': d.count }] as const; }
+      case 'leadsFollowup': { const d = (await getAggregateFromServer(query(c.leads, where('archived', '==', false), ...assigned, where('status', '==', 'Follow-up')), { count: count() })).data(); return [group, { 'leads.followup': d.count }] as const; }
+      case 'clientsTotal': { const d = (await getAggregateFromServer(query(c.clients, where('archived', '==', false)), { count: count() })).data(); return [group, { 'clients.total': d.count }] as const; }
+      case 'clientsNew': { const d = (await getAggregateFromServer(query(c.clients, where('archived', '==', false), ...createdRange), { count: count() })).data(); return [group, { 'clients.new': d.count }] as const; }
+      case 'tasksFollowups': { const d = (await getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('type', '==', 'Follow-up'), where('dueDate', '<=', dueNow)), { count: count() })).data(); return [group, { 'tasks.followupsDue': d.count }] as const; }
+      case 'tasksOverdue': { const today = new Date(); today.setHours(0, 0, 0, 0); const d = (await getAggregateFromServer(query(c.tasks, where('archived', '==', false), ...assigned, where('status', '==', 'Pending'), where('dueDate', '<', today.toISOString())), { count: count() })).data(); return [group, { 'tasks.overdue': d.count }] as const; }
+    }
+  }));
+  const values: DashboardMetricValues = {}; const failedKpis: DashboardKpiId[] = [];
+  results.forEach((item, index) => { if (item.status === 'fulfilled') Object.assign(values, item.value[1]); else { console.error(`Dashboard metric group ${groups[index]} failed`, item.reason); failedKpis.push(...GROUPS[groups[index]]); } });
+  if (groups.includes('dealsWon') && groups.includes('dealsLost')) { const won = values['deals.won'] || 0; const lost = values['deals.lost'] || 0; values['deals.winRate'] = won + lost ? (won / (won + lost)) * 100 : 0; }
+  return { values, failedKpis };
 }
+
+export function invalidateDashboardMetrics(organizationId: string) { void organizationId; invalidateCachedRequest('dashboard-metrics-v2:'); if (typeof window !== 'undefined') window.dispatchEvent(new Event('bsm-dashboard-metrics-invalidated')); }

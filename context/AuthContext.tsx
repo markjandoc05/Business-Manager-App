@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useMemo, useRef, useState 
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
+  signInWithEmailAndPassword,
   signInWithPopup,
   signOut as firebaseSignOut,
   type User as FirebaseUser,
@@ -18,7 +19,8 @@ import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
 import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
 import { clearCachedRequests } from '@/lib/repositories/requestCache';
-import { requestBootstrapWithOneRefresh } from '@/lib/auth/bootstrap-request';
+import { requestBootstrapWithOneRefresh, type BootstrapRequestDiagnostics } from '@/lib/auth/bootstrap-request';
+import { isLocalFirebaseEmulatorMode } from '@/lib/firebase/environment';
 
 type AuthStatus = 'loading' | 'signed-out' | 'active' | 'inactive' | 'disabled' | 'error';
 
@@ -29,6 +31,7 @@ interface AuthContextValue {
   error: string | null;
   authenticating: boolean;
   signInWithGoogle: () => Promise<void>;
+  signInWithLocalUat: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   retryBootstrap: () => Promise<void>;
 }
@@ -56,6 +59,7 @@ function getAppUser(firebaseUser: FirebaseUser, data: Record<string, unknown>): 
 type BootstrapResponseBody = {
   code?: unknown;
   error?: unknown;
+  data?: { profile?: Record<string, unknown> };
   debug?: { stage?: unknown; code?: unknown; message?: unknown; requestId?: unknown };
 };
 
@@ -63,7 +67,7 @@ type BootstrapFailure = { status: number; code: string; stage: string; message: 
 
 async function parseWorkspaceBootstrapResponse(response: Response) {
   const body = await response.json().catch(() => ({})) as BootstrapResponseBody;
-  if (response.ok) return;
+  if (response.ok) return body;
 
   const failure: BootstrapFailure = {
     status: response.status,
@@ -76,24 +80,30 @@ async function parseWorkspaceBootstrapResponse(response: Response) {
   return failure;
 }
 
-async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser) {
-  return parseWorkspaceBootstrapResponse(await requestBootstrapWithOneRefresh(firebaseUser));
+async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser, diagnostics: BootstrapRequestDiagnostics) {
+  return parseWorkspaceBootstrapResponse(await requestBootstrapWithOneRefresh(firebaseUser, fetch, diagnostics));
 }
 
-async function syncUser(firebaseUser: FirebaseUser): Promise<AppUser> {
+async function syncUser(firebaseUser: FirebaseUser, diagnostics: BootstrapRequestDiagnostics): Promise<AppUser> {
   startStartupStage('root-user');
-  const bootstrapFailure = await requestWorkspaceBootstrap(firebaseUser);
-  if (bootstrapFailure) throw new Error('We could not prepare your BSM workspace access yet.');
+  const bootstrapResult = await requestWorkspaceBootstrap(firebaseUser, diagnostics);
+  if (!bootstrapResult || 'status' in bootstrapResult) throw new Error('We could not prepare your BSM workspace access yet.');
   const userRef = doc(db, 'users', firebaseUser.uid);
-  const snapshot = await getDoc(userRef);
+  let profileData = bootstrapResult.data?.profile;
 
-  if (!snapshot.exists()) {
-    throw new Error('Your BSM account profile is not available yet. Please try again.');
+  // Older/self-hosted API responses may not include the transaction profile;
+  // retain the scoped Firestore fallback for compatibility.
+  if (!profileData) {
+    const snapshot = await getDoc(userRef);
+    if (!snapshot.exists()) {
+      throw new Error('Your BSM account profile is not available yet. Please try again.');
+    }
+    profileData = snapshot.data();
   }
 
-  const nextName = firebaseUser.displayName || snapshot.data().name || 'User';
-  const nextEmail = firebaseUser.email || snapshot.data().email || '';
-  const appUser = getAppUser(firebaseUser, { ...snapshot.data(), name: nextName, displayName: nextName, email: nextEmail });
+  const nextName = firebaseUser.displayName || profileData.name || 'User';
+  const nextEmail = firebaseUser.email || (typeof profileData.email === 'string' ? profileData.email : '');
+  const appUser = getAppUser(firebaseUser, { ...profileData, name: nextName, displayName: nextName, email: nextEmail });
 
   // Do not make app-shell rendering wait for the audit write.
   void updateDoc(userRef, {
@@ -120,15 +130,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authenticating, setAuthenticating] = useState(false);
   const lastAuthUidRef = useRef<string | null>(null);
   const authEventRef = useRef(0);
+  const bootstrapInFlightRef = useRef<{ uid: string; promise: Promise<AppUser> } | null>(null);
 
-  const completeBootstrap = React.useCallback(async (nextFirebaseUser: FirebaseUser, authEvent: number) => {
+  const completeBootstrap = React.useCallback(async (nextFirebaseUser: FirebaseUser, diagnostics: BootstrapRequestDiagnostics) => {
+    let bootstrapPromise = bootstrapInFlightRef.current?.uid === nextFirebaseUser.uid
+      ? bootstrapInFlightRef.current.promise
+      : null;
+    if (!bootstrapPromise) {
+      bootstrapPromise = syncUser(nextFirebaseUser, diagnostics);
+      bootstrapInFlightRef.current = { uid: nextFirebaseUser.uid, promise: bootstrapPromise };
+      // Clear only the request that this invocation owns. A second auth-state
+      // callback for the same UID can safely reuse the promise (React Strict
+      // Mode and Firebase persistence can both emit an initial repeat).
+      bootstrapPromise.then(
+        () => { if (bootstrapInFlightRef.current?.promise === bootstrapPromise) bootstrapInFlightRef.current = null; },
+        () => { if (bootstrapInFlightRef.current?.promise === bootstrapPromise) bootstrapInFlightRef.current = null; },
+      );
+    }
     try {
-      const nextUser = await syncUser(nextFirebaseUser);
-      if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
+      const nextUser = await bootstrapPromise;
+      if (diagnostics.authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
       setUser(nextUser);
       setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : nextUser.accountStatus === 'inactive' ? 'inactive' : 'active');
     } catch (syncError) {
-      if (authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
+      if (diagnostics.authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
       const message = syncError instanceof Error ? syncError.message : 'Unknown bootstrap error';
       if (process.env.NODE_ENV !== 'production') console.warn(`[auth-bootstrap] handled failure message=${message}`);
       setUser(null);
@@ -142,6 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
       const authEvent = ++authEventRef.current;
+      const previousUid = lastAuthUidRef.current;
       setFirebaseUser(nextFirebaseUser);
       setError(null);
       // Do not retain display/startup data across an auth boundary.
@@ -155,10 +181,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
+      const diagnostics: BootstrapRequestDiagnostics = {
+        trigger: authEvent === 1
+          ? 'auth-state-initial'
+          : previousUid === nextFirebaseUser.uid
+            ? 'auth-state-repeat'
+            : 'auth-state-user-change',
+        authEvent,
+      };
       beginStartupTrace(nextFirebaseUser.uid);
       markStartup('auth-ready');
       setStatus('loading');
-      await completeBootstrap(nextFirebaseUser, authEvent);
+      await completeBootstrap(nextFirebaseUser, diagnostics);
     });
   }, [completeBootstrap]);
 
@@ -176,6 +210,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await signInController.signIn();
   };
 
+  const signInWithLocalUat = async (email: string, password: string) => {
+    if (!isLocalFirebaseEmulatorMode()) throw new Error('Local UAT sign-in is unavailable.');
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) throw new Error('Enter the local UAT email and password.');
+    setError(null);
+    setAuthenticating(true);
+    try {
+      await signInWithEmailAndPassword(auth, normalizedEmail, password);
+    } catch {
+      setError('Local UAT sign-in failed. Check the supplied credentials.');
+      throw new Error('Local UAT sign-in failed.');
+    } finally {
+      setAuthenticating(false);
+    }
+  };
+
   const signOut = () => firebaseSignOut(auth);
 
   const retryBootstrap = async () => {
@@ -185,11 +235,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setFirebaseUser(nextFirebaseUser);
     setError(null);
     setStatus('loading');
-    await completeBootstrap(nextFirebaseUser, authEvent);
+    await completeBootstrap(nextFirebaseUser, { trigger: 'manual-retry', authEvent });
   };
 
   return (
-    <AuthContext.Provider value={{ firebaseUser, user, status, error, authenticating, signInWithGoogle, signOut, retryBootstrap }}>
+    <AuthContext.Provider value={{ firebaseUser, user, status, error, authenticating, signInWithGoogle, signInWithLocalUat, signOut, retryBootstrap }}>
       {children}
     </AuthContext.Provider>
   );
