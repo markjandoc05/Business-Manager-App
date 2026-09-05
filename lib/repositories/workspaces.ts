@@ -44,16 +44,18 @@ function mapOrganization(id: string, data: Record<string, unknown>): Organizatio
   return { id, name: data.name, slug: data.slug, businessType: typeof data.businessType === 'string' ? data.businessType : 'Small Business', status, plan: typeof data.plan === 'string' ? data.plan : 'trial', subscriptionStatus: typeof data.subscriptionStatus === 'string' ? data.subscriptionStatus : 'trial', subscriptionStart: toIsoDate(data.subscriptionStart), subscriptionEnd: toIsoDate(data.subscriptionEnd), maxUsers: typeof data.maxUsers === 'number' ? data.maxUsers : 1, gracePeriodEnd: toIsoDate(data.gracePeriodEnd), createdAt: toIsoDate(data.createdAt), updatedAt: toIsoDate(data.updatedAt), licenseStatus: ['TRIAL', 'ACTIVE', 'EXPIRED', 'SUSPENDED'].includes(data.licenseStatus as string) ? data.licenseStatus as Organization['licenseStatus'] : undefined, licenseWriteEnabled: typeof data.licenseWriteEnabled === 'boolean' ? data.licenseWriteEnabled : undefined, licenseExpiresAt: toIsoDate(data.licenseExpiresAt) };
 }
 
-export async function listUserMemberships(user: Pick<AppUser, 'uid'> | null) {
+export async function listUserMemberships(user: Pick<AppUser, 'uid'> | null, options: { profilePrevalidated?: boolean } = {}) {
   if (!user) return [];
   return cachedRequest(`workspace-memberships:${user.uid}`, 5_000, async () => {
     // Firestore correctly denies collection-group membership queries until the
-    // caller's root profile is active. Read the caller's own profile first so
-    // first-login onboarding resolves to an empty workspace list instead of a
-    // permission error while syncUser is creating the pending profile.
-    const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
-    const profile = profileSnapshot.data();
-    if (!profileSnapshot.exists() || profile?.status !== 'active' || profile.active === false) return [];
+    // caller's root profile is active. For callers that have just completed the
+    // trusted server bootstrap, that profile check is already authoritative;
+    // retain the read for all other callers and first-login compatibility.
+    if (!options.profilePrevalidated) {
+      const profileSnapshot = await getDoc(doc(db, 'users', user.uid));
+      const profile = profileSnapshot.data();
+      if (!profileSnapshot.exists() || profile?.status !== 'active' || profile.active === false) return [];
+    }
     startStartupStage('membership-query');
     const snapshot = await getDocs(query(
       collectionGroup(db, 'members'),
