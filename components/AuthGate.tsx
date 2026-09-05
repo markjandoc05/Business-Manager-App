@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import WorkspaceOnboarding from '@/components/WorkspaceOnboarding';
 import { getNoMembershipDestination, type EntryIntent } from '@/lib/auth/entryFlow';
-import { emitStartupTiming, markStartup } from '@/lib/startupTiming';
+import { emitStartupTiming, markStartup, markStartupEvent } from '@/lib/startupTiming';
 import { isLocalFirebaseEmulatorMode } from '@/lib/firebase/environment';
 
 function LoadingScreen() {
@@ -143,6 +143,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const lastWorkspaceDiagnosticRef = React.useRef('');
   useEffect(() => {
     if (status === 'active' && workspaceReady) {
+      markStartupEvent('AUTH_GATE_RELEASE');
       markStartup('shell-renderable');
       emitStartupTiming();
     }

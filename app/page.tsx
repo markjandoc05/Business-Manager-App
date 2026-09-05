@@ -38,7 +38,7 @@ import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
 import { IconActionButton } from '@/components/IconActionButton';
 import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
-import { emitStartupTiming, finishStartupStage, markStartup, observeStartupLcp, startStartupStage } from '@/lib/startupTiming';
+import { emitStartupTiming, finishStartupStage, markStartup, markStartupEvent, observeStartupLcp, startStartupStage } from '@/lib/startupTiming';
 import { MovableKpiCard } from '@/components/KpiCard';
 
 type DashboardFollowUpItem =
@@ -145,6 +145,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!dashboardStarted.current) {
       dashboardStarted.current = true;
+      markStartupEvent('DASHBOARD_MOUNT');
       markStartup('dashboard-start');
     }
     if (workspaceReady) markStartup('workspace-ready');
@@ -212,6 +213,7 @@ export default function DashboardPage() {
     setDashboardMetricsError(null);
     if (!dashboardDataStarted.current) {
       dashboardDataStarted.current = true;
+      markStartupEvent('DASHBOARD_DATA_START');
       markStartup('dashboard-data-start');
     }
     startStartupStage('dashboard-kpi-metrics');
@@ -293,6 +295,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (dashboardCriticalReady.current || !dashboardMetrics || !pipelineStageSummary) return;
     dashboardCriticalReady.current = true;
+    markStartupEvent('DASHBOARD_CRITICAL_DATA_READY');
     markStartup('dashboard-critical-data-ready');
     emitStartupTiming();
   }, [dashboardMetrics, pipelineStageSummary]);
@@ -300,6 +303,7 @@ export default function DashboardPage() {
   useEffect(() => {
     if (dashboardComplete.current || !dashboardMetrics || !pipelineStageSummary || leadsLoading || clientsLoading || dealsLoading || tasksLoading || settingsLoading) return;
     dashboardComplete.current = true;
+    markStartupEvent('DASHBOARD_COMPLETE');
     markStartup('dashboard-complete');
     emitStartupTiming();
   }, [clientsLoading, dashboardMetrics, dealsLoading, leadsLoading, pipelineStageSummary, settingsLoading, tasksLoading]);

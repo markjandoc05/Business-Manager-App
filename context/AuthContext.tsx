@@ -17,7 +17,7 @@ import {
 import { auth, db } from '@/lib/firebase/client';
 import { createSignInController } from '@/lib/auth/signInController';
 import type { AppUser, UserRole } from '@/types/auth';
-import { beginStartupTrace, finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
+import { beginStartupTrace, finishStartupStage, markStartup, markStartupEvent, startStartupStage } from '@/lib/startupTiming';
 import { clearCachedRequests } from '@/lib/repositories/requestCache';
 import { requestBootstrapWithOneRefresh, type BootstrapRequestDiagnostics } from '@/lib/auth/bootstrap-request';
 import { isLocalFirebaseEmulatorMode } from '@/lib/firebase/environment';
@@ -152,6 +152,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (diagnostics.authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
       setUser(nextUser);
       setStatus(nextUser.accountStatus === 'disabled' ? 'disabled' : nextUser.accountStatus === 'inactive' ? 'inactive' : 'active');
+      markStartupEvent('AUTH_CONTEXT_READY');
     } catch (syncError) {
       if (diagnostics.authEvent !== authEventRef.current || auth.currentUser?.uid !== nextFirebaseUser.uid) return;
       const message = syncError instanceof Error ? syncError.message : 'Unknown bootstrap error';
@@ -166,6 +167,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (nextFirebaseUser) => {
+      beginStartupTrace();
+      markStartupEvent('FIREBASE_AUTH_CALLBACK_START');
       const authEvent = ++authEventRef.current;
       const previousUid = lastAuthUidRef.current;
       setFirebaseUser(nextFirebaseUser);
@@ -176,10 +179,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lastAuthUidRef.current = nextUid;
 
       if (!nextFirebaseUser) {
+        markStartupEvent('FIREBASE_AUTH_CALLBACK_END');
         setUser(null);
         setStatus('signed-out');
         return;
       }
+      markStartupEvent('FIREBASE_AUTH_CALLBACK_END');
 
       const diagnostics: BootstrapRequestDiagnostics = {
         trigger: authEvent === 1
@@ -197,7 +202,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [completeBootstrap]);
 
   const signInController = useMemo(() => createSignInController({
-      signInWithPopup: async () => { await signInWithPopup(auth, googleProvider); },
+      signInWithPopup: async () => {
+        markStartupEvent('GOOGLE_AUTH_START');
+        await signInWithPopup(auth, googleProvider);
+        markStartupEvent('GOOGLE_AUTH_RESOLVED');
+      },
       hasCurrentUser: () => Boolean(auth.currentUser),
       setAuthenticating,
       clearError: () => setError(null),
@@ -207,6 +216,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async () => {
     beginStartupTrace();
+    markStartupEvent('LOGIN_CLICK');
     await signInController.signIn();
   };
 

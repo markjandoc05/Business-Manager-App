@@ -8,7 +8,7 @@ import { resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repos
 import { firestoreWorkspaceErrorMessage, isFirestoreIndexError, userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { recordClientLoginActivity } from '@/lib/auth/loginActivity';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
-import { finishStartupStage, markStartup, startStartupStage } from '@/lib/startupTiming';
+import { finishStartupStage, markStartup, markStartupEvent, startStartupStage } from '@/lib/startupTiming';
 
 interface WorkspaceContextValue {
   currentOrganization: Organization | null;
@@ -110,6 +110,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     clearWorkspace();
     setLoading(true);
     setLicenseLoading(false);
+    markStartupEvent('WORKSPACE_RESOLUTION_START');
 
     void listUserMemberships(firebaseUser).then(async (memberships) => {
       if (!isCurrentRequest() || userId !== firebaseUser.uid) return;
@@ -140,6 +141,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (!isCurrentRequest()) return;
       // A single active membership is completed by the selected-workspace effect.
       if (activeMembershipCount === 1) return;
+      markStartupEvent('WORKSPACE_RESOLUTION_COMPLETE');
       setLoading(false);
     });
     return () => { cancelled = true; };
@@ -161,6 +163,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       if (cancelled || requestId !== resolutionRequestRef.current) return;
       if (!nextOrganization) {
         finishStartupStage('organization-resolution');
+        markStartupEvent('WORKSPACE_RESOLUTION_COMPLETE');
         recordLoginActivity(selectedOrganizationId, 'FAILED');
         setError('This workspace is no longer available.');
         setLoading(false);
@@ -168,6 +171,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       }
       finishStartupStage('organization-resolution');
       markStartup('organization-resolved');
+      markStartupEvent('WORKSPACE_RESOLUTION_COMPLETE');
       setMembership(selectedMembership);
       setCurrentOrganization(nextOrganization);
       recordLoginActivity(selectedOrganizationId, 'SUCCESS');
@@ -178,6 +182,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     }, (snapshotError) => {
       if (cancelled || requestId !== resolutionRequestRef.current) return;
       finishStartupStage('organization-resolution');
+      markStartupEvent('WORKSPACE_RESOLUTION_COMPLETE');
       if (isFirestoreIndexError(snapshotError)) {
         if (process.env.NODE_ENV !== 'production') console.info('[Workspace] Organization index is unavailable or still building.', snapshotError);
       } else {
