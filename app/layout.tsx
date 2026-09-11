@@ -7,8 +7,8 @@ import { WorkspaceProvider } from '@/context/WorkspaceContext';
 import AuthGate from '@/components/AuthGate';
 
 export const metadata: Metadata = {
-  title: 'Business Sales Manager (BSM) App',
-  description: 'A simple sales management system for small businesses and solo entrepreneurs.',
+  title: 'Ventale — Simple CRM for Growing Businesses',
+  description: 'Manage leads, clients, deals, follow-ups, and sales in one simple CRM.',
 };
 
 export default function RootLayout({children}: {children: React.ReactNode}) {

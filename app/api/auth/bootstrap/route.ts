@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     const stage = error instanceof WorkspaceBootstrapError ? error.stage : safeError.stage as WorkspaceBootstrapStage | 'unknown';
     console.warn(`[workspace-bootstrap:${requestId}] failed stage=${stage} code=${safeError.code} message=${safeError.message}`);
     const response: { error: string; code: string; debug?: { stage: string; code: string; message: string; requestId: string } } = {
-      error: 'We could not prepare your BSM workspace access yet.',
+      error: 'Unable to load your workspace. Please try again.',
       code: 'WORKSPACE_BOOTSTRAP_FAILED',
     };
     if (process.env.NODE_ENV !== 'production') response.debug = { stage, code: safeError.code, message: safeError.message, requestId };

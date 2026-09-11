@@ -71,7 +71,7 @@ export default function WorkspaceOnboarding() {
       <Card className="w-full max-w-xl space-y-6 p-5 sm:p-8">
         <div className="flex items-start gap-4">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--app-primary)] text-white"><Building2 size={22} /></div>
-          <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-primary)]">Step {step} of 3</p><h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Create your workspace</h1><p className="mt-1 text-sm text-[var(--app-muted)]">Set up your BSM workspace to start managing your business.</p></div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-primary)]">Step {step} of 3</p><h1 className="mt-1 text-2xl font-semibold text-[var(--app-text)]">Create your workspace</h1><p className="mt-1 text-sm text-[var(--app-muted)]">Set up your Ventale workspace to start managing your business.</p></div>
         </div>
 
         <div className="flex gap-2" aria-label="Onboarding progress">

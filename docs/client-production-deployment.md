@@ -55,8 +55,9 @@ NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
 NEXT_PUBLIC_FIREBASE_APP_ID
 ```
 
-`NEXT_PUBLIC_FIREBASE_PROJECT_ID` must be `bsm-client-app-web`. This document
-does not contain any Firebase configuration values or credentials.
+For Ventale production builds, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` must be
+`auth.ventale.app`; `NEXT_PUBLIC_FIREBASE_PROJECT_ID` must remain
+`bsm-client-app-web`. This document does not contain Firebase credentials.
 
 For local emulator tests, use only:
 

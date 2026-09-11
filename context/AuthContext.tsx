@@ -87,7 +87,7 @@ async function requestWorkspaceBootstrap(firebaseUser: FirebaseUser, diagnostics
 async function syncUser(firebaseUser: FirebaseUser, diagnostics: BootstrapRequestDiagnostics): Promise<AppUser> {
   startStartupStage('root-user');
   const bootstrapResult = await requestWorkspaceBootstrap(firebaseUser, diagnostics);
-  if (!bootstrapResult || 'status' in bootstrapResult) throw new Error('We could not prepare your BSM workspace access yet.');
+  if (!bootstrapResult || 'status' in bootstrapResult) throw new Error('Unable to load your workspace. Please try again.');
   const userRef = doc(db, 'users', firebaseUser.uid);
   let profileData = bootstrapResult.data?.profile;
 
@@ -96,7 +96,7 @@ async function syncUser(firebaseUser: FirebaseUser, diagnostics: BootstrapReques
   if (!profileData) {
     const snapshot = await getDoc(userRef);
     if (!snapshot.exists()) {
-      throw new Error('Your BSM account profile is not available yet. Please try again.');
+      throw new Error('Your account profile is not available yet. Please try again.');
     }
     profileData = snapshot.data();
   }
