@@ -7,11 +7,12 @@
   --app-text: #10251d;
   --app-muted: #60736a;
   --app-tertiary: #829088;
-  --app-canvas: #f4f7f2;
+  /* Light-theme foundation: white canvas with neutral SaaS surfaces. */
+  --app-canvas: #ffffff;
   --app-surface: #ffffff;
-  --app-surface-subtle: #f7f9f6;
-  --app-border: #dfe7dc;
-  --app-border-subtle: #e7ece4;
+  --app-surface-subtle: #f8fafc;
+  --app-border: #e5e7eb;
+  --app-border-subtle: #f3f4f6;
   --app-accent: #b8f13c;
   --app-accent-soft: #eaf7d6;
   --app-warning: #f5a33b;
@@ -20,10 +21,10 @@
   --app-radius-control: 0.5rem;
   --app-radius-card: 0.75rem;
   --app-radius-panel: 1rem;
-  --app-shadow-xs: 0 1px 2px rgba(3, 45, 32, 0.05);
-  --app-shadow-sm: 0 4px 12px rgba(3, 45, 32, 0.07);
-  --app-shadow-md: 0 12px 32px rgba(3, 45, 32, 0.12);
-  --app-shadow-lg: 0 20px 56px rgba(3, 45, 32, 0.16);
+  --app-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --app-shadow-sm: 0 4px 12px rgba(15, 23, 42, 0.06);
+  --app-shadow-md: 0 12px 32px rgba(15, 23, 42, 0.1);
+  --app-shadow-lg: 0 20px 56px rgba(15, 23, 42, 0.14);
   --sidebar-width: 0px;
 }
 
@@ -1099,6 +1100,31 @@ textarea:focus-visible {
   .app-main-content {
     padding: 0.75rem;
     padding-bottom: 4.5rem;
+  }
+
+  /* Keep Dashboard metric controls within the narrow mobile content width. */
+  .dashboard-key-metrics-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .dashboard-key-metrics-title,
+  .dashboard-key-metrics-controls {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .dashboard-key-metrics-controls {
+    flex: 0 1 auto;
+    justify-content: stretch;
+  }
+
+  .dashboard-key-metrics-controls > .app-button,
+  .dashboard-key-metrics-controls .dashboard-range-selector {
+    flex-basis: 100%;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
   }
 }
 
