@@ -43,6 +43,7 @@ import { emitStartupTiming, finishStartupStage, markStartup, markStartupEvent, o
 import { MovableKpiCard } from '@/components/KpiCard';
 import { organizationPreferenceKey } from '@/lib/kpi-preferences';
 import { getDashboardActivityHref, getDashboardRecordHref } from '@/lib/dashboard-record-navigation';
+import { ActivityDetailsModal } from '@/components/ActivityDetailsModal';
 
 type DashboardFollowUpItem =
   | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
@@ -103,7 +104,7 @@ function getDashboardLayoutPreference(organizationId?: string | null) {
 }
 
 export default function DashboardPage() {
-  const { leads, clients, deals, tasks, activities, settings, leadsLoading, clientsLoading, dealsLoading, tasksLoading, settingsLoading, completeTask, addLead, addClient, addTask } = useApp();
+  const { leads, clients, deals, tasks, activities, users, settings, leadsLoading, clientsLoading, dealsLoading, tasksLoading, settingsLoading, completeTask, addLead, addClient, addTask } = useApp();
   const { user } = useAuth();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
   const canManage = canManageLeads(membership) && canWrite;
@@ -117,6 +118,9 @@ export default function DashboardPage() {
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(DEFAULT_DASHBOARD_LAYOUT.secondary);
   const [selectedKpis, setSelectedKpis] = useState<DashboardKpiId[]>([...DEFAULT_DASHBOARD_KPI_IDS]);
   const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [selectedActivity, setSelectedActivity] = useState<{ organizationId: string; id: string } | null>(null);
+  const activityDetails = workspaceReady && selectedActivity?.organizationId === currentOrganizationId
+    ? activities.find((activity) => activity.id === selectedActivity.id) : undefined;
   const [draftKpis, setDraftKpis] = useState<DashboardKpiId[]>([]);
   const [openKpiModules, setOpenKpiModules] = useState<Set<string>>(new Set(['Sales', 'Deals']));
   const [savingKpis, setSavingKpis] = useState(false);
@@ -501,7 +505,7 @@ export default function DashboardPage() {
       <div className="dashboard-metrics-toolbar space-y-3">
         <div className="dashboard-key-metrics-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="dashboard-key-metrics-title">
-            <h2 className="text-sm font-semibold text-[var(--app-text)]">Key Metrics</h2>
+            <h2 className="text-sm font-semibold text-[var(--app-text)]">KPIs</h2>
             <p className="sr-only">{dashboardDateRangeLabel}</p>
           </div>
           <div className="dashboard-key-metrics-controls flex flex-wrap items-center gap-2">
@@ -697,13 +701,14 @@ export default function DashboardPage() {
               </>;
               return activityHref
                 ? <Link key={act.id} href={activityHref} aria-label={`Open related record for activity: ${act.description}`} className="dashboard-activity-row dashboard-record-link flex min-h-11 items-start gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-3 no-underline transition-colors hover:bg-white hover:shadow-[var(--app-shadow-xs)] active:bg-[var(--app-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30">{content}</Link>
-                : <div key={act.id} className="dashboard-activity-row flex items-start gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-3">{content}</div>;
+                : <button key={act.id} type="button" aria-label={`Open activity: ${act.description}`} onClick={() => { if (currentOrganizationId) setSelectedActivity({ organizationId: currentOrganizationId, id: act.id }); }} className="dashboard-activity-row dashboard-record-link flex min-h-11 w-full items-start gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-3 text-left transition-colors hover:bg-white hover:shadow-[var(--app-shadow-xs)] active:bg-[var(--app-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30">{content}</button>;
             })}
           </div>
         </Card>
         </MovableDashboardCard>
       </div>
 
+      {activityDetails && <ActivityDetailsModal activity={activityDetails} recordedBy={users.find((member) => member.uid === activityDetails.createdBy)?.name} timezone={settings.timezone} onClose={() => setSelectedActivity(null)} />}
       {customizeOpen && <div className="app-modal customize-dashboard-overlay fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-3 sm:p-6">
         <div className="app-modal-panel customize-dashboard-modal relative flex w-[calc(100vw-1.5rem)] max-h-[calc(100dvh-1.5rem)] max-w-[780px] flex-col overflow-hidden p-0 sm:w-[calc(100vw-3rem)] sm:max-h-[calc(100dvh-3rem)]" role="dialog" aria-modal="true" aria-label="Customize Dashboard">
           <header className="shrink-0 border-b border-[var(--app-border-subtle)] px-4 py-4 sm:px-6">

@@ -68,6 +68,18 @@ async function openRoute(page, route) {
   await page.waitForTimeout(100);
 }
 
+async function openWorkspaceDeepLink(page, path, workspaceName = workspace.name) {
+  await page.goto(path, { waitUntil: 'domcontentloaded' });
+  await expect.poll(async () => {
+    if (await page.getByRole('heading', { name: 'Select Workspace', exact: true }).isVisible().catch(() => false)) return 'picker';
+    if (await page.getByLabel('Switch workspace').isVisible().catch(() => false)) return 'ready';
+    return 'loading';
+  }).toMatch(/picker|ready/);
+  if (await page.getByRole('heading', { name: 'Select Workspace', exact: true }).isVisible().catch(() => false)) {
+    await page.getByRole('button').filter({ has: page.getByText(workspaceName, { exact: true }) }).click();
+  }
+}
+
 async function assertPageGeometry(page, label, { mobile = false } = {}) {
   const result = await page.evaluate(({ checkTouchTargets }) => {
     const viewportWidth = document.documentElement.clientWidth;
@@ -316,7 +328,7 @@ async function assertDialogUsable(page, label) {
   expect(result.overflowX, `${label}: dialog horizontal overflow`).toBeLessThanOrEqual(1);
   expect(result.closeCount, `${label}: dialog close action`).toBeGreaterThan(0);
   expect(result.undersized, `${label}: dialog targets smaller than 44px`).toEqual([]);
-  await assertPageGeometry(page, label, { mobile: true });
+  await assertPageGeometry(page, label, { mobile: (page.viewportSize()?.width || 1280) < 768 });
   return dialog;
 }
 
@@ -459,7 +471,7 @@ test('Dashboard uses its mobile stage list and keeps the security statement in t
 
     expect(dashboardLayout.securityInNavigation).toBe(true);
     expect(dashboardLayout.securityAbsentFromContent).toBe(true);
-    expect(dashboardLayout.keyMetricTitleOverlapsCustomize, `Key Metrics controls overlap at ${viewport.width}px`).toBe(false);
+    expect(dashboardLayout.keyMetricTitleOverlapsCustomize, `KPIs controls overlap at ${viewport.width}px`).toBe(false);
     expect(dashboardLayout.rangeControlsDoNotOverlap, `date range overlaps Customize at ${viewport.width}px`).toBe(true);
     expect(dashboardLayout.stageOverflow, `pipeline rows overflow at ${viewport.width}px`).toEqual([0, 0, 0, 0, 0, 0]);
     await assertPageGeometry(page, `Dashboard mobile layout at ${viewport.width}px`, { mobile: true });
@@ -476,6 +488,8 @@ test('Dashboard record shortcuts use semantic deep links without crossing the ac
   await page.setViewportSize({ width: 1280, height: 900 });
   await signIn(page);
 
+  await expect(page.getByRole('heading', { name: 'KPIs', exact: true })).toBeVisible();
+
   const leadLink = page.getByRole('link', { name: 'Open lead: UAT Prospect', exact: true });
   await expect(page.locator('.dashboard-record-row[role="button"]')).toHaveCount(0);
   await expect(leadLink).toHaveAttribute('href', /\/leads\?leadId=uat-lead-001$/);
@@ -488,27 +502,58 @@ test('Dashboard record shortcuts use semantic deep links without crossing the ac
   await expect(clientLink).toHaveAttribute('href', /\/clients\?clientId=uat-client-mobile-long$/);
   await clientLink.click();
   await expect(page).toHaveURL(/\/clients\?clientId=uat-client-mobile-long$/);
+  await expect(page.getByRole('heading', { name: longClient.name, exact: true })).toBeVisible();
   await page.goBack();
 
   const dealLink = page.getByRole('link', { name: 'Open deal: Enterprise Operations Modernization and Regional Expansion Partnership', exact: true });
   await expect(dealLink).toHaveAttribute('href', /\/pipeline\?dealId=uat-deal-mobile-long$/);
   await dealLink.click();
   await expect(page).toHaveURL(/\/pipeline\?dealId=uat-deal-mobile-long$/);
+  await expect(page.getByRole('dialog').getByRole('heading', { name: longDeal.title, exact: true })).toBeVisible();
   await page.goBack();
 
   const taskLink = page.getByRole('link', { name: 'Open task: Follow up with UAT Prospect', exact: true });
   await expect(taskLink).toHaveAttribute('href', /\/tasks\?taskId=uat-task-001$/);
   await taskLink.click();
   await expect(page).toHaveURL(/\/tasks\?taskId=uat-task-001$/);
+  const taskDialog = page.getByRole('dialog', { name: 'Task details', exact: true });
+  await expect(taskDialog.getByRole('heading', { name: 'Follow up with UAT Prospect', exact: true })).toBeVisible();
+  await expect(taskDialog.getByText('Confirm requirements', { exact: true })).toBeVisible();
+  await expect(taskDialog.getByRole('link', { name: 'Lead: UAT Prospect', exact: true })).toHaveAttribute('href', /leadId=uat-lead-001$/);
+  await assertDialogUsable(page, 'Dashboard task details');
+  await page.screenshot({ path: test.info().outputPath('ventale-task-details-desktop.png') });
+  await page.keyboard.press('Escape');
+  await expect(taskDialog).toHaveCount(0);
+  await expect(page).toHaveURL(/\/tasks$/);
   await page.goBack();
 
   const activityLink = page.getByRole('link', { name: 'Open related record for activity: UAT sample client created', exact: true });
   await activityLink.click();
   await expect(page).toHaveURL(/\/clients\?clientId=uat-client-001$/);
+  await expect(page.getByRole('heading', { name: 'UAT Client One', exact: true })).toBeVisible();
   await page.goBack();
 
-  const informationalActivity = page.getByText('UAT informational activity', { exact: true });
-  await expect(informationalActivity.locator('xpath=..').locator('xpath=..')).not.toHaveAttribute('href');
+  const informationalActivity = page.getByRole('button', { name: 'Open activity: UAT informational activity', exact: true });
+  await informationalActivity.press('Enter');
+  const activityDialog = page.getByRole('dialog', { name: 'Activity details', exact: true });
+  await expect(activityDialog.getByText('UAT informational activity', { exact: true })).toBeVisible();
+  await expect(activityDialog.getByText('Workspace settings', { exact: true })).toBeVisible();
+  await assertDialogUsable(page, 'Dashboard activity details');
+  await page.screenshot({ path: test.info().outputPath('ventale-activity-details-desktop.png') });
+  await page.keyboard.press('Escape');
+  await expect(activityDialog).toHaveCount(0);
+  await expect(informationalActivity).toBeFocused();
+
+  await page.setViewportSize({ width: 320, height: 568 });
+  await taskLink.click();
+  await expect(taskDialog.getByText('Confirm requirements', { exact: true })).toBeVisible();
+  await assertDialogUsable(page, 'Dashboard task details on a phone');
+  await page.screenshot({ path: test.info().outputPath('ventale-task-details-mobile.png') });
+  await page.goBack();
+  await informationalActivity.click();
+  await assertDialogUsable(page, 'Dashboard activity details on a phone');
+  await page.screenshot({ path: test.info().outputPath('ventale-activity-details-mobile.png') });
+  await page.keyboard.press('Escape');
 
   const completion = page.getByRole('button', { name: 'Complete task: Follow up with UAT Prospect', exact: true });
   await completion.click();
@@ -517,6 +562,8 @@ test('Dashboard record shortcuts use semantic deep links without crossing the ac
 
   await page.setViewportSize({ width: 390, height: 844 });
   await assertPageGeometry(page, 'Dashboard record shortcuts on mobile', { mobile: true });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: test.info().outputPath('ventale-dashboard-kpis-mobile.png') });
 });
 
 test('Dashboard shortcuts discard prior-workspace records after a workspace switch', async ({ page }) => {
@@ -533,6 +580,29 @@ test('Dashboard shortcuts discard prior-workspace records after a workspace swit
 
   await workspaceBClient.click();
   await expect(page).toHaveURL(/\/clients\?clientId=uat-client-org-b-only$/);
+  await expect(page.getByRole('heading', { name: 'Workspace B Private Client', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: longClient.name, exact: true })).toHaveCount(0);
+
+  await openWorkspaceDeepLink(page, '/clients?clientId=uat-client-later-page', 'BSM UAT Workspace B');
+  await expect(page.getByRole('dialog', { name: 'Client details', exact: true }).getByRole('alert')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Marquee Later Page Client', exact: true })).toHaveCount(0);
+});
+
+test('Dashboard deep links load records outside the current list and handle missing records', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await signIn(page, selectorAdmin);
+  await openWorkspaceDeepLink(page, '/clients?clientId=uat-client-later-page');
+  await expect(page.getByRole('heading', { name: 'Marquee Later Page Client', exact: true })).toBeVisible();
+  await expect(page.getByText('marquee.later.page@bsm-uat.local', { exact: true })).toBeVisible();
+
+  for (const [path, name] of [['/tasks?taskId=missing-task', 'Task details'], ['/pipeline?dealId=missing-deal', 'Deal details'], ['/clients?clientId=missing-client', 'Client details']]) {
+    await openWorkspaceDeepLink(page, path);
+    const dialog = page.getByRole('dialog', { name, exact: true });
+    await expect(dialog.getByRole('alert')).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+  }
 });
 
 test('representative forms, selectors, and dialogs fit a 320px phone', async ({ page }) => {
@@ -998,4 +1068,103 @@ test('Compact refactor preserves desktop geometry at 1280px',async ({page})=>{
   const hero=await page.locator('.client-profile-hero').evaluate(e=>e.getBoundingClientRect().height);
   expect(Math.abs(hero-231)).toBeLessThan(1);
   await page.screenshot({path:'/private/tmp/ventale-compact-after-1280-client-detail.png'});
+});
+
+for (const viewport of [{ width: 320, height: 568 }, { width: 521, height: 1334 }, { width: 1280, height: 900 }]) {
+  test(`Report export requires confirmation at ${viewport.width}px`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.addInitScript(() => {
+      window.exportFileCreations = 0;
+      const createObjectURL = URL.createObjectURL;
+      URL.createObjectURL = function (...args) {
+        window.exportFileCreations += 1;
+        return createObjectURL.apply(this, args);
+      };
+    });
+    const downloads = [];
+    page.on('download', (download) => downloads.push(download));
+    await signIn(page);
+    await openRoute(page, routes.find((route) => route.name === 'Reports'));
+    const exportButton = page.locator('.reports-header-actions').getByRole('button', { name: 'Export CSV', exact: true });
+    await expect(exportButton).toBeEnabled();
+    const dialog = page.getByRole('dialog', { name: 'Export report?', exact: true });
+
+    await exportButton.click();
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('report.csv');
+    await expect(dialog).toContainText('This Month');
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    expect(await page.evaluate(() => window.exportFileCreations)).toBe(0);
+    expect(downloads).toHaveLength(0);
+    const geometry = await dialog.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, top: bounds.top, right: bounds.right, bottom: bounds.bottom, overflow: element.scrollWidth - element.clientWidth,
+        targets: [...element.querySelectorAll('button')].map((button) => ({ width: button.getBoundingClientRect().width, height: button.getBoundingClientRect().height })) };
+    });
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.top).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(viewport.width);
+    expect(geometry.bottom).toBeLessThanOrEqual(viewport.height);
+    expect(geometry.overflow).toBeLessThanOrEqual(1);
+    expect(geometry.targets.every((target) => target.width >= 44 && target.height >= 44)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath('export-confirmation.png') });
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(exportButton).toBeFocused();
+
+    for (const [value, label] of [['LastMonth', 'Last Month'], ['ThisQuarter', 'This Quarter'], ['ThisYear', 'This Year']]) {
+      await page.getByLabel('Report date range').selectOption(value);
+      await expect(exportButton).toBeEnabled();
+      await exportButton.click();
+      await expect(dialog).toContainText(label);
+      await page.keyboard.press('Escape');
+      await expect(dialog).toHaveCount(0);
+      expect(await page.evaluate(() => window.exportFileCreations)).toBe(0);
+      expect(downloads).toHaveLength(0);
+    }
+
+    await page.getByLabel('Report date range').selectOption('ThisMonth');
+    await expect(exportButton).toBeEnabled();
+    const salesValue = await page.locator('.bsm-kpi-card').filter({ has: page.getByText('Total Sales', { exact: true }) }).locator('.bsm-kpi-value').innerText();
+    const expectedTotalSales = Number(salesValue.replace(/[^0-9.-]/g, ''));
+    expect(expectedTotalSales).toBeGreaterThan(0);
+    await exportButton.click();
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      dialog.getByRole('button', { name: 'Export CSV', exact: true }).evaluate((button) => { button.click(); button.click(); }),
+    ]);
+    await expect(dialog).toHaveCount(0);
+    expect(download.suggestedFilename()).toBe('report.csv');
+    const csv = readFileSync(await download.path(), 'utf8');
+    const rows = csv.split('\n').map((row) => row.split(','));
+    expect(rows.map(([label]) => label)).toEqual(['Metric', 'Total Leads', 'Clients', 'Converted Leads', 'Active Deals', 'Won Deals', 'Lost Deals', 'Total Sales', 'Transactions', 'Amount Paid', 'Outstanding', 'Pipeline Value']);
+    expect(rows.find(([label]) => label === 'Total Sales')[1]).toBe(String(expectedTotalSales));
+    expect(await page.evaluate(() => window.exportFileCreations)).toBe(1);
+    expect(downloads).toHaveLength(1);
+  });
+}
+
+test('Report export confirmation cancels when the active workspace changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const downloads = [];
+  page.on('download', (download) => downloads.push(download));
+  await signIn(page, selectorAdmin);
+  await page.getByRole('link', { name: 'Reports', exact: true }).click();
+  const exportButton = page.locator('.reports-header-actions').getByRole('button', { name: 'Export CSV', exact: true });
+  await expect(exportButton).toBeEnabled();
+  await exportButton.click();
+  const dialog = page.getByRole('dialog', { name: 'Export report?', exact: true });
+  await expect(dialog).toBeVisible();
+  await page.getByLabel('Switch workspace').selectOption('bsm-uat-org-b');
+  await expect(dialog).toHaveCount(0);
+  await expect(exportButton).toBeEnabled();
+  expect(downloads).toHaveLength(0);
+  await exportButton.click();
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    dialog.getByRole('button', { name: 'Export CSV', exact: true }).click(),
+  ]);
+  const csv = readFileSync(await download.path(), 'utf8');
+  expect(csv).toContain('Total Sales,0\n');
+  expect(downloads).toHaveLength(1);
 });

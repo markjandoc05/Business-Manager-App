@@ -14,7 +14,7 @@ function credentialsFor(role) {
 
 async function signIn(page, identity, { navigate = true } = {}) {
   const loginPrompt = page.getByText('Local UAT sign-in');
-  const dashboard = page.getByRole('heading', { name: 'Key Metrics' });
+  const dashboard = page.getByRole('heading', { name: 'KPIs' });
   let authenticated = false;
   if (navigate) {
     const response = await page.goto('/', { waitUntil: 'domcontentloaded' });

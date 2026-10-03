@@ -105,7 +105,7 @@ test('a fresh account provisions only through Platform and browser writes to tru
   assert.equal(provisioningBody.success, true);
   assert.equal(provisioningBody.data.provisioningStatus, 'PROVISIONED');
   assert.equal(provisioningBody.data.productCode, 'founding_100');
-  await expect(page.getByRole('heading', { name: 'Key Metrics' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'KPIs' })).toBeVisible({ timeout: 30_000 });
 
   const request = provisioningResponse.request();
   const idempotencyKey = request.headers()['idempotency-key'];
@@ -197,7 +197,7 @@ test('an existing provisioned customer remains able to load and perform an allow
   ]);
 
   await signIn(page, user);
-  await expect(page.getByRole('heading', { name: 'Key Metrics' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'KPIs' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Add Lead' }).click();
   const dialog = page.getByRole('dialog', { name: 'Add Lead dialog' });
   await dialog.locator('input').nth(0).fill('Existing Customer Lead');

@@ -11,7 +11,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageClients } from '@/lib/permissions';
 import { formatCurrency } from '@/lib/formatting';
-import type { DealStatus } from '@/lib/repositories/deals';
+import { getDealById, type DealStatus } from '@/lib/repositories/deals';
+import { useRecordDetails } from '@/hooks/use-record-details';
+import { RecordDetailsStatusDialog } from '@/components/RecordDetailsStatusDialog';
 import { getDealCreationStages, getDefaultDealCreationStage, getDealProbability } from '@/lib/deal-workflow';
 import { DealDetailsModal, type DealEditInput } from '@/components/DealDetailsModal';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
@@ -39,7 +41,7 @@ type DealForm = { title: string; clientId: string; value: number; items: DealLin
 export default function PipelinePage() {
   const { clients, clientsLoading, deals, dealsLoading, dealsLoadingMore, dealsError, dealsHasMore, loadMoreDeals, refreshDeals, tasks, settings, users, updateDealStage, updateDeal, archiveDeal, archivedDeals, loadArchivedRecords, loadMoreArchivedDeals, archivedDealsHasMore, restoreDeal, permanentlyDeleteDeal, addDeal, addTask, completeTask } = useApp();
   const { user } = useAuth();
-  const { currentOrganizationId, membership, canWrite } = useWorkspace();
+  const { currentOrganizationId, membership, canWrite, ready: workspaceReady } = useWorkspace();
   const router = useRouter();
   const searchParams = useSearchParams();
   const canManage = canManageClients(membership) && canWrite;
@@ -72,7 +74,8 @@ export default function PipelinePage() {
   const [lostReason, setLostReason] = useState('');
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor));
   const selectedDealId = searchParams.get('dealId');
-  const selectedDeal = selectedDealId ? deals.find((deal) => deal.id === selectedDealId) : undefined;
+  const dealDetails = useRecordDetails({ recordId: selectedDealId, records: deals, user, organizationId: currentOrganizationId, ready: workspaceReady, loadRecord: getDealById });
+  const selectedDeal = dealDetails.record;
   const openDeal = (dealId: string) => { router.push(`/pipeline?dealId=${encodeURIComponent(dealId)}`, { scroll: false }); };
   const closeDeal = () => { router.replace('/pipeline', { scroll: false }); };
   const pipelineContextKey = `${currentOrganizationId || ''}:${searchTerm}:${statusFilter}:${assignedFilter}`;
@@ -224,15 +227,16 @@ export default function PipelinePage() {
 
   const handleDealSave = async (input: DealEditInput) => {
     if (!selectedDeal) return; setSaving(true);
-    try { await updateDeal(selectedDeal.id, input); } finally { setSaving(false); }
+    try { await updateDeal(selectedDeal.id, input); dealDetails.reload(); } finally { setSaving(false); }
   };
 
-  const clientLookup = useDealClientLookup({ user, organizationId: currentOrganizationId, deals, loadedClients: clients });
+  const lookupDeals = useMemo(() => selectedDeal && !deals.some((deal) => deal.id === selectedDeal.id) ? [...deals, selectedDeal] : deals, [deals, selectedDeal]);
+  const clientLookup = useDealClientLookup({ user, organizationId: currentOrganizationId, deals: lookupDeals, loadedClients: clients });
   const clientsById = clientLookup.clientsById;
-  const clientNamesById = useMemo(() => new Map(deals.map((deal) => {
+  const clientNamesById = useMemo(() => new Map(lookupDeals.map((deal) => {
     const name = clientsById.get(deal.clientId)?.name.trim();
     return [deal.clientId, name || (clientLookup.pendingClientIds.has(deal.clientId) ? 'Loading Client…' : 'Client unavailable')];
-  })), [clientLookup.pendingClientIds, clientsById, deals]);
+  })), [clientLookup.pendingClientIds, clientsById, lookupDeals]);
   const filteredDeals = useMemo(() => {
     return deals.filter((deal) => {
       const client = clientsById.get(deal.clientId);
@@ -246,6 +250,7 @@ export default function PipelinePage() {
   const mobileStageValue = mobileStageDeals.reduce((sum, deal) => sum + deal.value, 0);
 
   return <div className="pipeline-list-layout space-y-4">
+    {selectedDealId && !selectedDeal && <RecordDetailsStatusDialog title="Deal details" error={dealDetails.error} onClose={closeDeal} onRetry={dealDetails.reload} />}
     <PageHeader title="Sales Pipeline" subtitle="Track Deal Value across clients and sales stages." actions={<><Button variant="outline" onClick={() => { const next = !showArchived; setShowArchived(next); setShowFilters(false); if (next && archivedDeals.length === 0) void loadArchivedRecords(); }} aria-label={showArchived ? 'Show pipeline deals' : 'Show archived deals'}><Archive size={16} /><span className="hidden md:inline">{showArchived ? 'Pipeline Deals' : 'Archived Deals'}</span><span className="md:hidden">{showArchived ? 'Active' : 'Archive'}</span></Button>{!showArchived && <><Button variant="outline" onClick={() => setShowFilters((current) => !current)} aria-label="Filter pipeline deals"><Filter size={16} /><span className="hidden md:inline">Filters</span><span className="md:hidden">Filter</span></Button><div className="compact-filter-field compact-filter-search pipeline-header-search relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-tertiary)]" size={16} /><input type="text" placeholder="Search loaded deals..." aria-label="Search loaded deals" className="w-full rounded-xl border py-2 pl-9 pr-4 text-sm sm:w-56" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} /></div>{canManage && <Button onClick={() => { if (!defaultDealStage) setError('No active sales stage is available. Please configure your Pipeline settings.'); else { setDealFormError(null); setDealForm((current) => ({ ...current, stage: defaultDealStage })); setShowAddModal(true); } }} className="gap-2"><Plus size={16} /> Add Deal</Button>}</>}</>} />
     {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
     {dealsError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert"><span>{dealsError}</span><Button variant="outline" size="sm" onClick={() => void refreshDeals()}>Retry</Button></div>}

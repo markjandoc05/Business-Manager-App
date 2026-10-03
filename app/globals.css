@@ -1566,10 +1566,10 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .record-table-scroll :is(th, td):has(input[type="checkbox"]) { padding-inline: 4px; text-align: center; }
   .record-table-scroll input[type="checkbox"] { width: 20px; height: 20px; vertical-align: middle; }
   .record-table-scroll td .truncate { max-width: 100%; }
-  :is(.clients-data-table, .leads-data-table) thead th { padding-block: 2px; }
+  :is(.clients-data-table, .leads-data-table, .sales-data-table) thead th { padding-block: 2px; }
   .clients-data-table thead th:nth-child(6),
   .clients-data-table thead th:nth-child(7) { padding-inline: 4px; }
-  :is(.clients-data-table, .leads-data-table) th .mobile-sort-action { padding: 0 !important; gap: 4px !important; }
+  :is(.clients-data-table, .leads-data-table, .sales-data-table) th .mobile-sort-action { padding: 0 !important; gap: 4px !important; }
   .clients-data-table th .mobile-sort-action > span:first-child { overflow-wrap: normal; }
   .clients-data-table col:nth-child(2) { width: 17% !important; }
   .clients-data-table col:nth-child(3) { width: 15% !important; }
@@ -1579,10 +1579,35 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .clients-data-table col:nth-child(7) { width: 15% !important; }
   .clients-data-table col:nth-child(8) { width: 7% !important; }
   .clients-data-table thead th:is(:nth-child(6), :nth-child(7)) .mobile-sort-action > span:first-child { white-space: nowrap; }
-  .app-main-content :is(.leads-table-card, .clients-table-card) { padding-inline: 12px; }
-  .app-main-content :is(.leads-table-card:has(.leads-data-table), .clients-table-card:has(.clients-data-table)) {
+  .app-main-content :is(.leads-table-card, .clients-table-card, .sales-table-card) { padding-inline: 12px; }
+  .app-main-content :is(.leads-table-card:has(.leads-data-table), .clients-table-card:has(.clients-data-table), .sales-table-card:has(.sales-data-table)) {
     background-image: linear-gradient(var(--app-surface-subtle) 48px, transparent 48px);
   }
+  /* Paint hovered rows into the card gutters without changing the scroll area. */
+  :is(.leads-table-card, .clients-table-card) > .overflow-x-auto,
+  .sales-table-card > .sales-table-scroll { overflow: visible; }
+  .responsive-records-full-row-hover {
+    position: relative;
+    width: calc(100% + 24px);
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
+  .responsive-records-full-row-hover::before,
+  .responsive-records-full-row-hover::after {
+    position: absolute;
+    top: var(--record-row-hover-top, 0px);
+    width: 12px;
+    height: var(--record-row-hover-height, 0px);
+    background: color-mix(in srgb, var(--app-surface-subtle) 80%, transparent);
+    opacity: 0;
+    transition: opacity 150ms ease;
+    pointer-events: none;
+    content: "";
+  }
+  .responsive-records-full-row-hover::before { left: 0; }
+  .responsive-records-full-row-hover::after { right: 0; }
+  .responsive-records-full-row-hover[data-hovered-row]::before,
+  .responsive-records-full-row-hover[data-hovered-row]::after { opacity: 1; }
   .clients-data-table .client-table-name-link { padding: 0 !important; font-weight: 400 !important; }
   /* Reserve enough space for status pills and three independent action targets. */
   .leads-data-table col:nth-child(2) { width: 17% !important; }
@@ -1591,8 +1616,20 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .leads-data-table col:nth-child(5) { width: 10% !important; }
   .leads-data-table col:nth-child(6) { width: 15% !important; }
   .leads-data-table col:nth-child(7) { width: 18% !important; }
-  .leads-data-table th .mobile-sort-action > span:first-child { white-space: nowrap; overflow-wrap: normal; }
-  .leads-data-table thead th:last-child { text-align: center; }
+  :is(.leads-data-table, .sales-data-table) th .mobile-sort-action > span:first-child { white-space: nowrap; overflow-wrap: normal; }
+  :is(.leads-data-table, .sales-data-table) thead th:last-child { text-align: center; }
+  .sales-data-table col:nth-child(2) { width: 10% !important; }
+  .sales-data-table col:nth-child(3) { width: 14% !important; }
+  .sales-data-table col:nth-child(4) { width: 14% !important; }
+  .sales-data-table col:nth-child(5) { width: 9% !important; }
+  .sales-data-table col:nth-child(6) { width: 5% !important; }
+  .sales-data-table col:nth-child(7) { width: 11% !important; }
+  .sales-data-table col:nth-child(8) { width: 9% !important; }
+  .sales-data-table col:nth-child(9) { width: 9% !important; }
+  .sales-data-table col:nth-child(10) { width: 16% !important; }
+  .sales-data-table tbody td:nth-child(2) { color: var(--app-muted); }
+  .sales-data-table tbody td:is(:nth-child(3), :nth-child(4)) { font-weight: 400; letter-spacing: 0; }
+  .sales-data-table tbody td > .inline-flex { white-space: nowrap; }
   .app-main-content .lead-status-control {
     position: relative;
     display: inline-flex;
@@ -1784,6 +1821,13 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   }
   .compact-filter-panel:has(> .compact-filter-label),
   .compact-filter-panel > div:has(> .compact-filter-label) { align-items: flex-end; }
+  .sales-filter-custom-dates {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 6px;
+    margin-top: 8px;
+  }
+  .sales-filter-custom-dates > .app-button { grid-column: 1 / -1; justify-self: start; }
 }
 @media (max-width: 359px) {
   .compact-filter-panel > .compact-filter-quick-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1831,6 +1875,14 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .sales-log-header-actions > .app-button:nth-of-type(2) { order: 3; }
   .sales-log-header-actions > .app-button:nth-of-type(3) { order: 1; }
   .sales-log-header-actions > .app-button.sales-log-customize-action { order: 4; margin-left: auto; }
+  :is(.sales-log-page, .reports-page) > .page-header { margin-bottom: 12px; }
+
+  .reports-header-actions {
+    flex: 1 1 100%;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .reports-header-actions > .app-button { flex-shrink: 0; }
 
   @media (max-width: 399px) {
     .sales-log-header-actions { flex-wrap: wrap; }
@@ -1870,7 +1922,7 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   :is(.app-main-content, .app-modal) .app-button:active::before { filter: brightness(0.9); }
 
   /* Keep record cards and listbox options in their own presentation system. */
-  :is(.app-main-content, .app-modal) button:not(.app-button):not(.app-icon-button):not(.modal-close-button):not(.mobile-icon-control):not([role="tab"]):not([role="option"]):not([aria-label^="Open deal "]) {
+  :is(.app-main-content, .app-modal) button:not(.dashboard-record-link):not(.app-button):not(.app-icon-button):not(.modal-close-button):not(.mobile-icon-control):not([role="tab"]):not([role="option"]):not([aria-label^="Open deal "]) {
     min-width: 44px;
     min-height: 44px;
     padding: 6px 12px;
@@ -1994,8 +2046,10 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .dashboard-key-metrics-title > h2 { font-size: 14px; line-height: 20px; }
   .dashboard-key-metrics-controls .dashboard-range-selector {
     position: static;
-    flex: 0 1 132px;
-    width: 132px;
+    /* Half the previous width, with enough room for the selected preset. */
+    flex: 0 1 66px;
+    width: 66px;
+    min-width: max-content;
     max-width: 100%;
     margin: 0;
   }
@@ -2027,7 +2081,7 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .dashboard-range-menu { width: min(18rem, 100%); max-width: 100%; grid-template-columns: 1fr; }
   .dashboard-range-menu-with-custom { width: min(36rem, 100%); }
   .dashboard-range-custom-panel { grid-template-columns: 1fr; border-left: 0; border-top: 1px solid var(--app-border); }
-  @media (max-width: 479px) {
+  @media (max-width: 439px) {
     .dashboard-heading-layout > .dashboard-metrics-toolbar {
       grid-column: 1 / -1;
       grid-row: 3;
@@ -2096,6 +2150,13 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
 }
 
 @media (max-width: 359px) {
+  .reports-header-actions {
+    flex-basis: calc(100% + 16px);
+    width: calc(100% + 16px);
+    margin-inline: -8px;
+    gap: 4px;
+  }
+
   :is(.leads-list-layout, .tasks-list-layout, .pipeline-list-layout, .catalog-list-layout) > .page-header > .page-header-actions {
     width: calc(100% + 16px);
     margin-inline: -8px;

@@ -54,7 +54,7 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
         <p className="mt-1 text-sm text-[var(--app-muted)]">Deal count and value as opportunities move through your sales pipeline.</p>
         <p className="mt-1 text-xs text-[var(--app-tertiary)]">Values shown are Deal Value, not recorded Sales.</p>
       </div>
-      <Badge variant="blue">{PIPELINE_STAGES.length} stages</Badge>
+      <Badge variant="blue" className="shrink-0 whitespace-nowrap">{PIPELINE_STAGES.length} stages</Badge>
     </div>
     <div className="pipeline-mobile-stage-list mt-4 space-y-2.5 md:hidden" aria-label="Pipeline stages">
       {stages.map(({ stage, color, width, dealLabel, totalValue, probability }) => (

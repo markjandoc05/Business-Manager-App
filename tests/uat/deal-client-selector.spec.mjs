@@ -43,13 +43,13 @@ async function signInAndChooseWorkspace(page, workspaceName = workspaceA.name) {
   await page.getByRole('button', { name: 'Sign in for local UAT' }).click();
   await expect.poll(async () => {
     if (await page.getByRole('heading', { name: 'Select Workspace' }).isVisible().catch(() => false)) return 'picker';
-    if (await page.getByRole('heading', { name: 'Key Metrics' }).isVisible().catch(() => false)) return 'dashboard';
+    if (await page.getByRole('heading', { name: 'KPIs' }).isVisible().catch(() => false)) return 'dashboard';
     return 'loading';
   }, { timeout: 30_000 }).toMatch(/picker|dashboard/);
   if (await page.getByRole('heading', { name: 'Select Workspace' }).isVisible().catch(() => false)) {
     await page.getByRole('button').filter({ has: page.getByText(workspaceName, { exact: true }) }).click();
   }
-  await expect(page.getByRole('heading', { name: 'Key Metrics' })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'KPIs' })).toBeVisible({ timeout: 30_000 });
 }
 
 async function openPipeline(page) {

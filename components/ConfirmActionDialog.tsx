@@ -39,7 +39,7 @@ export function ConfirmActionDialog({
       <h2 id="confirm-action-title" className="text-base font-semibold text-[var(--app-text)]">{title}</h2>
       <p id="confirm-action-description" className="mt-2 text-sm leading-5 text-[var(--app-muted)]">{description}</p>
       <div className="mobile-dialog-actions mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" autoFocus disabled={loading} onClick={onCancel}>{cancelLabel}</Button>
+        <Button type="button" variant="outline" disabled={loading} onClick={onCancel}>{cancelLabel}</Button>
         <Button type="button" variant={confirmVariant} disabled={loading || confirmDisabled} onClick={onConfirm}>{loading ? `${confirmLabel}…` : confirmLabel}</Button>
       </div>
     </div>

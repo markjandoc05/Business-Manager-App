@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, Button, EmptyState } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
@@ -15,9 +15,15 @@ import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
 import { KpiCardGrid, MovableKpiCard, StandardKpiCard } from '@/components/KpiCard';
 import { KpiCustomizationModal } from '@/components/KpiCustomizationModal';
+import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { organizationPreferenceKey, readKpiPreference, reorderKpiIds, writeKpiPreference } from '@/lib/kpi-preferences';
 
 type ReportKpiId = 'totalLeads' | 'clients' | 'convertedLeads' | 'activeDeals' | 'totalSales' | 'transactions' | 'amountPaid' | 'outstanding' | 'wonDeals' | 'lostDeals' | 'pipelineValue' | 'conversionRate';
+type ReportDateRange = 'ThisMonth' | 'LastMonth' | 'ThisQuarter' | 'ThisYear';
+type PendingReportExport = { scope: string; data: ReportData };
+const REPORT_DATE_RANGE_LABELS: Record<ReportDateRange, string> = {
+  ThisMonth: 'This Month', LastMonth: 'Last Month', ThisQuarter: 'This Quarter', ThisYear: 'This Year',
+};
 const REPORT_KPIS: ReadonlyArray<{ id: ReportKpiId; label: string; description: string }> = [
   { id: 'totalLeads', label: 'Total Leads', description: 'Total number of leads recorded.' },
   { id: 'clients', label: 'Clients', description: 'Active clients currently recorded in BSM.' },
@@ -59,8 +65,12 @@ export default function ReportsPage() {
   const { settings } = useApp();
   const { user } = useAuth();
   const { currentOrganizationId, ready: workspaceReady } = useWorkspace();
-  const [dateRange, setDateRange] = useState<'ThisMonth' | 'LastMonth' | 'ThisQuarter' | 'ThisYear'>('ThisMonth');
+  const [dateRange, setDateRange] = useState<ReportDateRange>('ThisMonth');
   const [reportData, setReportData] = useState<ReportData | null>(null);
+  const [reportDataScope, setReportDataScope] = useState<string | null>(null);
+  const [pendingExport, setPendingExport] = useState<PendingReportExport | null>(null);
+  const confirmedExportRef = useRef<PendingReportExport | null>(null);
+  const reportScope = JSON.stringify([user?.uid, currentOrganizationId, dateRange]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reportKpiIds, setReportKpiIds] = useState<string[]>([...REPORT_DEFAULT_KPI_IDS]);
@@ -86,28 +96,40 @@ export default function ReportsPage() {
   useEffect(() => {
     let cancelled = false;
     if (!user || !workspaceReady || !currentOrganizationId) return () => { cancelled = true; };
+    setPendingExport(null);
     setLoading(true);
     setError(null);
     void loadReportData(user, currentOrganizationId, range.startDate, range.endDate, [...DEAL_STAGES], settings.leadSources.map((source) => source.name))
-      .then((data) => { if (!cancelled) setReportData(data); })
+      .then((data) => { if (!cancelled) { setReportData(data); setReportDataScope(reportScope); } })
       .catch((loadError) => { console.error('Unable to load report data', loadError); if (!cancelled) setError(firestoreQueryErrorMessage(loadError, 'Unable to load reports. Please try again.')); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [currentOrganizationId, range, settings.leadSources, user, workspaceReady]);
+  }, [currentOrganizationId, range, reportScope, settings.leadSources, user, workspaceReady]);
+
+  const canExportReport = workspaceReady && Boolean(user && currentOrganizationId && reportData && reportDataScope === reportScope && !loading && !error);
+  const exportConfirmation = canExportReport && pendingExport?.scope === reportScope ? pendingExport : null;
+
+  const requestExport = () => {
+    if (canExportReport && reportData) setPendingExport({ scope: reportScope, data: reportData });
+  };
 
   const exportCSV = () => {
+    if (!exportConfirmation || confirmedExportRef.current === exportConfirmation) return;
+    confirmedExportRef.current = exportConfirmation;
+    setPendingExport(null);
+    const data = exportConfirmation.data;
     const csvContent = "Metric,Value\n" +
-      `Total Leads,${reportData?.totalLeads || 0}\n` +
-      `Clients,${reportData?.clients || 0}\n` +
-      `Converted Leads,${reportData?.convertedLeads || 0}\n` +
-      `Active Deals,${reportData?.activeDeals || 0}\n` +
-      `Won Deals,${reportData?.wonDeals || 0}\n` +
-      `Lost Deals,${reportData?.lostDeals || 0}\n` +
-      `Total Sales,${reportData?.totalSales || 0}\n` +
-      `Transactions,${reportData?.transactions || 0}\n` +
-      `Amount Paid,${reportData?.amountPaid || 0}\n` +
-      `Outstanding,${reportData?.outstanding || 0}\n` +
-      `Pipeline Value,${reportData?.pipelineValue || 0}`;
+      `Total Leads,${data.totalLeads || 0}\n` +
+      `Clients,${data.clients || 0}\n` +
+      `Converted Leads,${data.convertedLeads || 0}\n` +
+      `Active Deals,${data.activeDeals || 0}\n` +
+      `Won Deals,${data.wonDeals || 0}\n` +
+      `Lost Deals,${data.lostDeals || 0}\n` +
+      `Total Sales,${data.totalSales || 0}\n` +
+      `Transactions,${data.transactions || 0}\n` +
+      `Amount Paid,${data.amountPaid || 0}\n` +
+      `Outstanding,${data.outstanding || 0}\n` +
+      `Pipeline Value,${data.pipelineValue || 0}`;
     const objectUrl = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement("a");
     link.setAttribute("href", objectUrl);
@@ -140,21 +162,24 @@ export default function ReportsPage() {
   const leadSourceChartData = settings.leadSources.map((source) => ({ source: source.name, count: reportData?.leadsBySource[source.name] || 0 }));
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Reports & Analytics" subtitle="Review sales performance and business activity." actions={<>
+    <div className="reports-page space-y-5">
+      <PageHeader title="Reports & Analytics" subtitle="Review sales performance and business activity." actions={<div className="reports-header-actions flex w-full min-w-0 items-center gap-2">
             <span className="compact-filter-field"><select aria-label="Report date range" className="border rounded-lg px-3 py-2 text-sm" value={dateRange} onChange={(e) => setDateRange(e.target.value as typeof dateRange)}>
                 <option value="ThisMonth">This Month</option>
                 <option value="LastMonth">Last Month</option>
                 <option value="ThisQuarter">This Quarter</option>
                 <option value="ThisYear">This Year</option>
             </select></span>
-            <Button variant="outline" className="gap-2" onClick={exportCSV} disabled={loading || !reportData}><Download size={16}/> Export CSV</Button>
-      </>} />
+            <Button variant="outline" className="gap-2" onClick={requestExport} disabled={!canExportReport}><Download size={16}/> Export CSV</Button>
+            <Button size="sm" variant="outline" onClick={openCustomizeKpis} className="reports-customize-action mobile-icon-only ml-auto" aria-label="Customize Cards" title="Customize Cards"><Settings2 size={16} aria-hidden="true" /><span className="mobile-button-label">Customize Cards</span></Button>
+      </div>} />
+
+      <ConfirmActionDialog open={Boolean(exportConfirmation)} title="Export report?" description={`Download report.csv with the report data for ${REPORT_DATE_RANGE_LABELS[dateRange]}?`} confirmLabel="Export CSV" onCancel={() => setPendingExport(null)} onConfirm={exportCSV} />
 
       {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{error}</p>}
       {loading && <p className="text-sm text-[var(--app-muted)]">Loading organization-wide report data…</p>}
 
-      <section><div className="mb-2 flex justify-end"><Button size="sm" variant="outline" onClick={openCustomizeKpis} className="mobile-compact-action" data-mobile-label="Customize" aria-label="Customize Cards"><Settings2 size={16} /> Customize Cards</Button></div><KpiCardGrid>{reportKpiIds.map((id, index) => { const metric = reportMetricById.get(id as ReportKpiId); if (!metric) return null; return <MovableKpiCard key={id} cardId={metric.label} order={index} onDragStart={setDraggingKpi} onDragEnd={() => setDraggingKpi(null)} onDrop={() => moveReportKpi(id)}><StandardKpiCard label={metric.label} value={metric.value} description={metric.description} context={metric.context} icon={metric.icon} /></MovableKpiCard>; })}</KpiCardGrid></section>
+      <section><KpiCardGrid>{reportKpiIds.map((id, index) => { const metric = reportMetricById.get(id as ReportKpiId); if (!metric) return null; return <MovableKpiCard key={id} cardId={metric.label} order={index} onDragStart={setDraggingKpi} onDragEnd={() => setDraggingKpi(null)} onDrop={() => moveReportKpi(id)}><StandardKpiCard label={metric.label} value={metric.value} description={metric.description} context={metric.context} icon={metric.icon} /></MovableKpiCard>; })}</KpiCardGrid></section>
 
       {customizeKpis && <KpiCustomizationModal idPrefix="reports" ariaLabel="Customize Reports KPI cards" title="Customize Report Cards" subtitle="Choose the metrics you want to see in Reports & Analytics." draftIds={reportKpiDraft} defaultIds={REPORT_DEFAULT_KPI_IDS} options={REPORT_KPI_OPTIONS} categories={REPORT_KPI_CATEGORIES} maximum={REPORT_MAX_KPIS} onDraftChange={(ids) => setReportKpiDraft(ids)} onClose={() => setCustomizeKpis(false)} onSave={(ids) => { setReportKpiIds(ids); if (currentOrganizationId) writeKpiPreference(window.localStorage, organizationPreferenceKey(REPORT_KPI_STORAGE_KEY, currentOrganizationId), ids); setCustomizeKpis(false); }} />}
 

@@ -62,7 +62,7 @@ export function Button({
   );
 }
 
-export function Badge({ children, variant = 'gray' }: { children: React.ReactNode; variant?: 'blue' | 'green' | 'orange' | 'red' | 'gray' | 'purple' }) {
+export function Badge({ children, variant = 'gray', className }: { children: React.ReactNode; variant?: 'blue' | 'green' | 'orange' | 'red' | 'gray' | 'purple'; className?: string }) {
   const variants = {
     blue: 'border-[#d0dfef] bg-[#edf3fb] text-[#34587d]',
     green: 'border-[#c9e4d4] bg-[#eaf5ee] text-[#22623e]',
@@ -73,7 +73,7 @@ export function Badge({ children, variant = 'gray' }: { children: React.ReactNod
   };
 
   return (
-    <span className={cn("inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-xs font-medium", variants[variant])}>
+    <span className={cn("inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-xs font-medium", variants[variant], className)}>
       {children}
     </span>
   );

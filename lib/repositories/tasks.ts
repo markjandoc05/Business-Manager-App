@@ -103,6 +103,11 @@ async function getOrganizationTask(organizationId: string, taskId: string) {
   return mapTask(snapshot.id, snapshot.data());
 }
 
+export async function getTaskById(user: AppUser, organizationId: string, taskId: string): Promise<Task> {
+  await requireActiveUser(user, organizationId);
+  return getOrganizationTask(organizationId, taskId);
+}
+
 function taskFilterConstraints(filters: TaskListFilters = {}): QueryConstraint[] {
   const constraints: QueryConstraint[] = [];
   if (filters.status && filters.status !== 'All') constraints.push(where('status', '==', filters.status));

@@ -6,7 +6,7 @@ import { Lead, Client, Deal, Task, Activity, Settings, DocumentItem, Note } from
 import { useAuth } from '@/context/AuthContext';
 import { addClientNote, archiveClient as archiveClientRepository, archiveClientDocument as archiveClientDocumentRepository, archiveClientNote as archiveClientNoteRepository, createClient as createClientRepository, getClientById, listArchivedClientDocuments, listArchivedClientNotes, listArchivedClientsPage, listClientDocumentsPage, listClientNotesPage, listClientsPage, listTrashedClientsPage, permanentlyDeleteClient as permanentlyDeleteClientRepository, permanentlyDeleteClientDocument as permanentlyDeleteClientDocumentRepository, permanentlyDeleteClientNote as permanentlyDeleteClientNoteRepository, restoreClient as restoreClientRepository, restoreClientDocument as restoreClientDocumentRepository, restoreClientNote as restoreClientNoteRepository, trashClient as trashClientRepository, uploadClientDocument, updateClient as updateClientRepository, updateClientNote as updateClientNoteRepository, type ClientInput } from '@/lib/repositories/clients';
 import { archiveLead as archiveLeadRepository, convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeadsPage, listLeadsPage, listTrashedLeadsPage, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository, trashLead as trashLeadRepository, updateLead as updateLeadRepository, updateLeadStatus as updateLeadStatusRepository, type LeadInput, type LeadListFilters } from '@/lib/repositories/leads';
-import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, listArchivedDealsPage, listDealsPage, permanentlyDeleteDeal as permanentlyDeleteDealRepository, PIPELINE_DEAL_LIMIT, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
+import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, getDealById, listArchivedDealsPage, listDealsPage, permanentlyDeleteDeal as permanentlyDeleteDealRepository, PIPELINE_DEAL_LIMIT, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
 import { getDealValue } from '@/lib/deal-items';
 import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listLeadTasks, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
 import { defaultSettings, loadSettings, SettingsLoadError, SettingsPersistenceError, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
@@ -1176,13 +1176,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const updateDeal = async (dealId: string, dealData: { title: string; value: number; stage: string; expectedCloseDate: string; productServiceName?: string; notes?: string; items?: Deal['items']; assignedToUid: string; assignedToName: string; lossReason: string }) => {
     if (!user) return;
     requireWritableLicense();
-    const deal = deals.find((item) => item.id === dealId);
-    if (!deal) throw new Error('Deal not found. Please refresh and try again.');
+    if (!currentOrganizationId) throw new Error('No active organization is selected.');
+    const organizationId = currentOrganizationId;
+    const deal = (dealsOrganizationId === organizationId ? deals.find((item) => item.id === dealId) : undefined) || await getDealById(user, organizationId, dealId);
+    if (organizationId !== currentOrganizationRef.current) throw new Error('The active workspace changed. Please reopen the Deal.');
     const nextStatus = getDealStatusForStage(dealData.stage);
     const value = getDealValue(dealData.value, dealData.items);
     const productServiceName = dealData.productServiceName?.trim() || deal.productServiceName;
-    if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    const organizationId = currentOrganizationId;
     await updateDealRepository(user, organizationId, deal, { ...dealData, value, clientId: deal.clientId, leadId: deal.leadId });
     invalidateDashboardMetrics(organizationId);
     if (organizationId !== currentOrganizationRef.current) return;

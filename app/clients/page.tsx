@@ -56,7 +56,9 @@ import { listActivitiesForClientPage } from '@/lib/repositories/activities';
 import { activityBelongsToClient } from '@/lib/activity-history';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
-import { CLIENT_PAGE_SIZE } from '@/lib/repositories/clients';
+import { CLIENT_PAGE_SIZE, getClientById } from '@/lib/repositories/clients';
+import { useRecordDetails } from '@/hooks/use-record-details';
+import { RecordDetailsStatusDialog } from '@/components/RecordDetailsStatusDialog';
 import { createSale, getActiveSaleForDeal, listClientSalesPage, getClientSalesSummary, type CreateSaleInput } from '@/lib/repositories/sales';
 import { RecordSaleModal, SaleDetailsModal } from '@/components/SaleRecordModal';
 import { Archive, Download, FileText, ReceiptText, RotateCcw, Trash2, Upload } from 'lucide-react';
@@ -178,7 +180,7 @@ export default function ClientsPage() {
     executeBulkLifecycleAction: executeBulkLifecycleInApp,
   } = useApp();
   const { user } = useAuth();
-  const { currentOrganizationId, membership, canWrite } = useWorkspace();
+  const { currentOrganizationId, membership, canWrite, ready: workspaceReady } = useWorkspace();
   const canManage = canManageClients(membership) && canWrite;
   const canManageDeal = canManageDeals(membership) && canWrite;
   const canManageSale = canManageSales(membership) && canWrite;
@@ -280,7 +282,8 @@ export default function ClientsPage() {
   const previousOrganizationId = useRef(currentOrganizationId);
 
   // Selected client computed data
-  const selectedClient = clients.find(c => c.id === selectedClientId);
+  const clientDetails = useRecordDetails({ recordId: selectedClientId, records: clients, user, organizationId: currentOrganizationId, ready: workspaceReady, loadRecord: getClientById });
+  const selectedClient = clientDetails.record;
   const selectedClientSourceLeadId = selectedClient?.sourceLeadId;
   const refreshClientActivity = useCallback(() => setActivityReloadToken((current) => current + 1), []);
 
@@ -754,6 +757,7 @@ export default function ClientsPage() {
     setActionError(null);
     try {
       await updateClientInApp(selectedClient.id, editClientForm);
+      clientDetails.reload();
       refreshClientActivity();
       setShowEditModal(false);
     } catch (error) {
@@ -1021,6 +1025,7 @@ export default function ClientsPage() {
 
   return (
     <div className="space-y-6">
+      {selectedClientId && !selectedClient && <RecordDetailsStatusDialog title="Client details" error={clientDetails.error} onClose={() => setSelectedClientId(null)} onRetry={clientDetails.reload} />}
       {(actionError || clientsError) && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{actionError || clientsError}</p>}
       {/* If Client is Selected, Show Client Profile */}
       {selectedClient ? (
@@ -1303,7 +1308,7 @@ export default function ClientsPage() {
           {/* Client Table */}
           {!showArchived && !showTrash && <Card className="clients-table-card overflow-hidden rounded-xl border border-[var(--app-border)]/80 bg-white p-0 shadow-none">
             {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-[var(--app-muted)]">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-[var(--app-muted)]">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-[var(--app-tertiary)]">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
-              <ResponsiveTable columns={["Selection", "Client", "Company", "Contact", "Client since", "Active deals", "Won deal value", "Actions"]} primaryColumn={1} summaryColumns={[2, 6]} selectionColumn={0} actionColumn={7} className="clients-data-table w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
+              <ResponsiveTable columns={["Selection", "Client", "Company", "Contact", "Client since", "Active deals", "Won deal value", "Actions"]} primaryColumn={1} summaryColumns={[2, 6]} selectionColumn={0} actionColumn={7} fullWidthRowHover className="clients-data-table w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
                 <colgroup>
                   <col style={{ width: '3%' }} />
                   <col style={{ width: '18%' }} />
