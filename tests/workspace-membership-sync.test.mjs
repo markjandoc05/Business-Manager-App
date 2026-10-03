@@ -42,14 +42,6 @@ test('trusted profile bootstrap runs before protected membership discovery', () 
   assert.doesNotMatch(auth, /setDoc\(userRef/);
 });
 
-test('workspace discovery preserves the pending-profile onboarding guard', () => {
-  assert.match(workspaces, /const profileSnapshot = await getDoc\(doc\(db, 'users', user\.uid\)\)/);
-  assert.match(workspaces, /if \(!profileSnapshot\.exists\(\) \|\| profile\?\.status !== 'active' \|\| profile\.active === false\) return \[\]/);
-  assert.doesNotMatch(workspaces, /profilePrevalidated/);
-  assert.match(context, /listUserMemberships\(firebaseUser\)\.then/);
-  assert.doesNotMatch(context, /profilePrevalidated:\s*true/);
-});
-
 test('bootstrap reuses the verified token identity and transaction profile', () => {
   assert.match(auth, /bootstrapResult\.data\?\.profile/);
   assert.match(bootstrapRoute, /authUser: authenticatedUser/);

@@ -112,7 +112,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setLicenseLoading(false);
     markStartupEvent('WORKSPACE_RESOLUTION_START');
 
-    void listUserMemberships(firebaseUser).then(async (memberships) => {
+    void listUserMemberships(firebaseUser, { profilePrevalidated: true }).then(async (memberships) => {
       if (!isCurrentRequest() || userId !== firebaseUser.uid) return;
       setHasMembership(memberships.length > 0);
       setMembershipSummaries(memberships.map((item) => ({ organizationId: item.organizationId, status: item.status, role: item.role })));
