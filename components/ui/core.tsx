@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)] shadow-[var(--app-shadow-xs)]", className)}>
+    <div className={cn("rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)]", className)}>
       {children}
     </div>
   );
@@ -53,16 +53,16 @@ export function Button({
 
 export function Badge({ children, variant = 'gray' }: { children: React.ReactNode; variant?: 'blue' | 'green' | 'orange' | 'red' | 'gray' | 'purple' }) {
   const variants = {
-    blue: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
-    green: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
+    blue: 'border-[#d0dfef] bg-[#edf3fb] text-[#34587d]',
+    green: 'border-[#c9e4d4] bg-[#eaf5ee] text-[#22623e]',
     orange: 'border-[color-mix(in_srgb,var(--app-warning)_45%,white)] bg-[color-mix(in_srgb,var(--app-warning)_14%,white)] text-[var(--app-text)]',
     red: 'border-[color-mix(in_srgb,var(--app-danger)_35%,white)] bg-[color-mix(in_srgb,var(--app-danger)_10%,white)] text-[var(--app-danger)]',
     gray: 'border-[var(--app-border)] bg-[var(--app-surface-subtle)] text-[var(--app-muted)]',
-    purple: 'border-[var(--app-border)] bg-[var(--app-accent-soft)] text-[var(--app-primary)]',
+    purple: 'border-[#e0d8ef] bg-[#f3eef9] text-[#694a89]',
   };
 
   return (
-    <span className={cn("inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em]", variants[variant])}>
+    <span className={cn("inline-flex min-h-5 items-center rounded-full border px-2 py-0.5 text-xs font-medium", variants[variant])}>
       {children}
     </span>
   );

@@ -1,5 +1,7 @@
 'use client';
 
+import { ResponsiveTable } from '@/components/ResponsiveTable';
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Edit, Plus, RefreshCw, RotateCcw, Search } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui/core';
@@ -356,12 +358,12 @@ export default function CatalogPage() {
 
   const currentActions = activeSection === 'items'
     ? <>
-      <Button variant="outline" onClick={() => void refreshItems()} disabled={itemsLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button>
+      <Button variant="outline" onClick={() => void refreshItems()} disabled={itemsLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh catalog items"><RefreshCw size={16} /> Refresh</Button>
       <Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Items' : 'Archived Items'}</Button>
       {canManage && <Button onClick={openCreateItem} className="gap-2"><Plus size={18} /> Add Item</Button>}
     </>
     : <>
-      <Button variant="outline" onClick={() => void refreshCategories()} disabled={categoriesLoading} className="gap-2"><RefreshCw size={16} /> Refresh</Button>
+      <Button variant="outline" onClick={() => void refreshCategories()} disabled={categoriesLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh catalog items"><RefreshCw size={16} /> Refresh</Button>
       {canManage && <Button onClick={() => openAddCategory()} className="gap-2"><Plus size={18} /> Add Category</Button>}
     </>;
 
@@ -501,7 +503,7 @@ function ProductsAndServicesSection({
       action={items.length === 0 && !showArchived && canManage ? <Button onClick={onOpenCreate} className="gap-2"><Plus size={16} /> Add Item</Button> : undefined}
     /></Card> : <Card className="overflow-hidden p-0">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[940px] text-left">
+        <ResponsiveTable columns={["Name", "Type", "Category", "Code / SKU", "Unit", "Regular price", "Sale price", "Status", "Actions"]} primaryColumn={0} summaryColumns={[1, 5, 7]} actionColumn={8} className="w-full min-w-[940px] text-left">
           <thead><tr className="border-b border-[var(--app-border)]"><th>Name</th><th>Type</th><th>Category</th><th>Code / SKU</th><th>Unit</th><th>Regular Price</th><th>Sale Price</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-[var(--app-border-subtle)]">
             {visibleItems.map((item) => <tr key={item.id} className="hover:bg-[var(--app-surface-subtle)]">
@@ -520,7 +522,7 @@ function ProductsAndServicesSection({
               </div></td>
             </tr>)}
           </tbody>
-        </table>
+        </ResponsiveTable>
       </div>
       <TablePagination page={page} pageSize={pageSize} totalCount={filteredItems.length} hasMore={hasMore} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />
     </Card>}
@@ -548,7 +550,7 @@ function CategoriesSection({ categories, allCategoryCount, loading, typeFilter, 
       {canManage && <Button onClick={onAddCategory} className="gap-2 self-start"><Plus size={16} /> Add Category</Button>}
     </div>
     <Card className="p-3 sm:p-4"><div className="flex flex-col gap-3 sm:flex-row sm:justify-end"><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by type</span><select className="w-full sm:w-40" aria-label="Filter categories by type" value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value as CatalogItemTypeFilter)}><option value="All">All types</option><option value="PRODUCT">Products</option><option value="SERVICE">Services</option></select></label><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by status</span><select className="w-full sm:w-40" aria-label="Filter categories by status" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as CatalogItemStatusFilter)}><option value="All">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></label></div></Card>
-    {loading ? <LoadingState label="Loading categories…" /> : categories.length === 0 ? <Card className="p-0"><EmptyState title={allCategoryCount === 0 ? 'No categories yet.' : 'No matching categories.'} description={allCategoryCount === 0 ? 'Create reusable Product and Service categories for your catalog.' : undefined} action={allCategoryCount === 0 && canManage ? <Button onClick={onAddCategory} className="gap-2"><Plus size={16} /> Add Category</Button> : undefined} /></Card> : <Card className="overflow-hidden p-0"><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th>Category Name</th><th>Type</th><th>Status</th><th className="text-right">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">{categories.map((category) => <tr key={category.id} className="hover:bg-[var(--app-surface-subtle)]"><td className="font-semibold text-[var(--app-text)]">{category.name}</td><td><Badge variant={category.type === 'PRODUCT' ? 'blue' : 'purple'}>{itemTypeLabel(category.type)}</Badge></td><td><Badge variant={category.status === 'ACTIVE' ? 'green' : 'orange'}>{category.status === 'ACTIVE' ? 'Active' : 'Inactive'}</Badge></td><td><div className="flex justify-end gap-2">{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onRenameCategory(category)} disabled={saving}>Rename</Button>}{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onToggleStatus(category)} disabled={saving}>{category.status === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}</Button>}</div></td></tr>)}</tbody></table></div></Card>}
+    {loading ? <LoadingState label="Loading categories…" /> : categories.length === 0 ? <Card className="p-0"><EmptyState title={allCategoryCount === 0 ? 'No categories yet.' : 'No matching categories.'} description={allCategoryCount === 0 ? 'Create reusable Product and Service categories for your catalog.' : undefined} action={allCategoryCount === 0 && canManage ? <Button onClick={onAddCategory} className="gap-2"><Plus size={16} /> Add Category</Button> : undefined} /></Card> : <Card className="overflow-hidden p-0"><div className="overflow-x-auto"><ResponsiveTable columns={["Category", "Type", "Status", "Actions"]} primaryColumn={0} summaryColumns={[1, 2]} actionColumn={3} className="w-full min-w-[620px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th>Category Name</th><th>Type</th><th>Status</th><th className="text-right">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">{categories.map((category) => <tr key={category.id} className="hover:bg-[var(--app-surface-subtle)]"><td className="font-semibold text-[var(--app-text)]">{category.name}</td><td><Badge variant={category.type === 'PRODUCT' ? 'blue' : 'purple'}>{itemTypeLabel(category.type)}</Badge></td><td><Badge variant={category.status === 'ACTIVE' ? 'green' : 'orange'}>{category.status === 'ACTIVE' ? 'Active' : 'Inactive'}</Badge></td><td><div className="flex justify-end gap-2">{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onRenameCategory(category)} disabled={saving}>Rename</Button>}{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onToggleStatus(category)} disabled={saving}>{category.status === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}</Button>}</div></td></tr>)}</tbody></ResponsiveTable></div></Card>}
   </section>;
 }
 

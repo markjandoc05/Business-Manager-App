@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/core';
-import { useEscapeKey } from '@/components/useEscapeKey';
+import { useDialogAccessibility } from '@/components/useDialogAccessibility';
 
 type ConfirmVariant = 'default' | 'warning' | 'danger';
 
@@ -29,13 +29,13 @@ export function ConfirmActionDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
-  useEscapeKey(onCancel, open && !loading);
+  const dialogRef = useDialogAccessibility<HTMLDivElement>(onCancel, open, !loading);
 
   if (!open) return null;
   const confirmVariant = variant === 'danger' ? 'danger' : variant === 'warning' ? 'warning' : 'primary';
 
   return <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[var(--app-primary)]/45 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !loading) onCancel(); }}>
-    <div className="w-full max-w-md rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow-lg)]" role="dialog" aria-modal="true" aria-labelledby="confirm-action-title" aria-describedby="confirm-action-description">
+    <div ref={dialogRef} tabIndex={-1} className="w-full max-w-md rounded-[var(--app-radius-panel)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 shadow-[var(--app-shadow-lg)]" role="dialog" aria-modal="true" aria-labelledby="confirm-action-title" aria-describedby="confirm-action-description">
       <h2 id="confirm-action-title" className="text-base font-semibold text-[var(--app-text)]">{title}</h2>
       <p id="confirm-action-description" className="mt-2 text-sm leading-5 text-[var(--app-muted)]">{description}</p>
       <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">

@@ -1,5 +1,7 @@
 'use client';
 
+import { ResponsiveTable } from '@/components/ResponsiveTable';
+
 import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
@@ -191,6 +193,7 @@ export default function SettingsPage() {
           {tabs.map(tab => (
             <button
               key={tab.id}
+              aria-current={activeTab === tab.id ? 'page' : undefined}
               onClick={() => handleTabChange(tab.id as typeof activeTab)}
               className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 activeTab === tab.id ? 'bg-[var(--app-surface-subtle)] text-[var(--app-text)]' : 'text-[var(--app-muted)] hover:bg-[var(--app-surface-subtle)]'
@@ -282,7 +285,7 @@ export default function SettingsPage() {
                 {!usersLoading && !usersError && managedUsers.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-sm text-[var(--app-muted)]">No users found.</p>}
                 {!usersLoading && managedUsers.length > 0 && (
                   <div className="overflow-x-auto rounded-xl border">
-                    <table className="w-full min-w-[760px] text-left text-sm">
+                    <ResponsiveTable columns={["Name", "Email", "Role", "Status", "Last login"]} primaryColumn={0} summaryColumns={[2, 3]} className="w-full min-w-[760px] text-left text-sm">
                       <thead className="border-b bg-[var(--app-surface-subtle)]">
                         <tr>
                           <th className="p-3 font-bold text-[var(--app-muted)]">Name</th>
@@ -315,7 +318,7 @@ export default function SettingsPage() {
                           );
                         })}
                       </tbody>
-                    </table>
+                    </ResponsiveTable>
                   </div>
                 )}
               </div>

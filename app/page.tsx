@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, Button, Badge } from '@/components/ui/core';
+import { MobileQuickActionMenu } from '@/components/MobileQuickActionMenu';
 import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { 
@@ -126,9 +127,7 @@ export default function DashboardPage() {
   const [pipelineMetricsError, setPipelineMetricsError] = useState<string | null>(null);
   const pipelineRequestVersion = useRef(0);
   const pipelineLastRequestAt = useRef(0);
-  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [dashboardRangeOpen, setDashboardRangeOpen] = useState(false);
-  const quickActionsMenuRef = useRef<HTMLDivElement>(null);
   const dashboardRangeMenuRef = useRef<HTMLDivElement>(null);
   const dashboardPaintMeasured = useRef(false);
   const dashboardStarted = useRef(false);
@@ -152,21 +151,7 @@ export default function DashboardPage() {
     emitStartupTiming();
   }, [workspaceReady]);
 
-  useEffect(() => {
-    if (!quickActionsOpen) return;
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!quickActionsMenuRef.current?.contains(event.target as Node)) setQuickActionsOpen(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setQuickActionsOpen(false);
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [quickActionsOpen]);
+
 
   useEffect(() => {
     if (!dashboardRangeOpen) return;
@@ -360,7 +345,6 @@ export default function DashboardPage() {
   };
 
   const openQuickAction = (modal: 'lead' | 'client' | 'task') => {
-    setQuickActionsOpen(false);
     if (modal === 'lead') setLeadError(null);
     setActiveModal(modal);
   };
@@ -507,25 +491,13 @@ export default function DashboardPage() {
               <Button variant="outline" disabled={!canManageClientsAction} onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
               <Button variant="outline" disabled={!canManageTasksAction} onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
             </div>
-            <div ref={quickActionsMenuRef} className="dashboard-mobile-quick-action hidden">
-              <button
-                type="button"
-                aria-label="Quick actions"
-                aria-controls="dashboard-quick-actions-menu"
-                aria-expanded={quickActionsOpen}
-                aria-haspopup="menu"
-                onClick={() => setQuickActionsOpen((open) => !open)}
-                className="dashboard-mobile-quick-action-trigger flex items-center justify-center rounded-lg bg-[var(--app-primary)] text-white shadow-sm transition-colors hover:bg-[var(--app-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30"
-              >
-                <Plus size={20} />
-              </button>
-              {quickActionsOpen && <div id="dashboard-quick-actions-menu" role="menu" aria-label="Quick actions menu" className="dashboard-quick-actions-menu">
-                <button type="button" role="menuitem" onClick={() => openQuickAction('lead')} disabled={!canManage || !workspaceReady}>Add Lead</button>
-                <button type="button" role="menuitem" onClick={() => openQuickAction('client')} disabled={!canManageClientsAction}>Add Client</button>
-                <button type="button" role="menuitem" onClick={() => openQuickAction('task')} disabled={!canManageTasksAction}>Add Task</button>
-              </div>}
-            </div>
+
           </>}
+          mobileQuickActions={<MobileQuickActionMenu items={[
+            { label: 'Add Lead', onSelect: () => openQuickAction('lead'), disabled: !canManage || !workspaceReady },
+            { label: 'Add Client', onSelect: () => openQuickAction('client'), disabled: !canManageClientsAction },
+            { label: 'Add Task', onSelect: () => openQuickAction('task'), disabled: !canManageTasksAction },
+          ]} />}
         />
       </div>
 

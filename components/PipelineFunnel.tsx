@@ -24,13 +24,29 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
   const [activeStage, setActiveStage] = useState<typeof DEAL_STAGES[number] | null>(null);
   const pipelineInfoId = useId();
   const hasAuthoritativeSummary = stageSummary !== undefined;
+  const stages = PIPELINE_STAGES.map((stage, index) => {
+    const stageDeals = deals.filter((deal) => deal.stage === stage);
+    const summary = stageSummary?.[stage];
+    const dealCount = hasAuthoritativeSummary ? summary?.count ?? 0 : stageDeals.length;
+    const totalValue = hasAuthoritativeSummary ? summary?.value ?? 0 : stageDeals.reduce((sum, deal) => sum + deal.value, 0);
+
+    return {
+      stage,
+      color: PIPELINE_STAGE_COLORS[index],
+      width: `${100 - index * 10}%`,
+      dealLabel: `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`,
+      totalValue: formatCurrency(totalValue, currency),
+      probability: getDealProbability(stage),
+      description: STAGE_DESCRIPTIONS[stage],
+    };
+  });
 
   return <Card className="h-full overflow-visible border-[var(--app-border)] p-4 sm:p-5">
     <div className="flex items-start justify-between gap-4 border-b border-[var(--app-border-subtle)] pb-4">
       <div className="min-w-0">
         <div className="flex items-center gap-1.5">
           <h2 className="text-base font-semibold tracking-tight text-[var(--app-text)]">Pipeline Overview</h2>
-          <button type="button" aria-label="About Pipeline Overview" aria-describedby={pipelineInfoId} title="Pipeline values represent Deal Value from opportunities. Won Deal Value may differ from actual Sales recorded in Sales Log." className="group relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-tertiary)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
+          <button type="button" aria-label="About Pipeline Overview" aria-describedby={pipelineInfoId} title="Pipeline values represent Deal Value from opportunities. Won Deal Value may differ from actual Sales recorded in Sales Log." className="mobile-touch-target group relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[var(--app-tertiary)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
             <Info size={15} aria-hidden="true" />
             <span id={pipelineInfoId} role="tooltip" className="pointer-events-none absolute left-0 top-7 z-20 hidden w-64 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] p-3 text-left text-xs font-normal leading-5 text-[var(--app-text)] shadow-[var(--app-shadow-sm)] group-hover:block group-focus-visible:block">Pipeline values represent Deal Value from opportunities. Won Deal Value may differ from actual Sales recorded in Sales Log.</span>
           </button>
@@ -40,17 +56,29 @@ export function PipelineFunnel({ deals, currency, stageSummary }: { deals: Deal[
       </div>
       <Badge variant="blue">{PIPELINE_STAGES.length} stages</Badge>
     </div>
-    <div className="mx-auto mt-5 flex w-full max-w-3xl flex-col items-center gap-1.5" aria-label="Pipeline funnel overview">
-      {PIPELINE_STAGES.map((stage, index) => {
-        const stageDeals = deals.filter((deal) => deal.stage === stage);
-        const summary = stageSummary?.[stage];
-        const dealCount = hasAuthoritativeSummary ? summary?.count ?? 0 : stageDeals.length;
-        const totalValue = hasAuthoritativeSummary ? summary?.value ?? 0 : stageDeals.reduce((sum, deal) => sum + deal.value, 0);
-        const width = `${100 - index * 10}%`;
-        const dealLabel = `${dealCount} ${dealCount === 1 ? 'deal' : 'deals'}`;
-
-        return <FunnelStage key={stage} stage={stage} color={PIPELINE_STAGE_COLORS[index]} width={width} dealLabel={dealLabel} totalValue={formatCurrency(totalValue, currency)} probability={getDealProbability(stage)} description={STAGE_DESCRIPTIONS[stage]} active={activeStage === stage} onShow={() => setActiveStage(stage)} onHide={() => setActiveStage((current) => current === stage ? null : current)} />;
-      })}
+    <div className="pipeline-mobile-stage-list mt-4 space-y-2.5 md:hidden" aria-label="Pipeline stages">
+      {stages.map(({ stage, color, width, dealLabel, totalValue, probability }) => (
+        <div key={stage} className="pipeline-mobile-stage rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] px-3 py-2.5">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold leading-5 text-[var(--app-text)]">{stage}</p>
+              <p className="mt-0.5 text-xs leading-4 text-[var(--app-muted)]">{dealLabel} · {probability}% probability</p>
+            </div>
+            <div className="w-[45%] min-w-0 shrink-0 text-right">
+              <p title={totalValue} className="truncate text-sm font-semibold tabular-nums text-[var(--app-text)]">{totalValue}</p>
+              <p className="mt-0.5 text-[11px] leading-4 text-[var(--app-tertiary)]">{stage === 'Won' ? 'Won Deal Value' : stage === 'Lost' ? 'Lost Deal Value' : 'Deal Value'}</p>
+            </div>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--app-border-subtle)]" aria-hidden="true">
+            <div className="h-full rounded-full" style={{ width, backgroundColor: color }} />
+          </div>
+        </div>
+      ))}
+    </div>
+    <div className="pipeline-desktop-funnel mx-auto mt-5 hidden w-full max-w-3xl flex-col items-center gap-1.5 md:flex" aria-label="Pipeline funnel overview">
+      {stages.map(({ stage, color, width, dealLabel, totalValue, probability, description }) => (
+        <FunnelStage key={stage} stage={stage} color={color} width={width} dealLabel={dealLabel} totalValue={totalValue} probability={probability} description={description} active={activeStage === stage} onShow={() => setActiveStage(stage)} onHide={() => setActiveStage((current) => current === stage ? null : current)} />
+      ))}
     </div>
   </Card>;
 }

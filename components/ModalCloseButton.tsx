@@ -1,16 +1,17 @@
 import React from 'react';
 import { X } from 'lucide-react';
-import { useEscapeKey } from '@/components/useEscapeKey';
+import { useDialogAccessibility } from '@/components/useDialogAccessibility';
 
 export function ModalCloseButton({ onClose }: { onClose: () => void }) {
-  useEscapeKey(onClose);
+  const dialogAnchorRef = useDialogAccessibility<HTMLButtonElement>(onClose);
 
   return (
     <button
       type="button"
+      ref={dialogAnchorRef}
       onClick={onClose}
       aria-label="Close"
-      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--app-accent-soft)] text-[var(--app-primary)] transition-colors hover:bg-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] focus-visible:ring-offset-2"
+      className="modal-close-button inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[var(--app-accent-soft)] text-[var(--app-primary)] transition-colors hover:bg-[var(--app-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] focus-visible:ring-offset-2"
     >
       <X size={18} aria-hidden="true" />
     </button>
