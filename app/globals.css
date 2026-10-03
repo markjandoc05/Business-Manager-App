@@ -1922,7 +1922,7 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   :is(.app-main-content, .app-modal) .app-button:active::before { filter: brightness(0.9); }
 
   /* Keep record cards and listbox options in their own presentation system. */
-  :is(.app-main-content, .app-modal) button:not(.dashboard-record-link):not(.app-button):not(.app-icon-button):not(.modal-close-button):not(.mobile-icon-control):not([role="tab"]):not([role="option"]):not([aria-label^="Open deal "]) {
+  :is(.app-main-content, .app-modal) button:not(.dashboard-record-link):not(.dashboard-range-trigger):not(.app-button):not(.app-icon-button):not(.modal-close-button):not(.mobile-icon-control):not([role="tab"]):not([role="option"]):not([aria-label^="Open deal "]) {
     min-width: 44px;
     min-height: 44px;
     padding: 6px 12px;
@@ -2006,30 +2006,29 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .mobile-page-quick-action-trigger:hover { color: var(--app-primary); }
   .mobile-icon-only > .mobile-button-label { display: none; }
   .dashboard-heading-layout {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 8px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 6px;
   }
   .dashboard-heading-layout > .dashboard-top,
   .dashboard-heading-layout > .dashboard-top > header { display: contents; }
   .dashboard-heading-layout > .dashboard-top > header > div:first-child {
-    grid-column: 1 / -1;
-    grid-row: 1;
+    flex: 0 0 100%;
   }
+  .dashboard-heading-layout > .dashboard-top > header.page-header > .page-header-actions { display: none; }
   .dashboard-heading-layout > .dashboard-top > header.page-header > .mobile-page-quick-action {
-    grid-column: 1;
-    grid-row: 2;
+    flex: 0 0 auto;
     width: auto;
-    justify-self: start;
     flex-wrap: nowrap;
+    gap: 4px;
   }
   .dashboard-heading-layout > .dashboard-metrics-toolbar {
-    grid-column: 2;
-    grid-row: 2;
+    order: 3;
+    flex: 0 0 auto;
     min-width: 0;
     max-width: 100%;
-    margin: 0;
-    justify-self: end;
+    margin: 0 0 0 auto;
   }
   /* Keep the metric title, date, and customize action together on phones. */
   .dashboard-key-metrics-header {
@@ -2038,18 +2037,17 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
     flex-direction: row;
     align-items: center;
     justify-content: flex-start;
-    width: fit-content;
+    width: max-content;
     max-width: 100%;
-    gap: 6px;
+    gap: 4px;
   }
   .dashboard-key-metrics-title { flex: 0 0 auto; }
   .dashboard-key-metrics-title > h2 { font-size: 14px; line-height: 20px; }
   .dashboard-key-metrics-controls .dashboard-range-selector {
     position: static;
-    /* Half the previous width, with enough room for the selected preset. */
-    flex: 0 1 66px;
-    width: 66px;
-    min-width: max-content;
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 44px;
     max-width: 100%;
     margin: 0;
   }
@@ -2058,8 +2056,8 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
     isolation: isolate;
     height: 44px;
     min-height: 44px;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 4px;
+    padding: 6px 8px;
     border: 0;
     border-radius: 8px;
     background: transparent;
@@ -2081,12 +2079,6 @@ main table thead th button { font-size: 0.75rem; font-weight: 600; text-transfor
   .dashboard-range-menu { width: min(18rem, 100%); max-width: 100%; grid-template-columns: 1fr; }
   .dashboard-range-menu-with-custom { width: min(36rem, 100%); }
   .dashboard-range-custom-panel { grid-template-columns: 1fr; border-left: 0; border-top: 1px solid var(--app-border); }
-  @media (max-width: 439px) {
-    .dashboard-heading-layout > .dashboard-metrics-toolbar {
-      grid-column: 1 / -1;
-      grid-row: 3;
-    }
-  }
   .kpi-info-trigger { width: 44px; min-width: 44px; height: 44px; padding: 0; border-radius: 8px; }
   :is(.app-main-content, .app-modal) .dashboard-card-drag-handle { position: absolute; top: auto; right: 4px; bottom: 4px; }
   .kpi-drag-container:active .kpi-info-trigger { right: -0.5rem; }
