@@ -15,6 +15,7 @@ import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositorie
 export const CLIENT_PAGE_SIZE = 25;
 
 export type ClientInput = Pick<Client, 'name' | 'company' | 'email' | 'phone' | 'assignedToUid' | 'assignedToName'>;
+export type ClientDisplay = Pick<Client, 'id' | 'name' | 'company' | 'status' | 'archived'>;
 
 function toIsoDate(value: unknown, fallback = new Date().toISOString()) {
   if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
@@ -142,12 +143,24 @@ export async function searchActiveClients(user: AppUser | null, organizationId: 
   return [...matches.values()].sort((left, right) => left.name.localeCompare(right.name)).slice(0, pageSize);
 }
 
-export async function getClientById(user: AppUser | null, organizationId: string, clientId: string) {
+async function getAccessibleClientById(user: AppUser | null, organizationId: string, clientId: string): Promise<Client | null> {
   await requireActiveUser(user, organizationId);
   const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
-  if (!snapshot.exists()) throw new Error('The client could not be found.');
-  if (snapshot.data().trashed === true) throw new Error('The client could not be found.');
+  if (!snapshot.exists() || snapshot.data().trashed === true) return null;
   return mapClient(snapshot.id, snapshot.data());
+}
+
+/** Loads only the current organization Client needed to label a related Deal. */
+export async function getClientDisplayById(user: AppUser | null, organizationId: string, clientId: string): Promise<ClientDisplay | null> {
+  const client = await getAccessibleClientById(user, organizationId, clientId);
+  if (!client) return null;
+  return { id: client.id, name: client.name, company: client.company, status: client.status, archived: client.archived };
+}
+
+export async function getClientById(user: AppUser | null, organizationId: string, clientId: string) {
+  const client = await getAccessibleClientById(user, organizationId, clientId);
+  if (!client) throw new Error('The client could not be found.');
+  return client;
 }
 
 export async function createClient(user: AppUser | null, organizationId: string, input: ClientInput) {

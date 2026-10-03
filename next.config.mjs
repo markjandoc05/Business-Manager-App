@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Keep local authenticated UAT isolated from another Next process running
+  // in the same checkout.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   eslint: {
     ignoreDuringBuilds: true,
   },

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Ellipsis, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/core';
 
 export type MobileQuickAction = {
   label: string;
@@ -40,9 +41,9 @@ export function MobileQuickActionMenu({ items }: { items: MobileQuickAction[] })
 
   return (
     <div ref={containerRef} className="mobile-page-quick-action">
-      {items[0] && <button type="button" className="mobile-primary-action" disabled={items[0].disabled} onClick={items[0].onSelect}>
+      {items[0] && <Button type="button" className="mobile-primary-action" disabled={items[0].disabled} onClick={items[0].onSelect}>
         <Plus size={18} aria-hidden="true" />{items[0].label}
-      </button>}
+      </Button>}
       {items.length > 1 && <>
       <button
         ref={triggerRef}

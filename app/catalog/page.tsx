@@ -1,17 +1,17 @@
 'use client';
 
+import { MobileNavigationTabs } from '@/components/MobileNavigationTabs';
 import { ResponsiveTable } from '@/components/ResponsiveTable';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Edit, Plus, RefreshCw, RotateCcw, Search } from 'lucide-react';
 import { Badge, Button, Card, EmptyState, LoadingState } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
-import { MobileQuickActionMenu } from '@/components/MobileQuickActionMenu';
 import { ModalHeader } from '@/components/ModalCloseButton';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { IconActionButton } from '@/components/IconActionButton';
 import { MoneyInput } from '@/components/MoneyInput';
-import { TablePagination } from '@/components/TablePagination';
+import { LoadedListStatus } from '@/components/LoadedListStatus';
 import { useAuth } from '@/context/AuthContext';
 import { useApp } from '@/context/AppContext';
 import { useWorkspace } from '@/context/WorkspaceContext';
@@ -32,7 +32,7 @@ import {
 } from '@/lib/repositories/catalogCategories';
 import type { CatalogCategory, CatalogCategoryStatus, CatalogItem, CatalogItemInput, CatalogItemStatus, CatalogItemType } from '@/types';
 import type { FirestoreCursor } from '@/lib/repositories/pagination';
-import { userFacingErrorMessage } from '@/lib/repositories/pagination';
+import { appendUniqueById, userFacingErrorMessage } from '@/lib/repositories/pagination';
 
 type CatalogSection = 'items' | 'categories';
 type ConfirmAction = { kind: 'archive' | 'restore'; item: CatalogItem };
@@ -99,7 +99,9 @@ export default function CatalogPage() {
   const canManage = canManageCatalogItems(membership) && canWrite;
   const [activeSection, setActiveSection] = useState<CatalogSection>('items');
   const [items, setItems] = useState<CatalogItem[]>([]);
+  const [itemsOrganizationId, setItemsOrganizationId] = useState<string | null>(null);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [categoriesOrganizationId, setCategoriesOrganizationId] = useState<string | null>(null);
   const [itemsLoading, setItemsLoading] = useState(true);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [itemsError, setItemsError] = useState<string | null>(null);
@@ -111,8 +113,6 @@ export default function CatalogPage() {
   const [statusFilter, setStatusFilter] = useState<CatalogItemStatusFilter>('ACTIVE');
   const [categoryTypeFilter, setCategoryTypeFilter] = useState<CatalogItemTypeFilter>('All');
   const [categoryStatusFilter, setCategoryStatusFilter] = useState<CatalogItemStatusFilter>('All');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
   const [showItemModal, setShowItemModal] = useState(false);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [editingItem, setEditingItem] = useState<CatalogItem | null>(null);
@@ -127,6 +127,7 @@ export default function CatalogPage() {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [returnToItemForm, setReturnToItemForm] = useState(false);
   const requestRef = useRef(0);
+  const loadMoreRequestRef = useRef(false);
 
   const refreshItems = useCallback(async () => {
     if (!user || !workspaceReady || !currentOrganizationId) return;
@@ -135,15 +136,16 @@ export default function CatalogPage() {
     setItemsError(null);
     setActionError(null);
     setItems([]);
+    setItemsOrganizationId(null);
     setCursor(null);
     setHasMore(false);
     try {
       const result = await listCatalogItemsPage(user, currentOrganizationId, showArchived);
       if (requestId !== requestRef.current) return;
       setItems(result.items);
+      setItemsOrganizationId(currentOrganizationId);
       setCursor(result.nextCursor);
       setHasMore(result.hasMore);
-      setPage(1);
     } catch (error) {
       if (requestId !== requestRef.current) return;
       console.error('Unable to load Catalog', error);
@@ -158,6 +160,7 @@ export default function CatalogPage() {
     setCategoriesLoading(true);
     try {
       setCategories(await listCatalogCategories(user, currentOrganizationId));
+      setCategoriesOrganizationId(currentOrganizationId);
     } catch (error) {
       console.error('Unable to load catalog categories', error);
       setActionError(userFacingErrorMessage(error, 'Unable to load categories. Please try again.'));
@@ -167,13 +170,14 @@ export default function CatalogPage() {
   }, [currentOrganizationId, user, workspaceReady]);
 
   const loadMoreItems = useCallback(async () => {
-    if (!user || !workspaceReady || !currentOrganizationId || !cursor || itemsLoading) return;
+    if (!user || !workspaceReady || !currentOrganizationId || itemsOrganizationId !== currentOrganizationId || !cursor || loadMoreRequestRef.current) return;
+    loadMoreRequestRef.current = true;
     const requestId = ++requestRef.current;
     setItemsLoading(true);
     try {
       const result = await listCatalogItemsPage(user, currentOrganizationId, showArchived, cursor);
       if (requestId !== requestRef.current) return;
-      setItems((current) => [...current, ...result.items.filter((item) => !current.some((existing) => existing.id === item.id))]);
+      setItems((current) => appendUniqueById(current, result.items));
       setCursor(result.nextCursor);
       setHasMore(result.hasMore);
     } catch (error) {
@@ -181,26 +185,26 @@ export default function CatalogPage() {
       console.error('Unable to load more Catalog items', error);
       setActionError(userFacingErrorMessage(error, 'Unable to load more items. Please try again.'));
     } finally {
+      loadMoreRequestRef.current = false;
       if (requestId === requestRef.current) setItemsLoading(false);
     }
-  }, [currentOrganizationId, cursor, itemsLoading, showArchived, user, workspaceReady]);
+  }, [currentOrganizationId, cursor, itemsOrganizationId, showArchived, user, workspaceReady]);
 
   useEffect(() => { void refreshItems(); }, [refreshItems]);
   useEffect(() => { void refreshCategories(); }, [refreshCategories]);
-  useEffect(() => { setPage(1); }, [searchTerm, showArchived, statusFilter, typeFilter]);
 
+  const tenantItems = itemsOrganizationId === currentOrganizationId ? items : [];
+  const tenantCategories = categoriesOrganizationId === currentOrganizationId ? categories : [];
+  const tenantHasMore = itemsOrganizationId === currentOrganizationId && hasMore;
   const filteredItems = useMemo(
-    () => items.filter((item) => catalogItemMatchesFilters(item, searchTerm, typeFilter, statusFilter)),
-    [items, searchTerm, statusFilter, typeFilter],
+    () => tenantItems.filter((item) => catalogItemMatchesFilters(item, searchTerm, typeFilter, statusFilter)),
+    [searchTerm, statusFilter, tenantItems, typeFilter],
   );
   const filteredCategories = useMemo(
-    () => categories.filter((category) => (categoryTypeFilter === 'All' || category.type === categoryTypeFilter)
+    () => tenantCategories.filter((category) => (categoryTypeFilter === 'All' || category.type === categoryTypeFilter)
       && (categoryStatusFilter === 'All' || category.status === categoryStatusFilter)),
-    [categories, categoryStatusFilter, categoryTypeFilter],
+    [categoryStatusFilter, categoryTypeFilter, tenantCategories],
   );
-  const pageCount = Math.max(1, Math.ceil(filteredItems.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const visibleItems = filteredItems.slice((safePage - 1) * pageSize, safePage * pageSize);
   const error = actionError || itemsError;
 
   const openCreateItem = () => {
@@ -358,47 +362,34 @@ export default function CatalogPage() {
 
   const currentActions = activeSection === 'items'
     ? <>
-      <Button variant="outline" onClick={() => void refreshItems()} disabled={itemsLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh catalog items"><RefreshCw size={16} /> Refresh</Button>
-      <Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Items' : 'Archived Items'}</Button>
-      {canManage && <Button onClick={openCreateItem} className="gap-2"><Plus size={18} /> Add Item</Button>}
+      <Button variant="outline" onClick={() => void refreshItems()} disabled={itemsLoading} aria-label="Refresh catalog items"><RefreshCw size={16} /> Refresh</Button>
+      <Button variant="outline" onClick={toggleArchived} aria-label={showArchived ? 'Show active catalog items' : 'Show archived catalog items'}><Archive size={16} /><span className="hidden md:inline">{showArchived ? 'Active Items' : 'Archived Items'}</span><span className="md:hidden">{showArchived ? 'Active' : 'Archive'}</span></Button>
+      {canManage && <Button onClick={openCreateItem} className="catalog-primary-action gap-2"><Plus size={18} /> Add Item</Button>}
     </>
     : <>
-      <Button variant="outline" onClick={() => void refreshCategories()} disabled={categoriesLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh catalog items"><RefreshCw size={16} /> Refresh</Button>
-      {canManage && <Button onClick={() => openAddCategory()} className="gap-2"><Plus size={18} /> Add Category</Button>}
+      <Button variant="outline" onClick={() => void refreshCategories()} disabled={categoriesLoading} aria-label="Refresh categories"><RefreshCw size={16} /> Refresh</Button>
+      {canManage && <Button onClick={() => openAddCategory()} className="catalog-primary-action gap-2"><Plus size={18} /> Add Category</Button>}
     </>;
 
-  const mobileQuickActions = activeSection === 'items'
-    ? <MobileQuickActionMenu items={[
-      { label: 'Add Item', onSelect: openCreateItem, disabled: !canManage },
-      { label: showArchived ? 'Active Items' : 'Archived Items', onSelect: toggleArchived },
-    ]} />
-    : <MobileQuickActionMenu items={[
-      { label: 'Add Category', onSelect: () => openAddCategory(), disabled: !canManage },
-      { label: 'Refresh Categories', onSelect: () => void refreshCategories() },
-    ]} />;
-
-  return <div className="space-y-6">
+  return <div className="catalog-list-layout space-y-6">
     {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{error}</p>}
-    <PageHeader title="Catalog" subtitle="Manage the products and services your business sells." actions={currentActions} mobileQuickActions={mobileQuickActions} />
+    <PageHeader title="Catalog" subtitle="Manage the products and services your business sells." actions={currentActions} />
 
-    <nav className="flex min-w-0 border-b border-[var(--app-border)]" role="tablist" aria-label="Catalog sections">
+    <MobileNavigationTabs as="nav" activeKey={activeSection} className="flex min-w-0 border-b border-[var(--app-border)]" role="tablist" aria-label="Catalog sections">
       <CatalogSectionTab active={activeSection === 'items'} onClick={() => selectSection('items')}>Products &amp; Services</CatalogSectionTab>
       <CatalogSectionTab active={activeSection === 'categories'} onClick={() => selectSection('categories')}>Categories</CatalogSectionTab>
-    </nav>
+    </MobileNavigationTabs>
 
     {activeSection === 'items' ? <ProductsAndServicesSection
       itemsLoading={itemsLoading}
-      items={items}
+      items={tenantItems}
       filteredItems={filteredItems}
-      visibleItems={visibleItems}
       settingsCurrency={settings.currency}
       searchTerm={searchTerm}
       typeFilter={typeFilter}
       statusFilter={statusFilter}
       showArchived={showArchived}
-      page={safePage}
-      pageSize={pageSize}
-      hasMore={hasMore}
+      hasMore={tenantHasMore}
       canManage={canManage}
       onSearchChange={setSearchTerm}
       onTypeFilterChange={setTypeFilter}
@@ -407,12 +398,10 @@ export default function CatalogPage() {
       onOpenEdit={openEditItem}
       onArchive={(item) => setConfirmAction({ kind: 'archive', item })}
       onRestore={(item) => setConfirmAction({ kind: 'restore', item })}
-      onPageChange={setPage}
-      onPageSizeChange={(nextPageSize) => { setPageSize(nextPageSize); setPage(1); }}
       onLoadMore={() => void loadMoreItems()}
     /> : <CategoriesSection
       categories={filteredCategories}
-      allCategoryCount={categories.length}
+      allCategoryCount={tenantCategories.length}
       loading={categoriesLoading}
       typeFilter={categoryTypeFilter}
       statusFilter={categoryStatusFilter}
@@ -456,20 +445,17 @@ function CatalogSectionTab({ active, children, onClick }: { active: boolean; chi
 }
 
 function ProductsAndServicesSection({
-  itemsLoading, items, filteredItems, visibleItems, settingsCurrency, searchTerm, typeFilter, statusFilter, showArchived, page, pageSize, hasMore, canManage,
-  onSearchChange, onTypeFilterChange, onStatusFilterChange, onOpenCreate, onOpenEdit, onArchive, onRestore, onPageChange, onPageSizeChange, onLoadMore,
+  itemsLoading, items, filteredItems, settingsCurrency, searchTerm, typeFilter, statusFilter, showArchived, hasMore, canManage,
+  onSearchChange, onTypeFilterChange, onStatusFilterChange, onOpenCreate, onOpenEdit, onArchive, onRestore, onLoadMore,
 }: {
   itemsLoading: boolean;
   items: CatalogItem[];
   filteredItems: CatalogItem[];
-  visibleItems: CatalogItem[];
   settingsCurrency: string;
   searchTerm: string;
   typeFilter: CatalogItemTypeFilter;
   statusFilter: CatalogItemStatusFilter;
   showArchived: boolean;
-  page: number;
-  pageSize: number;
   hasMore: boolean;
   canManage: boolean;
   onSearchChange: (value: string) => void;
@@ -479,21 +465,19 @@ function ProductsAndServicesSection({
   onOpenEdit: (item: CatalogItem) => void;
   onArchive: (item: CatalogItem) => void;
   onRestore: (item: CatalogItem) => void;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
   onLoadMore: () => void;
 }) {
   return <section aria-labelledby="products-services-heading" className="space-y-4">
     <h2 id="products-services-heading" className="sr-only">Products &amp; Services</h2>
-    <Card className="p-3 sm:p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-        <label className="relative min-w-0 flex-1">
+    <Card className="compact-filter-panel p-3 sm:p-4">
+      <div className="compact-filter-grid flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label className="compact-filter-field compact-filter-search relative min-w-0 flex-1">
           <span className="sr-only">Search products and services</span>
           <Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-tertiary)]" aria-hidden="true" />
-          <input className="w-full !pl-10" placeholder="Search name, code, or category" value={searchTerm} onChange={(event) => onSearchChange(event.target.value)} />
+          <input className="w-full pl-10 md:!pl-10" placeholder="Search name, code, or category" value={searchTerm} onChange={(event) => onSearchChange(event.target.value)} />
         </label>
-        <label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter by type</span><select className="w-full sm:w-40" aria-label="Filter by type" value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value as CatalogItemTypeFilter)}><option value="All">All types</option><option value="PRODUCT">Products</option><option value="SERVICE">Services</option></select></label>
-        <label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter by status</span><select className="w-full sm:w-40" aria-label="Filter by status" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as CatalogItemStatusFilter)}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option><option value="All">All statuses</option></select></label>
+        <label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter by type</span><span className="compact-filter-field"><select className="w-full sm:w-40" aria-label="Filter by type" value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value as CatalogItemTypeFilter)}><option value="All">All types</option><option value="PRODUCT">Products</option><option value="SERVICE">Services</option></select></span></label>
+        <label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter by status</span><span className="compact-filter-field"><select className="w-full sm:w-40" aria-label="Filter by status" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as CatalogItemStatusFilter)}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option><option value="All">All statuses</option></select></span></label>
       </div>
     </Card>
 
@@ -506,7 +490,7 @@ function ProductsAndServicesSection({
         <ResponsiveTable columns={["Name", "Type", "Category", "Code / SKU", "Unit", "Regular price", "Sale price", "Status", "Actions"]} primaryColumn={0} summaryColumns={[1, 5, 7]} actionColumn={8} className="w-full min-w-[940px] text-left">
           <thead><tr className="border-b border-[var(--app-border)]"><th>Name</th><th>Type</th><th>Category</th><th>Code / SKU</th><th>Unit</th><th>Regular Price</th><th>Sale Price</th><th>Status</th><th className="text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-[var(--app-border-subtle)]">
-            {visibleItems.map((item) => <tr key={item.id} className="hover:bg-[var(--app-surface-subtle)]">
+            {filteredItems.map((item) => <tr key={item.id} className="hover:bg-[var(--app-surface-subtle)]">
               <td><div className="font-semibold text-[var(--app-text)]">{item.name}</div>{item.description && <div className="max-w-[240px] truncate text-xs text-[var(--app-muted)]">{item.description}</div>}</td>
               <td><Badge variant={item.type === 'PRODUCT' ? 'blue' : 'purple'}>{itemTypeLabel(item.type)}</Badge></td>
               <td className="text-sm text-[var(--app-muted)]">{item.category || '—'}</td>
@@ -524,8 +508,8 @@ function ProductsAndServicesSection({
           </tbody>
         </ResponsiveTable>
       </div>
-      <TablePagination page={page} pageSize={pageSize} totalCount={filteredItems.length} hasMore={hasMore} onPageChange={onPageChange} onPageSizeChange={onPageSizeChange} />
     </Card>}
+    {items.length > 0 && <LoadedListStatus loadedCount={items.length} visibleCount={filteredItems.length} hasMore={hasMore} noun="items" loadedScope="Search and filters" />}
     {hasMore && <div className="flex justify-center"><Button variant="outline" onClick={onLoadMore} disabled={itemsLoading}>{itemsLoading ? 'Loading…' : 'Load More Items'}</Button></div>}
   </section>;
 }
@@ -549,7 +533,7 @@ function CategoriesSection({ categories, allCategoryCount, loading, typeFilter, 
       <div><h2 id="categories-heading" className="text-xl font-bold text-[var(--app-text)]">Categories</h2><p className="mt-1 text-sm text-[var(--app-muted)]">Organize the products and services in your catalog.</p></div>
       {canManage && <Button onClick={onAddCategory} className="gap-2 self-start"><Plus size={16} /> Add Category</Button>}
     </div>
-    <Card className="p-3 sm:p-4"><div className="flex flex-col gap-3 sm:flex-row sm:justify-end"><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by type</span><select className="w-full sm:w-40" aria-label="Filter categories by type" value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value as CatalogItemTypeFilter)}><option value="All">All types</option><option value="PRODUCT">Products</option><option value="SERVICE">Services</option></select></label><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by status</span><select className="w-full sm:w-40" aria-label="Filter categories by status" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as CatalogItemStatusFilter)}><option value="All">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></label></div></Card>
+    <Card className="compact-filter-panel p-3 sm:p-4"><div className="compact-filter-grid flex flex-col gap-3 sm:flex-row sm:justify-end"><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by type</span><span className="compact-filter-field"><select className="w-full sm:w-40" aria-label="Filter categories by type" value={typeFilter} onChange={(event) => onTypeFilterChange(event.target.value as CatalogItemTypeFilter)}><option value="All">All types</option><option value="PRODUCT">Products</option><option value="SERVICE">Services</option></select></span></label><label className="min-w-0 text-sm text-[var(--app-muted)]"><span className="sr-only">Filter categories by status</span><span className="compact-filter-field"><select className="w-full sm:w-40" aria-label="Filter categories by status" value={statusFilter} onChange={(event) => onStatusFilterChange(event.target.value as CatalogItemStatusFilter)}><option value="All">All statuses</option><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></span></label></div></Card>
     {loading ? <LoadingState label="Loading categories…" /> : categories.length === 0 ? <Card className="p-0"><EmptyState title={allCategoryCount === 0 ? 'No categories yet.' : 'No matching categories.'} description={allCategoryCount === 0 ? 'Create reusable Product and Service categories for your catalog.' : undefined} action={allCategoryCount === 0 && canManage ? <Button onClick={onAddCategory} className="gap-2"><Plus size={16} /> Add Category</Button> : undefined} /></Card> : <Card className="overflow-hidden p-0"><div className="overflow-x-auto"><ResponsiveTable columns={["Category", "Type", "Status", "Actions"]} primaryColumn={0} summaryColumns={[1, 2]} actionColumn={3} className="w-full min-w-[620px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th>Category Name</th><th>Type</th><th>Status</th><th className="text-right">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">{categories.map((category) => <tr key={category.id} className="hover:bg-[var(--app-surface-subtle)]"><td className="font-semibold text-[var(--app-text)]">{category.name}</td><td><Badge variant={category.type === 'PRODUCT' ? 'blue' : 'purple'}>{itemTypeLabel(category.type)}</Badge></td><td><Badge variant={category.status === 'ACTIVE' ? 'green' : 'orange'}>{category.status === 'ACTIVE' ? 'Active' : 'Inactive'}</Badge></td><td><div className="flex justify-end gap-2">{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onRenameCategory(category)} disabled={saving}>Rename</Button>}{canManage && <Button type="button" size="sm" variant="outline" onClick={() => onToggleStatus(category)} disabled={saving}>{category.status === 'ACTIVE' ? 'Deactivate' : 'Reactivate'}</Button>}</div></td></tr>)}</tbody></ResponsiveTable></div></Card>}
   </section>;
 }
@@ -582,7 +566,7 @@ function CatalogItemFields({ form, setForm, currency, categories, onManageCatego
     <div className="space-y-2">
       <label className="text-xs font-bold uppercase text-[var(--app-muted)]" htmlFor="catalog-category">Category</label>
       <select id="catalog-category" className="w-full" value={form.categoryId} onChange={(event) => { const category = categories.find((item) => item.id === event.target.value); update({ categoryId: category?.id || '', category: category?.name || '' }); }}><option value="">No category</option>{categoryOptions.map((category) => <option key={category.id} value={category.id}>{category.name}{category.status === 'INACTIVE' ? ' (Inactive)' : ''}</option>)}</select>
-      {activeCategories.length === 0 && <p className="pt-1 text-xs text-[var(--app-muted)]">No {itemTypeLabel(form.type)} categories available. <button type="button" className="font-semibold text-[var(--app-secondary)] hover:underline" onClick={onManageCategories}>Manage Categories</button></p>}
+      {activeCategories.length === 0 && <p className="pt-1 text-xs text-[var(--app-muted)]">No {itemTypeLabel(form.type)} categories available. <button type="button" className="catalog-inline-action rounded font-semibold text-[var(--app-secondary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]" onClick={onManageCategories}>Manage Categories</button></p>}
     </div>
 
     <div className="space-y-2">

@@ -65,7 +65,7 @@ export function IconActionButton({ icon, label, onClick, onPointerDown, disabled
   };
 
   return <span className="group relative inline-flex" onMouseEnter={() => setTooltipVisible(true)} onMouseLeave={() => setTooltipVisible(false)}>
-    <button ref={buttonRef} type={type} aria-label={label} aria-describedby={tooltipVisible ? tooltipId : undefined} onFocus={() => setTooltipVisible(true)} onBlur={() => setTooltipVisible(false)} onClick={onClick} onPointerDown={onPointerDown} disabled={disabled} className={cn('app-icon-button inline-flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] disabled:pointer-events-none disabled:opacity-40', variants[variant], className)}>
+    <button ref={buttonRef} type={type} data-icon-variant={variant} aria-label={label} aria-describedby={tooltipVisible ? tooltipId : undefined} onFocus={() => setTooltipVisible(true)} onBlur={() => setTooltipVisible(false)} onClick={onClick} onPointerDown={onPointerDown} disabled={disabled} className={cn('app-icon-button inline-flex h-10 w-10 items-center justify-center rounded-[var(--app-radius-control)] border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] disabled:pointer-events-none disabled:opacity-40', variants[variant], className)}>
       {icon}
     </button>
     {tooltipVisible && typeof document !== 'undefined' && createPortal(

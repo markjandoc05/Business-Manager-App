@@ -1,6 +1,17 @@
 import type { Task } from '@/types';
 
 export type TaskDisplayState = 'Scheduled' | 'Overdue' | 'Completed' | 'Pending';
+export type TaskCalendarBucket = 'Today' | 'Upcoming' | 'Overdue' | 'Invalid';
+
+export function getTaskCalendarBucket(value: string, now = new Date()): TaskCalendarBucket {
+  const due = new Date(value);
+  if (!Number.isFinite(due.getTime())) return 'Invalid';
+  const startToday = new Date(now); startToday.setHours(0, 0, 0, 0);
+  const startTomorrow = new Date(startToday); startTomorrow.setDate(startTomorrow.getDate() + 1);
+  if (due < startToday) return 'Overdue';
+  if (due >= startTomorrow) return 'Upcoming';
+  return 'Today';
+}
 
 export function isFollowUpTask(task: Task) {
   // Missing type is treated as a Follow-up for legacy compatibility.

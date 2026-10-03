@@ -58,9 +58,9 @@ export function normalizeDashboardKpiIds(value: unknown): DashboardKpiId[] {
   return unique.length >= MIN_DASHBOARD_KPIS ? unique : [...DEFAULT_DASHBOARD_KPI_IDS];
 }
 
-export function readDashboardKpiPreference(storage: Pick<Storage, 'getItem'> | null | undefined): DashboardKpiId[] {
+export function readDashboardKpiPreference(storage: Pick<Storage, 'getItem'> | null | undefined, key = DASHBOARD_KPI_STORAGE_KEY): DashboardKpiId[] {
   if (!storage) return [...DEFAULT_DASHBOARD_KPI_IDS];
-  try { return normalizeDashboardKpiIds(JSON.parse(storage.getItem(DASHBOARD_KPI_STORAGE_KEY) || 'null')); }
+  try { return normalizeDashboardKpiIds(JSON.parse(storage.getItem(key) || 'null')); }
   catch { return [...DEFAULT_DASHBOARD_KPI_IDS]; }
 }
 import type { LucideIcon } from 'lucide-react';

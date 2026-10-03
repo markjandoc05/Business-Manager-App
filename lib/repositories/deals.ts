@@ -1,6 +1,6 @@
 import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, sum, where, writeBatch, type DocumentData } from 'firebase/firestore';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
-import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
+import { firestoreQueryErrorMessage, splitLookaheadPage } from '@/lib/repositories/pagination';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Deal } from '@/types';
@@ -85,7 +85,8 @@ function validateDealState(stage: string, status: DealStatus, lossReason?: strin
 
 async function requireExistingClient(organizationId: string, clientId: string) {
   const clientSnapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
-  if (!clientSnapshot.exists() || clientSnapshot.data().status === 'ARCHIVED') throw new Error('The selected client is not available.');
+  const client = clientSnapshot.data();
+  if (!clientSnapshot.exists() || client?.status === 'ARCHIVED' || client?.archived === true || client?.trashed === true) throw new Error('The selected client is not available.');
 }
 
 export async function getDealById(user: AppUser | null, organizationId: string, dealId: string) {
@@ -126,16 +127,32 @@ export function refreshDealDisplay(user: AppUser | null, organizationId: string,
   return request;
 }
 
-export async function listDeals(user: AppUser | null, organizationId: string, pageSize = PIPELINE_DEAL_LIMIT) {
+export async function listDealsPage(user: AppUser | null, organizationId: string, cursor: FirestoreCursor = null, pageSize = PIPELINE_DEAL_LIMIT): Promise<PageResult<Deal>> {
   const { membership } = await requireOrganizationAccess(user, organizationId);
   try {
-    const constraints = [where('archived', '==', false), ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []), orderBy('createdAt', 'desc'), limit(pageSize)] as const;
+    const normalizedPageSize = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : PIPELINE_DEAL_LIMIT;
+    const constraints = [
+      where('archived', '==', false),
+      ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []),
+      orderBy('createdAt', 'desc'),
+      ...(cursor ? [startAfter(cursor)] : []),
+      limit(normalizedPageSize + 1),
+    ];
     const snapshot = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'), ...constraints));
-    return snapshot.docs.map((dealDoc) => mapDeal(dealDoc.id, dealDoc.data())).filter((deal) => !deal.archived).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    const page = splitLookaheadPage(snapshot.docs, normalizedPageSize);
+    return {
+      items: page.items.map((dealDoc) => mapDeal(dealDoc.id, dealDoc.data())).filter((deal) => !deal.archived),
+      nextCursor: page.hasMore ? page.items[page.items.length - 1] : null,
+      hasMore: page.hasMore,
+    };
   } catch (error) {
     reportFirestoreFailure('list', error);
     throw new Error(firestoreQueryErrorMessage(error, 'Unable to load deals. Please try again.'));
   }
+}
+
+export async function listDeals(user: AppUser | null, organizationId: string, pageSize = PIPELINE_DEAL_LIMIT) {
+  return (await listDealsPage(user, organizationId, null, pageSize)).items;
 }
 
 export type PipelineStageSummary = Record<string, { count: number; value: number }>;

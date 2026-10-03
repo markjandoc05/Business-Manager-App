@@ -8,6 +8,25 @@ export type PageResult<T> = {
   hasMore: boolean;
 };
 
+/** Split a page fetched with one lookahead record into visible items and exact continuation state. */
+export function splitLookaheadPage<T>(items: readonly T[], pageSize: number) {
+  const normalizedPageSize = Number.isFinite(pageSize) ? Math.max(1, Math.floor(pageSize)) : 1;
+  return {
+    items: items.slice(0, normalizedPageSize),
+    hasMore: items.length > normalizedPageSize,
+  };
+}
+
+/** Append a cursor page without duplicating records at a moving page boundary. */
+export function appendUniqueById<T extends { id: string }>(current: T[], incoming: T[]) {
+  const seen = new Set(current.map((item) => item.id));
+  return [...current, ...incoming.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  })];
+}
+
 export const FIRESTORE_WORKSPACE_INDEX_ERROR = 'Workspace data is temporarily unavailable while the database index is being prepared. Please try again shortly.';
 
 export function isFirestoreIndexError(error: unknown) {

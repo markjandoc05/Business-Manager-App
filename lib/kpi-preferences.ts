@@ -1,3 +1,7 @@
+export function organizationPreferenceKey(key: string, organizationId: string) {
+  return `${key}:${organizationId}`;
+}
+
 export function readKpiPreference(storage: Pick<Storage, 'getItem'> | null | undefined, key: string, defaults: readonly string[], knownIds: readonly string[], minimum = 3, maximum = 8) {
   if (!storage) return [...defaults];
   try {

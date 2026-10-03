@@ -1,11 +1,11 @@
-import { count, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, startAfter, sum, updateDoc, where } from 'firebase/firestore';
+import { collection, count, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, startAfter, sum, updateDoc, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 import { requireOrganizationAccess } from '@/lib/permissions';
-import { createSaleNumber, normalizeSaleDate, normalizeSalePayment } from '@/lib/sale-workflow';
+import { createSaleNumber, normalizeAdditionalSalePayment, normalizeSaleDate, normalizeSalePayment } from '@/lib/sale-workflow';
 import { getSaleItemsTotal, normalizeSaleLineItems, readSaleLineItems } from '@/lib/sale-items';
 import type { AppUser } from '@/types/auth';
-import type { Sale, SaleCustomerType, SaleLineItem, SalePaymentMethod, SalePaymentStatus, SaleSource } from '@/types';
+import type { Sale, SaleCustomerType, SaleLineItem, SalePayment, SalePaymentMethod, SalePaymentStatus, SaleSource } from '@/types';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 
 export const SALES_PAGE_SIZE = 25;
@@ -37,6 +37,13 @@ export type CreateSaleInput = {
   paymentStatus: SalePaymentStatus;
   paymentMethod?: SalePaymentMethod;
   amountPaid?: number;
+  notes?: string;
+};
+
+export type RecordSalePaymentInput = {
+  amount: number;
+  method: SalePaymentMethod;
+  paymentDate: string;
   notes?: string;
 };
 
@@ -99,6 +106,19 @@ function mapSale(id: string, data: Record<string, unknown>): Sale {
     createdBy: text(data.createdBy),
     updatedAt: toIso(data.updatedAt),
     updatedBy: text(data.updatedBy),
+  };
+}
+
+function mapSalePayment(id: string, data: Record<string, unknown>): SalePayment {
+  return {
+    id,
+    saleId: text(data.saleId),
+    amount: typeof data.amount === 'number' && Number.isFinite(data.amount) ? data.amount : 0,
+    method: data.method as SalePaymentMethod,
+    paymentDate: text(data.paymentDate),
+    notes: text(data.notes) || undefined,
+    createdAt: toIso(data.createdAt),
+    createdBy: text(data.createdBy),
   };
 }
 
@@ -296,6 +316,32 @@ export async function getSaleById(user: AppUser | null, organizationId: string, 
   const snapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'sales', saleId));
   if (!snapshot.exists()) throw new Error('The sale could not be found.');
   return mapSale(snapshot.id, snapshot.data());
+}
+
+export async function listSalePayments(user: AppUser | null, organizationId: string, saleId: string) {
+  await requireOrganizationAccess(user, organizationId);
+  const saleRef = organizationDocumentInCollection(db, organizationId, 'sales', saleId);
+  const snapshots = await getDocs(query(collection(saleRef, 'payments'), orderBy('createdAt', 'desc')));
+  return snapshots.docs.map((snapshot) => mapSalePayment(snapshot.id, snapshot.data()));
+}
+
+export async function recordSalePayment(user: AppUser | null, organizationId: string, saleId: string, input: RecordSalePaymentInput) {
+  await requireSalesManager(user, organizationId);
+  if (!user) throw new Error('You must be signed in to record a payment.');
+  const paymentDate = normalizeSaleDate(input.paymentDate);
+  const saleRef = organizationDocumentInCollection(db, organizationId, 'sales', saleId);
+  const paymentRef = doc(collection(saleRef, 'payments'));
+  const notes = text(input.notes);
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(saleRef);
+    if (!snapshot.exists()) throw new Error('The sale could not be found.');
+    const sale = snapshot.data();
+    if (sale.status !== 'ACTIVE') throw new Error('Payments cannot be added to a voided Sale.');
+    const payment = normalizeAdditionalSalePayment(sale.total, sale.amountPaid, input.amount, input.method);
+    transaction.set(paymentRef, { saleId, amount: payment.amount, method: payment.method, paymentDate, notes: notes || null, createdAt: serverTimestamp(), createdBy: user.uid });
+    transaction.update(saleRef, { paymentStatus: payment.paymentStatus, paymentMethod: payment.method, amountPaid: payment.amountPaid, balance: payment.balance, lastPaymentId: paymentRef.id, updatedAt: serverTimestamp(), updatedBy: user.uid });
+    return { paymentStatus: payment.paymentStatus, paymentMethod: payment.method, amountPaid: payment.amountPaid, balance: payment.balance };
+  });
 }
 
 export async function createSale(user: AppUser | null, organizationId: string, input: CreateSaleInput) {

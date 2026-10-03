@@ -3,7 +3,7 @@ import { cn } from '@/lib/utils';
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn("rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)]", className)}>
+    <div className={cn("app-card rounded-[var(--app-radius-card)] border border-[var(--app-border)] bg-[var(--app-surface)] p-5 text-[var(--app-text)]", className)}>
       {children}
     </div>
   );
@@ -36,6 +36,15 @@ export function Button({
     lg: 'h-11 px-5 text-sm',
   };
 
+  const mobileFace = {
+    primary: { background: 'var(--app-primary)', border: 'transparent' },
+    secondary: { background: 'var(--app-surface)', border: 'var(--app-border)' },
+    outline: { background: 'var(--app-surface)', border: 'var(--app-border)' },
+    ghost: { background: 'transparent', border: 'transparent' },
+    warning: { background: 'color-mix(in srgb, var(--app-warning) 14%, white)', border: 'color-mix(in srgb, var(--app-warning) 55%, white)' },
+    danger: { background: 'var(--app-danger)', border: 'transparent' },
+  }[variant];
+
   return (
     <button 
       className={cn(
@@ -45,6 +54,8 @@ export function Button({
         className
       )}
       {...props}
+      data-button-variant={variant}
+      style={{ ...props.style, '--mobile-button-face-background': mobileFace.background, '--mobile-button-face-border': mobileFace.border } as React.CSSProperties}
     >
       {children}
     </button>

@@ -1,9 +1,9 @@
 import React from 'react';
 import { Shield } from 'lucide-react';
 
-export function SecurityTrustFooter() {
+export function SecurityTrustFooter({ className = '' }: { className?: string }) {
   return (
-    <footer className="security-trust-footer" aria-label="Security information">
+    <footer className={`security-trust-footer ${className}`} aria-label="Security information" title="Secure Cloud Infrastructure">
       <div className="min-w-0">
         <p className="security-trust-footer-title font-medium text-[var(--app-muted)]">
           <Shield size={14} aria-hidden="true" />

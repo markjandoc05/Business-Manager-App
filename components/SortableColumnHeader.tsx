@@ -25,7 +25,7 @@ export function SortableColumnHeader({
       <button
         type="button"
         onClick={onSort}
-        className={`group inline-flex items-center gap-1 rounded-[var(--app-radius-sm)] py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] ${align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'text-left'}`}
+        className={`mobile-sort-action group inline-flex items-center gap-1 rounded-[var(--app-radius-sm)] py-1 text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--app-muted)] transition-colors hover:text-[var(--app-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)] ${align === 'right' ? 'justify-end text-right' : align === 'center' ? 'justify-center text-center' : 'text-left'}`}
         aria-label={`Sort loaded results by ${label}`}
         title="Sorts the currently loaded results"
       >

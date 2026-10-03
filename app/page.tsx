@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { MobileQuickActionMenu } from '@/components/MobileQuickActionMenu';
 import { PageHeader } from '@/components/PageHeader';
@@ -41,6 +41,8 @@ import { ModalCloseButton } from '@/components/ModalCloseButton';
 import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
 import { emitStartupTiming, finishStartupStage, markStartup, markStartupEvent, observeStartupLcp, startStartupStage } from '@/lib/startupTiming';
 import { MovableKpiCard } from '@/components/KpiCard';
+import { organizationPreferenceKey } from '@/lib/kpi-preferences';
+import { getDashboardActivityHref, getDashboardRecordHref } from '@/lib/dashboard-record-navigation';
 
 type DashboardFollowUpItem =
   | { id: string; source: 'LEAD' | 'CLIENT' | 'DEAL' | 'TASK'; relatedName: string; title: string; description?: string; scheduledAt: string; state: 'SCHEDULED' | 'OVERDUE'; taskId: string; priority: 'Low' | 'Medium' | 'High' };
@@ -52,10 +54,10 @@ const DASHBOARD_LAYOUT_KEY = 'bsm_dashboard_card_layout';
 const DEFAULT_DASHBOARD_LAYOUT = { primary: ['pipeline', 'followups'] as PrimaryDashboardCard[], secondary: ['leads', 'clients', 'deals', 'activity'] as SecondaryDashboardCard[] };
 const PIPELINE_FOCUS_REFRESH_GUARD_MS = 1_000;
 const DASHBOARD_RANGE_OPTIONS: Array<{ value: DashboardRangePreset; label: string; days?: number }> = [
-  { value: '7', label: '7 Days', days: 7 },
-  { value: '28', label: '28 Days', days: 28 },
-  { value: '60', label: '60 Days', days: 60 },
-  { value: '365', label: '365 Days', days: 365 },
+  { value: '7', label: 'Week', days: 7 },
+  { value: '28', label: '4 weeks', days: 28 },
+  { value: '60', label: '60 days', days: 60 },
+  { value: '365', label: 'Year', days: 365 },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -87,10 +89,10 @@ function getDashboardDateRange(preset: DashboardRangePreset, customStartDate: st
   return { start: startOfDay(subDays(end, days - 1)), end };
 }
 
-function getDashboardLayoutPreference() {
-  if (typeof window === 'undefined') return DEFAULT_DASHBOARD_LAYOUT;
+function getDashboardLayoutPreference(organizationId?: string | null) {
+  if (typeof window === 'undefined' || !organizationId) return DEFAULT_DASHBOARD_LAYOUT;
   try {
-    const saved = JSON.parse(window.localStorage.getItem(DASHBOARD_LAYOUT_KEY) || '{}') as { primary?: PrimaryDashboardCard[]; secondary?: SecondaryDashboardCard[] };
+    const saved = JSON.parse(window.localStorage.getItem(organizationPreferenceKey(DASHBOARD_LAYOUT_KEY, organizationId)) || '{}') as { primary?: PrimaryDashboardCard[]; secondary?: SecondaryDashboardCard[] };
     return {
       primary: saved.primary?.length === 2 && saved.primary.includes('pipeline') && saved.primary.includes('followups') ? saved.primary : DEFAULT_DASHBOARD_LAYOUT.primary,
       secondary: saved.secondary?.length === 4 && DEFAULT_DASHBOARD_LAYOUT.secondary.every((card) => saved.secondary?.includes(card)) ? saved.secondary : DEFAULT_DASHBOARD_LAYOUT.secondary,
@@ -102,7 +104,6 @@ function getDashboardLayoutPreference() {
 
 export default function DashboardPage() {
   const { leads, clients, deals, tasks, activities, settings, leadsLoading, clientsLoading, dealsLoading, tasksLoading, settingsLoading, completeTask, addLead, addClient, addTask } = useApp();
-  const router = useRouter();
   const { user } = useAuth();
   const { currentOrganizationId, loading: workspaceLoading, ready: workspaceReady, membership, canWrite } = useWorkspace();
   const canManage = canManageLeads(membership) && canWrite;
@@ -112,9 +113,9 @@ export default function DashboardPage() {
   const [rangePreset, setRangePreset] = useState<DashboardRangePreset>('28');
   const [customStartDate, setCustomStartDate] = useState(() => format(subDays(new Date(), 27), 'yyyy-MM-dd'));
   const [customEndDate, setCustomEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
-  const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(() => getDashboardLayoutPreference().primary);
-  const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(() => getDashboardLayoutPreference().secondary);
-  const [selectedKpis, setSelectedKpis] = useState<DashboardKpiId[]>(() => readDashboardKpiPreference(typeof window === 'undefined' ? null : window.localStorage));
+  const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(DEFAULT_DASHBOARD_LAYOUT.primary);
+  const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(DEFAULT_DASHBOARD_LAYOUT.secondary);
+  const [selectedKpis, setSelectedKpis] = useState<DashboardKpiId[]>([...DEFAULT_DASHBOARD_KPI_IDS]);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [draftKpis, setDraftKpis] = useState<DashboardKpiId[]>([]);
   const [openKpiModules, setOpenKpiModules] = useState<Set<string>>(new Set(['Sales', 'Deals']));
@@ -135,10 +136,12 @@ export default function DashboardPage() {
   const dashboardCriticalReady = useRef(false);
   const dashboardComplete = useRef(false);
   const dashboardRequestVersion = useRef(0);
+  const preferenceOrganizationRef = useRef<string | null>(null);
   const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
   const selectedKpiMetricKey = useMemo(() => [...selectedKpis].sort().join('|'), [selectedKpis]);
   const selectedKpisForMetrics = useMemo(() => selectedKpiMetricKey.split('|').filter(Boolean) as DashboardKpiId[], [selectedKpiMetricKey]);
   const dashboardRangeLabel = rangePreset === 'custom' ? 'Custom range' : `Last ${rangePreset} days`;
+  const dashboardRangePresetLabel = DASHBOARD_RANGE_OPTIONS.find((option) => option.value === rangePreset)?.label || '4 weeks';
   const dashboardDateRangeLabel = dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid range';
 
   useEffect(() => {
@@ -170,10 +173,20 @@ export default function DashboardPage() {
   }, [dashboardRangeOpen]);
 
   useEffect(() => {
-    window.localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify({ primary: primaryCardOrder, secondary: secondaryCardOrder }));
-  }, [primaryCardOrder, secondaryCardOrder]);
+    if (!currentOrganizationId) return;
+    preferenceOrganizationRef.current = null;
+    const layout = getDashboardLayoutPreference(currentOrganizationId);
+    setPrimaryCardOrder([...layout.primary]);
+    setSecondaryCardOrder([...layout.secondary]);
+    setSelectedKpis(readDashboardKpiPreference(window.localStorage, organizationPreferenceKey(DASHBOARD_KPI_STORAGE_KEY, currentOrganizationId)));
+    preferenceOrganizationRef.current = currentOrganizationId;
+  }, [currentOrganizationId]);
 
-  useEffect(() => { window.localStorage.setItem(DASHBOARD_KPI_STORAGE_KEY, JSON.stringify(selectedKpis)); }, [selectedKpis]);
+  useEffect(() => {
+    if (currentOrganizationId && preferenceOrganizationRef.current === currentOrganizationId) window.localStorage.setItem(organizationPreferenceKey(DASHBOARD_LAYOUT_KEY, currentOrganizationId), JSON.stringify({ primary: primaryCardOrder, secondary: secondaryCardOrder }));
+  }, [currentOrganizationId, primaryCardOrder, secondaryCardOrder]);
+
+  useEffect(() => { if (currentOrganizationId && preferenceOrganizationRef.current === currentOrganizationId) window.localStorage.setItem(organizationPreferenceKey(DASHBOARD_KPI_STORAGE_KEY, currentOrganizationId), JSON.stringify(selectedKpis)); }, [currentOrganizationId, selectedKpis]);
 
   useEffect(() => {
     if (!customizeOpen) return;
@@ -393,24 +406,6 @@ export default function DashboardPage() {
     });
   }, [clients, currentTime, deals, leads, tasks]);
 
-  const openLead = (leadId: string) => router.push(`/leads?leadId=${encodeURIComponent(leadId)}`);
-  const openClient = (clientId: string) => router.push(`/clients?clientId=${encodeURIComponent(clientId)}`);
-  const openDeal = (dealId: string) => router.push(`/pipeline?dealId=${encodeURIComponent(dealId)}`);
-  const openFollowUp = (item: DashboardFollowUpItem) => {
-    const task = tasks.find((candidate) => candidate.id === item.taskId);
-    if (!task) return;
-    const related = task.relatedTo;
-    if (related?.type === 'Client') {
-      router.push(`/clients?clientId=${encodeURIComponent(related.id)}&tab=tasks`);
-    } else if (related?.type === 'Deal') {
-      router.push(`/pipeline?dealId=${encodeURIComponent(related.id)}`);
-    } else if (related?.type === 'Lead') {
-      openLead(related.id);
-    } else {
-      router.push(`/tasks?taskId=${encodeURIComponent(task.id)}`);
-    }
-  };
-
   const sourceBadgeVariant = (source: DashboardFollowUpItem['source']) => source === 'LEAD' ? 'blue' : source === 'CLIENT' ? 'green' : source === 'DEAL' ? 'purple' : 'gray';
   const openCustomize = () => { setDraftKpis(selectedKpis); setOpenKpiModules(new Set(['Sales', 'Deals'])); setCustomizeMessage(null); setCustomizeOpen(true); };
   const toggleDraftKpi = (id: DashboardKpiId) => {
@@ -481,6 +476,7 @@ export default function DashboardPage() {
 
   return (
     <div className="dashboard-page space-y-3 pb-8 sm:space-y-6">
+      <div className="dashboard-heading-layout space-y-3 sm:space-y-6">
       <div className="dashboard-top">
         <PageHeader
           title="Dashboard"
@@ -502,26 +498,30 @@ export default function DashboardPage() {
       </div>
 
       {/* KPI cards are selected and ordered independently from the rest of the dashboard. */}
-      <div className="space-y-3">
+      <div className="dashboard-metrics-toolbar space-y-3">
         <div className="dashboard-key-metrics-header flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="dashboard-key-metrics-title">
             <h2 className="text-sm font-semibold text-[var(--app-text)]">Key Metrics</h2>
             <p className="sr-only">{dashboardDateRangeLabel}</p>
           </div>
           <div className="dashboard-key-metrics-controls flex flex-wrap items-center gap-2">
-          <Button type="button" variant="outline" onClick={openCustomize} className="gap-2"><Settings2 size={16} /> Customize Dashboard</Button>
           <div ref={dashboardRangeMenuRef} className="dashboard-range-selector">
-            <button type="button" className="dashboard-range-trigger" aria-haspopup="listbox" aria-expanded={dashboardRangeOpen} aria-label={`Dashboard time range: ${dashboardRangeLabel}, ${dashboardDateRangeLabel}`} onClick={() => setDashboardRangeOpen((open) => !open)}>
-              <span className="dashboard-range-trigger-preset">{dashboardRangeLabel}</span>
-              <span className="dashboard-range-trigger-date">{dashboardDateRangeLabel}</span>
+            <button type="button" className="dashboard-range-trigger" aria-haspopup="listbox" aria-expanded={dashboardRangeOpen} aria-label={`Dashboard time range: ${dashboardRangePresetLabel}, ${dashboardRangeLabel}, ${dashboardDateRangeLabel}`} title={`${dashboardRangeLabel}: ${dashboardDateRangeLabel}`} onClick={() => setDashboardRangeOpen((open) => !open)}>
+              <span className="dashboard-range-trigger-preset">{dashboardRangePresetLabel}</span>
               <ChevronDown size={18} aria-hidden="true" className={`dashboard-range-select-chevron transition-transform ${dashboardRangeOpen ? 'rotate-180' : ''}`} />
             </button>
             {dashboardRangeOpen && <div className={`dashboard-range-menu ${rangePreset === 'custom' ? 'dashboard-range-menu-with-custom' : 'dashboard-range-menu-simple'}`} role="listbox" aria-label="Dashboard time range options">
               <div className="dashboard-range-menu-options">
                 {DASHBOARD_RANGE_OPTIONS.map((option) => {
-                  const optionLabel = option.value === 'custom' ? 'Custom range' : `Last ${option.label.toLowerCase()}`;
+                  const optionRange = getDashboardDateRange(option.value, customStartDate, customEndDate);
+                  const optionDateRangeLabel = optionRange
+                    ? `${format(optionRange.start, optionRange.start.getFullYear() === optionRange.end.getFullYear() ? 'MMM d' : 'MMM d, yyyy')} – ${format(optionRange.end, 'MMM d, yyyy')}`
+                    : 'Choose start and end dates';
                   return <button key={option.value} type="button" role="option" aria-selected={rangePreset === option.value} className={`dashboard-range-option ${rangePreset === option.value ? 'dashboard-range-option-active' : ''}`} onClick={() => { setRangePreset(option.value); if (option.value !== 'custom') setDashboardRangeOpen(false); }}>
-                    <span>{optionLabel}</span>
+                    <span className="dashboard-range-option-copy">
+                      <span className="dashboard-range-option-title">{option.label}</span>
+                      <span className="dashboard-range-option-dates">{optionDateRangeLabel}</span>
+                    </span>
                     {rangePreset === option.value && <Check size={16} aria-hidden="true" />}
                   </button>;
                 })}
@@ -538,8 +538,10 @@ export default function DashboardPage() {
               </div>}
             </div>}
           </div>
+          <Button type="button" variant="outline" onClick={openCustomize} className="dashboard-customize-action mobile-icon-only" aria-label="Customize dashboard"><Settings2 size={16} aria-hidden="true" /><span className="mobile-button-label">Customize Dashboard</span></Button>
           </div>
         </div>
+      </div>
       </div>
       <div data-startup-lcp="dashboard-kpi" className="bsm-kpi-grid dashboard-kpi-grid grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-6">
         {selectedKpis.map((id, index) => <MovableKpiCard key={id} cardId={id} order={index} className="dashboard-kpi-drag-container" onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard(id, 'kpis')}><DashboardKpiCard id={id} value={dashboardMetrics?.values[id]} failed={dashboardMetrics?.failedKpis.includes(id) || false} currency={settings.currency} /></MovableKpiCard>)}
@@ -554,32 +556,32 @@ export default function DashboardPage() {
 
         {/* Follow-ups Due */}
         <MovableDashboardCard cardId="followups" order={primaryCardOrder.indexOf('followups')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('followups', 'primary')}>
-        <Card className="flex h-full flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
-            <div>
+        <Card className="dashboard-section-card flex h-full flex-col space-y-3">
+          <div className="dashboard-section-header flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
+            <div className="min-w-0">
               <h3 className="text-sm font-semibold text-[var(--app-text)]">Follow-ups &amp; Tasks</h3>
               <p className="text-xs text-[var(--app-muted)]">Upcoming and overdue actions</p>
             </div>
             <Badge variant="gray">{followUpItems.length} open</Badge>
           </div>
 
-          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
+          <div className="dashboard-record-list dashboard-followup-list max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {followUpItems.map((item) => (
-              <div key={item.id} role="button" tabIndex={0} onClick={() => openFollowUp(item)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openFollowUp(item); } }} className="flex cursor-pointer items-start justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors duration-150 hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
-                <div className="w-full min-w-0 flex-1 space-y-1 text-left">
-                    <div className="flex min-w-0 items-center gap-1.5">
+              <div key={item.id} className="dashboard-record-row dashboard-followup-row flex items-stretch justify-between gap-0 rounded-lg border-b border-[var(--app-border-subtle)] transition-colors duration-150 last:border-b-0">
+                <Link href={getDashboardRecordHref('Task', item.taskId)} aria-label={`Open task: ${item.title}`} className="dashboard-record-link min-h-11 min-w-0 flex-1 space-y-1 rounded-lg p-3 text-left no-underline transition-colors duration-150 hover:bg-[var(--app-surface-subtle)] active:bg-[var(--app-accent-soft)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                       <Badge variant={sourceBadgeVariant(item.source)}>{item.source}</Badge>
                       <Badge variant={item.state === 'OVERDUE' ? 'red' : 'blue'}>{item.state === 'OVERDUE' ? 'OVERDUE' : isToday(new Date(item.scheduledAt)) ? 'DUE TODAY' : 'SCHEDULED'}</Badge>
-                      <span className="truncate text-xs font-medium text-[var(--app-text)]">{item.relatedName}</span>
+                      <span className="min-w-0 break-words text-xs font-medium leading-4 text-[var(--app-text)]">{item.relatedName}</span>
                     </div>
-                    <p className="min-w-0 truncate text-sm font-medium text-[var(--app-text)]">{item.title}</p>
+                    <p className="min-w-0 break-words text-sm font-medium leading-5 text-[var(--app-text)]">{item.title}</p>
                     <div className="flex flex-wrap items-center gap-1.5 text-xs text-[var(--app-muted)]">
                       <span className="flex items-center gap-1"><Calendar size={12} /> {formatCompactDateTime(item.scheduledAt, settings.timezone)}</span>
                       <span>· {item.priority} Priority</span>
                     </div>
-                </div>
-                <div className="shrink-0">
-                  <IconActionButton icon={<Check size={15} />} label="Complete Task" variant="success" disabled={!canWrite || completingTaskId === item.taskId} onClick={(event) => { event.stopPropagation(); void handleCompleteDashboardTask(item.taskId); }} />
+                </Link>
+                <div className="flex shrink-0 items-center pr-3">
+                  <IconActionButton icon={<Check size={15} />} label={`Complete task: ${item.title}`} variant="success" disabled={!canWrite || completingTaskId === item.taskId} onClick={() => { void handleCompleteDashboardTask(item.taskId); }} />
                 </div>
               </div>
             ))}
@@ -599,49 +601,49 @@ export default function DashboardPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Recent Leads */}
         <MovableDashboardCard cardId="leads" order={secondaryCardOrder.indexOf('leads')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('leads', 'secondary')}>
-        <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
-            <div>
+        <Card className="dashboard-section-card flex flex-col space-y-3">
+          <div className="dashboard-section-header flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-[var(--app-text)]">Recent Leads</h3>
-              <p className="text-xs text-[var(--app-muted)]">Latest prospects registered in the system</p>
+              <p className="text-xs text-[var(--app-muted)]">Newest prospects in your workspace</p>
             </div>
-            <Badge variant="purple">{totalLeads} Total</Badge>
+            <Badge variant="purple">{Math.min(totalLeads, 5)} shown</Badge>
           </div>
 
-          <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
+          <div className="dashboard-record-list max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {leads.slice(0, 5).map((lead) => (
-              <div key={lead.id} role="button" tabIndex={0} onClick={() => openLead(lead.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openLead(lead.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
-                <div>
-                  <p className="font-semibold text-sm text-[var(--app-text)]">{lead.name}</p>
-                  <p className="text-xs text-[var(--app-muted)]">{lead.company || 'Independent'} • Source: {lead.source}</p>
+              <Link key={lead.id} href={getDashboardRecordHref('Lead', lead.id)} aria-label={`Open lead: ${lead.name}`} className="dashboard-record-row dashboard-record-link flex min-h-11 items-center justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 no-underline transition-colors hover:bg-[var(--app-surface-subtle)] active:bg-[var(--app-accent-soft)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
+                <div className="min-w-0 flex-1">
+                  <p className="break-words text-sm font-semibold leading-5 text-[var(--app-text)]">{lead.name}</p>
+                  <p className="mt-0.5 break-words text-xs leading-4 text-[var(--app-muted)]">{lead.company || 'Independent'} • Source: {lead.source}</p>
                 </div>
-                <div className="text-right space-y-1">
+                <div className="dashboard-record-status shrink-0 text-right space-y-1">
                   <Badge variant={lead.status === 'New' ? 'blue' : lead.status === 'Opportunity' ? 'purple' : 'gray'}>
                     {lead.status}
                   </Badge>
                   <p className="text-[10px] text-[var(--app-tertiary)]">{new Date(lead.createdAt).toISOString().split('T')[0]}</p>
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </Card>
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="clients" order={secondaryCardOrder.indexOf('clients')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('clients', 'secondary')}>
-        <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
-            <div>
+        <Card className="dashboard-section-card flex flex-col space-y-3">
+          <div className="dashboard-section-header flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-[var(--app-text)]">Recent Clients</h3>
-              <p className="text-xs text-[var(--app-muted)]">Latest active client records</p>
+              <p className="text-xs text-[var(--app-muted)]">Newest active client records</p>
             </div>
-            <Badge variant="green">{clients.length} Loaded</Badge>
+            <Badge variant="green">{Math.min(clients.length, 5)} shown</Badge>
           </div>
-          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
+          <div className="dashboard-record-list max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {clients.slice(0, 5).map((client) => (
-              <div key={client.id} role="button" tabIndex={0} onClick={() => openClient(client.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openClient(client.id); } }} className="flex cursor-pointer items-center justify-between rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{client.name}</p><p className="truncate text-xs text-[var(--app-muted)]">{client.company || client.email}</p></div>
-                <p className="shrink-0 text-[10px] text-[var(--app-tertiary)]">{new Date(client.createdAt).toLocaleDateString()}</p>
-              </div>
+              <Link key={client.id} href={getDashboardRecordHref('Client', client.id)} aria-label={`Open client: ${client.name}`} className="dashboard-record-row dashboard-record-link flex min-h-11 items-center justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 no-underline transition-colors hover:bg-[var(--app-surface-subtle)] active:bg-[var(--app-accent-soft)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
+                <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold leading-5 text-[var(--app-text)]">{client.name}</p><p className="mt-0.5 break-words text-xs leading-4 text-[var(--app-muted)]">{client.company || client.email}</p></div>
+                <p className="dashboard-record-status shrink-0 text-[10px] text-[var(--app-tertiary)]">{new Date(client.createdAt).toLocaleDateString()}</p>
+              </Link>
             ))}
             {clients.length === 0 && <div className="py-12 text-center text-sm text-[var(--app-tertiary)]">No clients yet.</div>}
           </div>
@@ -649,20 +651,20 @@ export default function DashboardPage() {
         </MovableDashboardCard>
 
         <MovableDashboardCard cardId="deals" order={secondaryCardOrder.indexOf('deals')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('deals', 'secondary')}>
-        <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
-            <div>
+        <Card className="dashboard-section-card flex flex-col space-y-3">
+          <div className="dashboard-section-header flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-[var(--app-text)]">Recent Deals</h3>
               <p className="text-xs text-[var(--app-muted)]">Latest opportunities and closed deals</p>
             </div>
-            <Badge variant="purple">{deals.length} Loaded</Badge>
+            <Badge variant="purple">{Math.min(deals.length, 5)} shown</Badge>
           </div>
-          <div className="max-h-[350px] flex-1 space-y-3 overflow-y-auto">
+          <div className="dashboard-record-list max-h-[350px] flex-1 space-y-3 overflow-y-auto">
             {deals.slice(0, 5).map((deal) => (
-              <div key={deal.id} role="button" tabIndex={0} onClick={() => openDeal(deal.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openDeal(deal.id); } }} className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 transition-colors hover:bg-[var(--app-surface-subtle)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
-                <div className="min-w-0"><p className="truncate text-sm font-semibold text-[var(--app-text)]">{deal.title}</p><p className="truncate text-xs text-[var(--app-muted)]">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>
+              <Link key={deal.id} href={getDashboardRecordHref('Deal', deal.id)} aria-label={`Open deal: ${deal.title}`} className="dashboard-record-row dashboard-record-link flex min-h-11 items-center justify-between gap-3 rounded-lg border-b border-[var(--app-border-subtle)] p-3 no-underline transition-colors hover:bg-[var(--app-surface-subtle)] active:bg-[var(--app-accent-soft)] focus-visible:bg-[var(--app-surface-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30 last:border-b-0">
+                <div className="min-w-0 flex-1"><p className="break-words text-sm font-semibold leading-5 text-[var(--app-text)]">{deal.title}</p><p className="mt-0.5 break-words text-xs leading-4 text-[var(--app-muted)]">{deal.stage} · {formatCurrency(deal.value, settings.currency)}</p></div>
                 <Badge variant={deal.status === 'Won' ? 'green' : deal.status === 'Lost' ? 'red' : 'blue'}>{deal.status}</Badge>
-              </div>
+              </Link>
             ))}
             {deals.length === 0 && <div className="py-12 text-center text-sm text-[var(--app-tertiary)]">No deals yet.</div>}
           </div>
@@ -671,28 +673,32 @@ export default function DashboardPage() {
 
         {/* Recent Activity */}
         <MovableDashboardCard cardId="activity" order={secondaryCardOrder.indexOf('activity')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('activity', 'secondary')}>
-        <Card className="flex flex-col space-y-3">
-          <div className="flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
-            <div>
+        <Card className="dashboard-section-card flex flex-col space-y-3">
+          <div className="dashboard-section-header flex items-center justify-between border-b border-[var(--app-border-subtle)] pb-3">
+            <div className="min-w-0">
               <h3 className="font-bold text-[var(--app-text)]">Recent Activity</h3>
-              <p className="text-xs text-[var(--app-muted)]">System audit log of sales operations</p>
+              <p className="text-xs text-[var(--app-muted)]">Recent activity across your workspace</p>
             </div>
             <Badge variant="gray">{activities.length} Events</Badge>
           </div>
 
-          <div className="space-y-3 flex-1 overflow-y-auto max-h-[350px]">
-            {activities.map((act) => (
-              <div key={act.id} className="flex items-start gap-3 p-3 bg-[var(--app-surface-subtle)] border border-[var(--app-border-subtle)] rounded-xl">
-                <div className="w-2 h-2 mt-1.5 rounded-full bg-[var(--app-primary)] shrink-0" />
-                <div className="flex-1 min-w-0">
+          <div className="dashboard-record-list dashboard-activity-list space-y-3 flex-1 overflow-y-auto max-h-[350px]">
+            {activities.map((act) => {
+              const activityHref = getDashboardActivityHref(act);
+              const content = <>
+                <div className="h-2 w-2 shrink-0 rounded-full bg-[var(--app-primary)]" />
+                <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-[var(--app-text)]">{act.description}</p>
-                  <div className="flex items-center gap-2 mt-1">
+                  <div className="mt-1 flex items-center gap-2">
                     <span className="text-[10px] text-[var(--app-tertiary)]">{new Date(act.timestamp).toISOString().replace('T', ' ').substring(0, 16)}</span>
-                    {act.meta && <span className="text-[10px] font-bold text-[var(--app-primary)] bg-[var(--app-accent-soft)] px-1.5 py-0.5 rounded">{act.meta}</span>}
+                    {act.meta && <span className="rounded bg-[var(--app-accent-soft)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--app-primary)]">{act.meta}</span>}
                   </div>
                 </div>
-              </div>
-            ))}
+              </>;
+              return activityHref
+                ? <Link key={act.id} href={activityHref} aria-label={`Open related record for activity: ${act.description}`} className="dashboard-activity-row dashboard-record-link flex min-h-11 items-start gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-3 no-underline transition-colors hover:bg-white hover:shadow-[var(--app-shadow-xs)] active:bg-[var(--app-accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--app-primary)]/30">{content}</Link>
+                : <div key={act.id} className="dashboard-activity-row flex items-start gap-3 rounded-xl border border-[var(--app-border-subtle)] bg-[var(--app-surface-subtle)] p-3">{content}</div>;
+            })}
           </div>
         </Card>
         </MovableDashboardCard>
@@ -731,7 +737,7 @@ export default function DashboardPage() {
               <section aria-label="Card order" className="min-w-0 border-t border-[var(--app-border-subtle)] pt-4 md:border-l md:border-t-0 md:pl-5 md:pt-0">
                 <h4 className="text-sm font-semibold text-[var(--app-text)]">Card Order</h4><p className="mb-3 text-xs text-[var(--app-muted)]">Choose the order your KPI cards appear.</p>
                 <div className="space-y-1">
-                  {draftKpis.map((id, index) => <div key={id} className="flex min-h-10 items-center gap-2 rounded-md bg-[var(--app-surface-subtle)] px-2"><span className="w-4 text-xs font-semibold text-[var(--app-tertiary)]">{index + 1}</span><span className="min-w-0 flex-1 truncate text-sm text-[var(--app-text)]">{getKpiDefinition(id)?.label}</span><span className="flex shrink-0 gap-1"><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} up`} disabled={index === 0} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index - 1]))} className="rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowUp size={16} /></button><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} down`} disabled={index === draftKpis.length - 1} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index + 1]))} className="rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowDown size={16} /></button></span></div>)}
+                  {draftKpis.map((id, index) => <div key={id} className="flex min-h-10 items-center gap-2 rounded-md bg-[var(--app-surface-subtle)] px-2"><span className="w-4 text-xs font-semibold text-[var(--app-tertiary)]">{index + 1}</span><span className="min-w-0 flex-1 truncate text-sm text-[var(--app-text)]">{getKpiDefinition(id)?.label}</span><span className="flex shrink-0 gap-1"><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} up`} disabled={index === 0} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index - 1]))} className="mobile-icon-control rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowUp size={16} /></button><button type="button" aria-label={`Move ${getKpiDefinition(id)?.label} down`} disabled={index === draftKpis.length - 1} onClick={() => setDraftKpis((items) => reorderCards(items, id, items[index + 1]))} className="mobile-icon-control rounded p-1.5 text-[var(--app-muted)] hover:bg-[var(--app-surface)] disabled:cursor-not-allowed disabled:opacity-30"><ArrowDown size={16} /></button></span></div>)}
                 </div>
               </section>
             </div>
@@ -889,7 +895,7 @@ export default function DashboardPage() {
                       <select 
                         className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)] bg-white"
                         value={taskForm.priority}
-                        onChange={e => setTaskForm({...taskForm, priority: e.target.value as any})}
+                        onChange={e => setTaskForm({...taskForm, priority: e.target.value as typeof taskForm.priority})}
                       >
                         <option value="Low">Low</option>
                         <option value="Medium">Medium</option>

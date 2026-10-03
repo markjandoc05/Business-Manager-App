@@ -10,7 +10,10 @@ export function isLocalFirebaseEmulatorMode(environment?: Record<string, string 
   const emulatorFlag = environment?.NEXT_PUBLIC_USE_FIREBASE_EMULATORS ?? process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS;
   const projectId = environment?.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
   const localUatFlag = environment?.NEXT_PUBLIC_LOCAL_UAT ?? process.env.NEXT_PUBLIC_LOCAL_UAT;
-  const isDemoProject = projectId === 'demo-bsm-client-app';
+  // These are non-production emulator identities used by the Client and its
+  // trusted local Platform integration. A public production project can never
+  // opt into emulator mode through an environment variable.
+  const isDemoProject = projectId === 'demo-bsm-client-app' || projectId === 'demo-bsm-console';
   // A production build may opt into the emulator only for the explicitly
   // marked local-UAT demo project. The real BSM project can never be switched
   // to an emulator by a public flag.

@@ -7,6 +7,7 @@ import { organizationDocumentInCollection } from '@/lib/organizations/paths';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
 import { activityData, activityRef } from '@/lib/repositories/activityEvents';
 import { cachedRequest, invalidateCachedRequest } from '@/lib/repositories/requestCache';
+import { isValidTimeZone } from '@/lib/timezones';
 
 function settingsDocument(organizationId: string) {
   return organizationDocumentInCollection(db, organizationId, 'settings', 'settings');
@@ -125,6 +126,7 @@ function mapSettings(data: Record<string, unknown>): Settings {
     ...defaultSettings,
     ...data,
     businessType: isBusinessType(data.businessType) ? data.businessType : defaultSettings.businessType,
+    timezone: isValidTimeZone(data.timezone) ? data.timezone.trim() : defaultSettings.timezone,
     pipelineStages: Array.isArray(data.pipelineStages) ? data.pipelineStages as Settings['pipelineStages'] : defaultSettings.pipelineStages,
     leadSources: Array.isArray(data.leadSources) ? data.leadSources as Settings['leadSources'] : defaultSettings.leadSources,
     salesReferenceMode: data.salesReferenceMode === 'SEQUENTIAL' ? 'SEQUENTIAL' : 'SYSTEM_GENERATED',
@@ -196,6 +198,9 @@ export async function loadSettings(user: AppUser | null, organizationId: string)
 export async function updateSettings(user: AppUser | null, organizationId: string, changes: Partial<Settings>) {
   const persistedChanges = pickPersistedSettings(changes);
   if (Object.keys(persistedChanges).length === 0) return;
+  if (persistedChanges.timezone !== undefined && !isValidTimeZone(persistedChanges.timezone)) {
+    throw new Error('Choose a valid timezone.');
+  }
   const settingsRef = settingsDocument(organizationId);
   let resolvedRole: string | undefined;
 

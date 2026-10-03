@@ -1,5 +1,8 @@
 node_modules/
 .next/
+.next-*/
+test-results/
+playwright-report/
 coverage/
 .DS_Store
 *.log

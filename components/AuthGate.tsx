@@ -9,6 +9,7 @@ import WorkspaceOnboarding from '@/components/WorkspaceOnboarding';
 import { getNoMembershipDestination, type EntryIntent } from '@/lib/auth/entryFlow';
 import { emitStartupTiming, markStartup, markStartupEvent } from '@/lib/startupTiming';
 import { isLocalFirebaseEmulatorMode } from '@/lib/firebase/environment';
+import { isPlatformOnboardingEnabled } from '@/lib/subscriptions';
 
 function LoadingScreen() {
   return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] text-sm text-[var(--app-muted)]">Loading your account…</div>;
@@ -96,7 +97,8 @@ function LoginScreen({ onIntent }: { onIntent: (intent: 'create' | 'signin') => 
 
 function NoWorkspaceScreen({ onCreate }: { onCreate: () => void }) {
   const { user, signOut } = useAuth();
-  return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6"><Card className="w-full max-w-md space-y-5 p-6 text-center sm:p-8"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--app-accent-soft)] text-[var(--app-primary)]"><Building2 size={24} /></div><div><h1 className="text-xl font-semibold text-[var(--app-text)]">No workspace found</h1><p className="mt-2 text-sm leading-6 text-[var(--app-muted)]">You don&apos;t currently belong to a workspace.</p></div><Button type="button" onClick={onCreate} className="w-full">Create Your Workspace</Button><Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button><p className="break-words text-xs text-[var(--app-tertiary)]">Signed in as {user?.email}</p></Card></div>;
+  const platformOnboardingEnabled = isPlatformOnboardingEnabled();
+  return <div className="flex min-h-screen items-center justify-center bg-[var(--app-surface-subtle)] p-4 sm:p-6"><Card className="w-full max-w-md space-y-5 p-6 text-center sm:p-8"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--app-accent-soft)] text-[var(--app-primary)]"><Building2 size={24} /></div><div><h1 className="text-xl font-semibold text-[var(--app-text)]">No workspace found</h1><p className="mt-2 text-sm leading-6 text-[var(--app-muted)]">You don&apos;t currently belong to a workspace.</p></div>{platformOnboardingEnabled ? <Button type="button" onClick={onCreate} className="w-full">Create Your Workspace</Button> : <p className="rounded-xl bg-[var(--app-surface-subtle)] p-3 text-sm text-[var(--app-muted)]">New workspace provisioning is temporarily unavailable. Please try again later.</p>}<Button type="button" variant="outline" onClick={signOut} className="w-full gap-2"><LogOut size={16} /> Sign out</Button><p className="break-words text-xs text-[var(--app-tertiary)]">Signed in as {user?.email}</p></Card></div>;
 }
 
 function WorkspacePicker() {

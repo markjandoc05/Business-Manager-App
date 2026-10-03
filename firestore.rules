@@ -43,36 +43,6 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'ADMIN';
     }
 
-    function isBootstrapOrganizationCreate(organizationId) {
-      return signedIn()
-        && !exists(/databases/$(database)/documents/organizations/$(organizationId))
-        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.createdByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role == 'ADMIN'
-        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active'
-        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(request.auth.uid)).data.organizationId == organizationId
-        && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/settings/settings).data.businessName is string
-        && getAfter(/databases/$(database)/documents/organizationSlugs/$(getAfter(/databases/$(database)/documents/organizations/$(organizationId)).data.slug)).data.organizationId == organizationId;
-    }
-
-    function isBootstrapProfileActivation(userId) {
-      return signedIn()
-        && request.auth.uid == userId
-        && resource.data.uid == userId
-        && resource.data.status == 'pending'
-        && resource.data.active == false
-        && request.resource.data.uid == userId
-        && request.resource.data.status == 'active'
-        && request.resource.data.active == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'active'])
-        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.createdByUid == userId
-        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId is string
-        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)).data.createdByUid == userId
-        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.userId == userId
-        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.role == 'ADMIN'
-        && getAfter(/databases/$(database)/documents/organizations/$(getAfter(/databases/$(database)/documents/workspaceBootstrap/$(userId)).data.organizationId)/members/$(userId)).data.status == 'active';
-    }
-
     function organizationCanView(organizationId) {
       return isOrganizationMember(organizationId)
         && exists(/databases/$(database)/documents/organizations/$(organizationId))
@@ -371,14 +341,15 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.keys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'role', 'active', 'createdAt', 'lastLogin', 'lastLoginAt']);
 
-      allow update: if isBootstrapProfileActivation(userId)
-        || (signedIn() && request.auth.uid == userId
-          && request.resource.data.role == resource.data.role
-          && request.resource.data.active == resource.data.active
-          && request.resource.data.status == resource.data.status
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
-          && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
-          && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'inactive', 'disabled']));
+      // Browser clients may maintain only their own non-authoritative identity
+      // metadata. Profile activation is a trusted Platform/Admin SDK write.
+      allow update: if signedIn() && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.active == resource.data.active
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['uid', 'name', 'email', 'displayName', 'photoURL', 'status', 'lastLogin', 'lastLoginAt'])
+        && (!request.resource.data.keys().hasAny(['uid']) || request.resource.data.uid == userId)
+        && (!request.resource.data.keys().hasAny(['status']) || request.resource.data.status in ['pending', 'active', 'inactive', 'disabled']);
 
       allow delete: if false;
     }
@@ -386,18 +357,10 @@ service cloud.firestore {
     match /organizations/{organizationId} {
       allow read: if isActivePlatformAdmin()
         || isOrganizationMember(organizationId);
-      allow create: if isBootstrapOrganizationCreate(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'slug', 'businessType', 'status', 'plan', 'subscriptionStatus', 'maxUsers', 'licenseStatus', 'licenseWriteEnabled', 'licenseExpiresAt', 'createdAt', 'updatedAt', 'createdByUid'])
-        && request.resource.data.name is string
-        && request.resource.data.slug is string
-        && request.resource.data.status == 'trial'
-        && request.resource.data.plan == 'trial'
-        && request.resource.data.subscriptionStatus == 'trial'
-        && request.resource.data.maxUsers == 3
-        && request.resource.data.licenseStatus == 'TRIAL'
-        && request.resource.data.licenseWriteEnabled == true
-        && request.resource.data.licenseExpiresAt is timestamp
-        && request.resource.data.createdByUid == request.auth.uid;
+      // Tenant roots and their licensing mirrors are Platform-owned. The
+      // Platform uses Firebase Admin SDK, which is intentionally outside
+      // browser Rules authority.
+      allow create: if false;
       // Organization and license mirror mutations are Console server API work.
       allow update: if false;
       allow delete: if false;
@@ -407,14 +370,10 @@ service cloud.firestore {
       allow read: if isActivePlatformAdmin()
         || (isActiveApplicationUser() && userId == request.auth.uid && resource.data.userId == request.auth.uid)
         || isOrganizationMember(organizationId);
-      allow create: if isBootstrapOrganizationCreate(organizationId)
-        && request.resource.data.keys().hasOnly(['userId', 'email', 'displayName', 'role', 'status', 'joinedAt', 'activatedAt', 'activatedBy'])
-        && request.resource.data.userId == userId
-        && request.resource.data.role in ['ADMIN', 'MANAGER', 'USER']
-        && request.resource.data.status in ['pending', 'active', 'inactive', 'suspended', 'archived']
-        && (isBootstrapOrganizationCreate(organizationId)
-          ? (userId == request.auth.uid && request.resource.data.role == 'ADMIN' && request.resource.data.status == 'active')
-          : true);
+      // Initial and subsequent membership writes are trusted server work.
+      // Tenant ADMINs use the authenticated membership API, which enforces
+      // membership-only scope and server-side seat limits.
+      allow create: if false;
       // Existing memberships are changed only through the authenticated server
       // handler, which counts active members inside an Admin SDK transaction.
       allow update, delete: if false;
@@ -429,21 +388,7 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/license/{licenseId} {
       allow read: if licenseId == 'current' && organizationCanView(organizationId);
-      allow create: if licenseId == 'current'
-        && isBootstrapOrganizationCreate(organizationId)
-        && !exists(/databases/$(database)/documents/organizations/$(organizationId)/license/current)
-        && request.resource.data.keys().hasOnly(['plan', 'status', 'trialStartedAt', 'trialEndsAt', 'maxUsers', 'features', 'createdAt', 'updatedAt', 'updatedBy'])
-        && request.resource.data.plan == 'TRIAL'
-        && request.resource.data.status == 'TRIAL'
-        && request.resource.data.trialStartedAt is timestamp
-        && request.resource.data.trialEndsAt is timestamp
-        && request.resource.data.trialEndsAt >= request.time
-        && request.resource.data.trialEndsAt <= request.time + duration.value(14, 'd')
-        && request.resource.data.maxUsers == 3
-        && request.resource.data.features is map
-        && request.resource.data.createdAt is timestamp
-        && request.resource.data.updatedAt is timestamp
-        && request.resource.data.updatedBy == request.auth.uid;
+      allow create: if false;
       // License documents are created during onboarding and mutated only by
       // the privileged Console server API (Firebase Admin SDK).
       allow update: if false;
@@ -462,35 +407,18 @@ service cloud.firestore {
 
     match /organizationSlugs/{slug} {
       // Slug records are an internal uniqueness index, not a public workspace
-      // directory. Browser clients never need to read them.
+      // directory. The Platform owns creation and browser clients never need
+      // to read or write them.
       allow read: if false;
-      allow create: if signedIn()
-        && !exists(/databases/$(database)/documents/organizationSlugs/$(slug))
-        && request.resource.data.keys().hasOnly(['organizationId', 'slug', 'createdAt', 'createdByUid'])
-        && request.resource.data.organizationId is string
-        && request.resource.data.slug == slug
-        && request.resource.data.createdByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)).data.createdByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/members/$(request.auth.uid)).data.role == 'ADMIN'
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/members/$(request.auth.uid)).data.status == 'active'
-        && getAfter(/databases/$(database)/documents/workspaceBootstrap/$(request.auth.uid)).data.organizationId == request.resource.data.organizationId
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/settings/settings).data.businessName is string;
+      allow create: if false;
       allow update, delete: if false;
     }
 
     match /workspaceBootstrap/{userId} {
       allow read: if signedIn() && userId == request.auth.uid;
-      allow create: if signedIn()
-        && userId == request.auth.uid
-        && !exists(/databases/$(database)/documents/workspaceBootstrap/$(userId))
-        && request.resource.data.keys().hasOnly(['organizationId', 'createdAt', 'createdByUid'])
-        && request.resource.data.organizationId is string
-        && request.resource.data.createdByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)).data.createdByUid == request.auth.uid
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/members/$(request.auth.uid)).data.role == 'ADMIN'
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/members/$(request.auth.uid)).data.status == 'active'
-        && getAfter(/databases/$(database)/documents/organizations/$(request.resource.data.organizationId)/settings/settings).data.businessName is string;
-      allow update, delete: if false;
+      // Historical guards remain readable only by their owner, but no browser
+      // may create or mutate a guard after Platform onboarding cutover.
+      allow create, update, delete: if false;
     }
 
     match /platformUsers/{userId} {
@@ -866,9 +794,9 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Sales are immutable transaction snapshots. Financial status and record
-    // management are deliberately separate: archive never changes totals, and
-    // only an already voided Sale may be put in Trash.
+    // Sales preserve their transaction snapshot. Payment progression is an
+    // atomic aggregate update backed by one immutable payment event; record
+    // management never changes financial totals.
     match /organizations/{organizationId}/sales/{saleId} {
       allow read: if organizationCanView(organizationId);
       allow create: if organizationCanManageWrite(organizationId)
@@ -890,9 +818,27 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(request.resource.data.dealId)).data.saleId == saleId));
       allow update: if organizationCanManageWrite(organizationId)
         && (
+          // Record an additional payment and update the Sale aggregate in the
+          // same atomic request. Product, customer, and total fields stay fixed.
+          (resource.data.status == 'ACTIVE'
+            && request.resource.data.status == 'ACTIVE'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus', 'paymentMethod', 'amountPaid', 'balance', 'lastPaymentId', 'updatedAt', 'updatedBy'])
+            && request.resource.data.lastPaymentId is string
+            && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
+            && request.resource.data.amountPaid is number
+            && request.resource.data.amountPaid > resource.data.amountPaid
+            && request.resource.data.amountPaid <= resource.data.total
+            && request.resource.data.balance == resource.data.total - request.resource.data.amountPaid
+            && ((request.resource.data.balance == 0 && request.resource.data.paymentStatus == 'PAID')
+              || (request.resource.data.balance > 0 && request.resource.data.paymentStatus == 'PARTIAL'))
+            && request.resource.data.updatedBy == request.auth.uid
+            && request.resource.data.updatedAt == request.time
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.saleId == saleId
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.amount == request.resource.data.amountPaid - resource.data.amountPaid
+            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.method == request.resource.data.paymentMethod)
           // The only financial transition. Deal-linked Sales also release their
           // lock in this same atomic write.
-          (resource.data.status == 'ACTIVE'
+          || (resource.data.status == 'ACTIVE'
             && request.resource.data.status == 'VOIDED'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voidedAt', 'voidedBy', 'voidReason', 'updatedAt', 'updatedBy'])
             && request.resource.data.voidedAt is timestamp
@@ -950,6 +896,23 @@ service cloud.firestore {
             ))
         );
       allow delete: if false;
+
+      match /payments/{paymentId} {
+        allow read: if organizationCanView(organizationId);
+        allow create: if organizationCanManageWrite(organizationId)
+          && request.resource.data.keys().hasOnly(['saleId', 'amount', 'method', 'paymentDate', 'notes', 'createdAt', 'createdBy'])
+          && request.resource.data.saleId == saleId
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0
+          && request.resource.data.method in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
+          && request.resource.data.paymentDate is string
+          && (request.resource.data.notes == null || request.resource.data.notes is string)
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.createdBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.lastPaymentId == paymentId
+          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.amountPaid == get(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.amountPaid + request.resource.data.amount;
+        allow update, delete: if false;
+      }
     }
 
     // A small per-Deal marker makes the active-sale constraint transactional.
@@ -1090,8 +1053,11 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/settings/{settingsId} {
       allow read: if isActivePlatformAdmin() || organizationCanView(organizationId);
-      allow create: if (isBootstrapOrganizationCreate(organizationId)
-        || (isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)))
+      // Platform provisioning creates the initial settings document. Retain
+      // the existing ADMIN repair/configuration path for already authorized
+      // workspaces; it cannot create a tenant because the tenant root,
+      // membership, and license are browser-write denied above.
+      allow create: if isOrganizationAdmin(organizationId) && settingsLicenseAllowsWrites(organizationId)
         && settingsId == 'settings'
         && (!request.resource.data.keys().hasAny(['salesReferenceMode']) || request.resource.data.salesReferenceMode in ['SYSTEM_GENERATED', 'SEQUENTIAL'])
         && (!request.resource.data.keys().hasAny(['salesReferencePrefix']) || request.resource.data.salesReferencePrefix is string)

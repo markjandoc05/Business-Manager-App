@@ -14,6 +14,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 
 const PROJECT_ID = 'demo-bsm-client-app';
 const ORGANIZATION_ID = 'bsm-uat-org';
+const SECOND_ORGANIZATION_ID = 'bsm-uat-org-b';
 const credentialsFile = resolve(process.env.BSM_UAT_CREDENTIALS_FILE || '/private/tmp/bsm-uat-credentials.json');
 
 function assertEmulatorOnly() {
@@ -44,6 +45,7 @@ const identities = [
   { key: 'admin', uid: 'bsm-uat-admin', email: 'admin@bsm-uat.local', displayName: 'BSM UAT Admin', role: 'ADMIN' },
   { key: 'manager', uid: 'bsm-uat-manager', email: 'manager@bsm-uat.local', displayName: 'BSM UAT Manager', role: 'MANAGER' },
   { key: 'user', uid: 'bsm-uat-user', email: 'user@bsm-uat.local', displayName: 'BSM UAT User', role: 'USER' },
+  { key: 'selectorAdmin', uid: 'bsm-uat-selector-admin', email: 'selector.admin@bsm-uat.local', displayName: 'BSM UAT Selector Admin', role: 'ADMIN' },
 ];
 
 function password() {
@@ -65,14 +67,14 @@ const seededIdentities = await Promise.all(identities.map(upsertAuthUser));
 const organizationRef = db.doc(`organizations/${ORGANIZATION_ID}`);
 const organizationData = {
   name: 'BSM UAT Workspace', slug: 'bsm-uat-workspace', businessType: 'Small Business', status: 'active', plan: 'TEAM', subscriptionStatus: 'active',
-  maxUsers: 3, licenseStatus: 'ACTIVE', licenseWriteEnabled: true, licenseExpiresAt: future, createdAt: now, updatedAt: now, createdByUid: seededIdentities[0].uid,
+  maxUsers: 5, licenseStatus: 'ACTIVE', licenseWriteEnabled: true, licenseExpiresAt: future, createdAt: now, updatedAt: now, createdByUid: seededIdentities[0].uid,
 };
 const pipelineStages = ['New', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'].map((name) => ({ name, isActive: true }));
 const leadSources = ['Website', 'Referral', 'LinkedIn', 'Events'].map((name) => ({ name, isActive: true }));
 
 await organizationRef.set(organizationData, { merge: true });
 await organizationRef.collection('license').doc('current').set({
-  plan: 'TEAM', status: 'ACTIVE', subscriptionStartedAt: now, subscriptionEndsAt: future, maxUsers: 3,
+  plan: 'TEAM', status: 'ACTIVE', subscriptionStartedAt: now, subscriptionEndsAt: future, maxUsers: 5,
   features: { crm: true, sales: true, reports: true }, createdAt: now, updatedAt: now, updatedBy: seededIdentities[0].uid,
 }, { merge: true });
 await organizationRef.collection('settings').doc('settings').set({
@@ -89,12 +91,95 @@ await Promise.all(seededIdentities.map((identity) => Promise.all([
 
 const adminUid = seededIdentities[0].uid;
 const managerUid = seededIdentities[1].uid;
+const selectorAdmin = seededIdentities.find((identity) => identity.key === 'selectorAdmin');
+if (!selectorAdmin) throw new Error('Selector UAT identity was not created.');
 await db.doc(`workspaceBootstrap/${adminUid}`).set({ organizationId: ORGANIZATION_ID, createdAt: now, createdByUid: adminUid }, { merge: true });
 const clientOne = organizationRef.collection('clients').doc('uat-client-001');
 const clientTwo = organizationRef.collection('clients').doc('uat-client-002');
+const mobileLongClient = organizationRef.collection('clients').doc('uat-client-mobile-long');
+const mobileLongClientName = 'Northwestern Pacific Integrated Business Solutions and Advisory Services';
 await Promise.all([
   clientOne.set({ name: 'UAT Client One', company: 'Example Holdings', email: 'client.one@bsm-uat.local', phone: '09170000001', assignedToUid: managerUid, assignedToName: seededIdentities[1].displayName, status: 'ACTIVE', archived: false, trashed: false, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
   clientTwo.set({ name: 'UAT Client Two', company: 'Demo Studio', email: 'client.two@bsm-uat.local', phone: '09170000002', assignedToUid: adminUid, assignedToName: seededIdentities[0].displayName, status: 'ACTIVE', archived: false, trashed: false, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
+  mobileLongClient.set({ name: mobileLongClientName, company: 'Southeast Asia Enterprise Transformation and Operations Group', email: 'mobile.responsiveness.audit.contact.department@bsm-uat.local', phone: '09170000004', assignedToUid: adminUid, assignedToName: seededIdentities[0].displayName, status: 'ACTIVE', archived: false, trashed: false, createdAt: Timestamp.fromMillis(now.toMillis() + 1_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
+]);
+
+const selectorClientWrites = Array.from({ length: 28 }, (_, index) => {
+  const clientNumber = String(index + 3).padStart(3, '0');
+  const timestamp = Timestamp.fromMillis(now.toMillis() - ((index + 1) * 1_000));
+  return organizationRef.collection('clients').doc(`uat-client-${clientNumber}`).set({
+    name: `UAT Loaded Client ${clientNumber}`,
+    company: 'Selector Fixture Company',
+    email: `loaded.client.${clientNumber}@bsm-uat.local`,
+    phone: `0917${clientNumber.padStart(7, '0')}`,
+    assignedToUid: selectorAdmin.uid,
+    assignedToName: selectorAdmin.displayName,
+    status: 'ACTIVE',
+    archived: false,
+    trashed: false,
+    createdAt: timestamp,
+    createdBy: adminUid,
+    updatedAt: timestamp,
+    updatedBy: adminUid,
+  }, { merge: true });
+});
+const laterPageClient = organizationRef.collection('clients').doc('uat-client-later-page');
+await Promise.all([
+  ...selectorClientWrites,
+  laterPageClient.set({
+    name: 'Marquee Later Page Client',
+    company: 'Marquee Final Company',
+    email: 'marquee.later.page@bsm-uat.local',
+    phone: '09179999991',
+    assignedToUid: selectorAdmin.uid,
+    assignedToName: selectorAdmin.displayName,
+    status: 'ACTIVE',
+    archived: false,
+    trashed: false,
+    createdAt: Timestamp.fromMillis(now.toMillis() - 86_400_000),
+    createdBy: adminUid,
+    updatedAt: now,
+    updatedBy: adminUid,
+  }, { merge: true }),
+  organizationRef.collection('clients').doc('uat-client-stale-ma').set({
+    name: 'Maple Stale Client', company: 'Stale Request Fixture', email: 'maple.stale@bsm-uat.local', phone: '09179999993',
+    assignedToUid: selectorAdmin.uid, assignedToName: selectorAdmin.displayName, status: 'ACTIVE', archived: false, trashed: false,
+    createdAt: Timestamp.fromMillis(now.toMillis() - 86_401_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid,
+  }, { merge: true }),
+  organizationRef.collection('clients').doc('uat-client-stale-mark').set({
+    name: 'Mark Stale Client', company: 'Stale Request Fixture', email: 'mark.stale@bsm-uat.local', phone: '09179999994',
+    assignedToUid: selectorAdmin.uid, assignedToName: selectorAdmin.displayName, status: 'ACTIVE', archived: false, trashed: false,
+    createdAt: Timestamp.fromMillis(now.toMillis() - 86_402_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid,
+  }, { merge: true }),
+  organizationRef.collection('clients').doc('uat-client-stale-marke').set({
+    name: 'Marke Final Client', company: 'Marke Final Company', email: 'marke.final@bsm-uat.local', phone: '09179999995',
+    assignedToUid: selectorAdmin.uid, assignedToName: selectorAdmin.displayName, status: 'ACTIVE', archived: false, trashed: false,
+    createdAt: Timestamp.fromMillis(now.toMillis() - 86_403_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid,
+  }, { merge: true }),
+]);
+
+const secondOrganizationRef = db.doc(`organizations/${SECOND_ORGANIZATION_ID}`);
+await Promise.all([
+  secondOrganizationRef.set({ ...organizationData, name: 'BSM UAT Workspace B', slug: 'bsm-uat-workspace-b', createdByUid: selectorAdmin.uid }, { merge: true }),
+  secondOrganizationRef.collection('license').doc('current').set({
+    plan: 'TEAM', status: 'ACTIVE', subscriptionStartedAt: now, subscriptionEndsAt: future, maxUsers: 5,
+    features: { crm: true, sales: true, reports: true }, createdAt: now, updatedAt: now, updatedBy: selectorAdmin.uid,
+  }, { merge: true }),
+  secondOrganizationRef.collection('settings').doc('settings').set({
+    businessName: 'BSM UAT Workspace B', businessType: 'Small Business', email: 'uat-b@bsm-uat.local', phone: '', website: '', address: '',
+    currency: 'PHP', timezone: 'Asia/Manila', logoUrl: '', accentColor: '#3b82f6', pipelineStages, leadSources,
+    salesReferenceMode: 'SYSTEM_GENERATED', salesReferencePrefix: 'SALE-', salesReferenceStartingNumber: 1, salesReferenceDigits: 6,
+    salesDefaultPaymentStatus: 'PAID', salesDefaultPaymentMethod: 'CASH', updatedAt: now, updatedBy: selectorAdmin.uid,
+  }, { merge: true }),
+  secondOrganizationRef.collection('members').doc(selectorAdmin.uid).set({
+    userId: selectorAdmin.uid, email: selectorAdmin.email, displayName: selectorAdmin.displayName, role: 'ADMIN', status: 'active',
+    joinedAt: now, activatedAt: now, activatedBy: 'uat-seed', updatedAt: now,
+  }, { merge: true }),
+  secondOrganizationRef.collection('clients').doc('uat-client-org-b-only').set({
+    name: 'Workspace B Private Client', company: 'Tenant B Company', email: 'private.client@workspace-b.local', phone: '09179999992',
+    assignedToUid: selectorAdmin.uid, assignedToName: selectorAdmin.displayName, status: 'ACTIVE', archived: false, trashed: false,
+    createdAt: now, createdBy: selectorAdmin.uid, updatedAt: now, updatedBy: selectorAdmin.uid,
+  }, { merge: true }),
 ]);
 
 const lead = organizationRef.collection('leads').doc('uat-lead-001');
@@ -105,13 +190,20 @@ await organizationRef.collection('catalogItems').doc('uat-catalog-001').set({ ty
 
 const openDeal = organizationRef.collection('deals').doc('uat-deal-open-001');
 const recordedDeal = organizationRef.collection('deals').doc('uat-deal-recorded-001');
+const mobileLongDeal = organizationRef.collection('deals').doc('uat-deal-mobile-long');
+const mobileLongDealTitle = 'Enterprise Operations Modernization and Regional Expansion Partnership';
 await Promise.all([
   openDeal.set({ title: 'UAT Won Deal - Record Sale', clientId: clientOne.id, value: 1000, stage: 'Won', status: 'Won', expectedCloseDate: new Date().toISOString().slice(0, 10), wonAt: now, items: [item], assignedToUid: managerUid, assignedToName: seededIdentities[1].displayName, archived: false, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
   recordedDeal.set({ title: 'UAT Won Deal - Existing Sale', clientId: clientTwo.id, value: 2500, stage: 'Won', status: 'Won', expectedCloseDate: new Date().toISOString().slice(0, 10), wonAt: now, items: [item], assignedToUid: adminUid, assignedToName: seededIdentities[0].displayName, archived: false, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
+  mobileLongDeal.set({ title: mobileLongDealTitle, clientId: mobileLongClient.id, value: 125000, stage: 'Won', status: 'Won', expectedCloseDate: new Date().toISOString().slice(0, 10), wonAt: now, items: [item], assignedToUid: adminUid, assignedToName: seededIdentities[0].displayName, archived: false, createdAt: Timestamp.fromMillis(now.toMillis() + 1_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
 ]);
 
 const saleRef = organizationRef.collection('sales').doc('uat-sale-001');
-await saleRef.set({ saleNumber: 'SALE-UAT-001', saleDate: new Date().toISOString().slice(0, 10), customerType: 'CLIENT', source: 'DEAL', customerName: 'UAT Client Two', clientId: clientTwo.id, dealId: recordedDeal.id, items: [item], subtotal: 1000, total: 1000, paymentStatus: 'PAID', paymentMethod: 'CASH', amountPaid: 1000, balance: 0, notes: 'Seeded UAT sale', status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true });
+const partialSaleRef = organizationRef.collection('sales').doc('uat-sale-mobile-partial');
+await Promise.all([
+  saleRef.set({ saleNumber: 'SALE-UAT-001', saleDate: new Date().toISOString().slice(0, 10), customerType: 'CLIENT', source: 'DEAL', customerName: 'UAT Client Two', clientId: clientTwo.id, dealId: recordedDeal.id, items: [item], subtotal: 1000, total: 1000, paymentStatus: 'PAID', paymentMethod: 'CASH', amountPaid: 1000, balance: 0, notes: 'Seeded UAT sale', status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, createdAt: now, createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
+  partialSaleRef.set({ saleNumber: 'SALE-UAT-MOBILE', saleDate: new Date().toISOString().slice(0, 10), customerType: 'CLIENT', source: 'CLIENT', customerName: mobileLongClientName, clientId: mobileLongClient.id, items: [item], subtotal: 1000, total: 1000, paymentStatus: 'PARTIAL', paymentMethod: 'BANK_TRANSFER', amountPaid: 250, balance: 750, notes: 'Seeded responsive UAT sale with a remaining balance', status: 'ACTIVE', archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null, createdAt: Timestamp.fromMillis(now.toMillis() + 1_000), createdBy: adminUid, updatedAt: now, updatedBy: adminUid }, { merge: true }),
+]);
 await organizationRef.collection('dealSaleLocks').doc(recordedDeal.id).set({ dealId: recordedDeal.id, saleId: saleRef.id, status: 'ACTIVE', updatedAt: now, updatedBy: adminUid }, { merge: true });
 
 await Promise.all([
@@ -119,10 +211,28 @@ await Promise.all([
   clientOne.collection('notes').doc('uat-note-001').set({ content: 'UAT sample client note.', author: seededIdentities[0].displayName, createdByUid: adminUid, createdByName: seededIdentities[0].displayName, createdAt: now, archived: false, trashed: false }, { merge: true }),
   clientOne.collection('documents').doc('uat-document-001').set({ name: 'UAT brief.pdf', storagePath: `organizations/${ORGANIZATION_ID}/clients/${clientOne.id}/uat-brief.pdf`, mimeType: 'application/pdf', size: 1024, uploadedAt: now, uploadedByUid: adminUid, uploadedByName: seededIdentities[0].displayName, archived: false }, { merge: true }),
   organizationRef.collection('activities').doc('uat-activity-001').set({ type: 'client_creation', description: 'UAT sample client created', entityType: 'Client', entityId: clientOne.id, createdAt: now, createdBy: adminUid, timestamp: now }, { merge: true }),
+  organizationRef.collection('activities').doc('uat-activity-informational').set({ type: 'settings_update', description: 'UAT informational activity', entityType: 'Settings', entityId: 'settings', createdAt: Timestamp.fromMillis(now.toMillis() - 1_000), createdBy: adminUid, timestamp: now }, { merge: true }),
 ]);
 
 mkdirSync(dirname(credentialsFile), { recursive: true });
-writeFileSync(credentialsFile, `${JSON.stringify({ projectId: PROJECT_ID, organizationId: ORGANIZATION_ID, generatedAt: new Date().toISOString(), users: seededIdentities.map(({ password: generatedPassword, ...identity }) => ({ ...identity, password: generatedPassword })) }, null, 2)}\n`, { mode: 0o600 });
+writeFileSync(credentialsFile, `${JSON.stringify({
+  projectId: PROJECT_ID,
+  organizationId: ORGANIZATION_ID,
+  organizations: [
+    { id: ORGANIZATION_ID, name: organizationData.name },
+    { id: SECOND_ORGANIZATION_ID, name: 'BSM UAT Workspace B' },
+  ],
+  clients: {
+    laterPage: { id: laterPageClient.id, name: 'Marquee Later Page Client' },
+    mobileLong: { id: mobileLongClient.id, name: mobileLongClientName },
+    workspaceBOnly: { id: 'uat-client-org-b-only', name: 'Workspace B Private Client' },
+    staleFinal: { id: 'uat-client-stale-marke', name: 'Marke Final Client' },
+  },
+  deals: { mobileLong: { id: mobileLongDeal.id, title: mobileLongDealTitle } },
+  sales: { mobilePartial: { id: partialSaleRef.id, saleNumber: 'SALE-UAT-MOBILE' } },
+  generatedAt: new Date().toISOString(),
+  users: seededIdentities.map(({ password: generatedPassword, ...identity }) => ({ ...identity, password: generatedPassword })),
+}, null, 2)}\n`, { mode: 0o600 });
 chmodSync(credentialsFile, 0o600);
 console.log(`Seeded ${organizationData.name} (${ORGANIZATION_ID}) with ${seededIdentities.length} local UAT identities.`);
 console.log(`Credentials written to ${credentialsFile} (passwords are not printed).`);

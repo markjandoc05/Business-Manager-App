@@ -289,45 +289,34 @@ test('Firebase-disabled users cannot use an otherwise valid ID token', async () 
   await expectStatus(patchMembership(admin.token, organizationId, target.uid, { status: 'active' }), 401, 'Firebase-disabled user');
 });
 
-test('explicit account disablement and reactivation update both Firebase Auth and the app profile', async () => {
-  const admin = await createToken('account-action-admin');
-  const target = await createToken('account-action-target');
-  const organizationId = await seedOrganization({ members: [
-    { uid: admin.uid, role: 'ADMIN', status: 'active' },
+test('an ADMIN changes only the target membership and cannot alter global account state or another organization', async () => {
+  const adminA = await createToken('membership-scope-admin-a');
+  const adminB = await createToken('membership-scope-admin-b');
+  const target = await createToken('membership-scope-target');
+  const organizationA = await seedOrganization({ members: [
+    { uid: adminA.uid, role: 'ADMIN', status: 'active' },
     { uid: target.uid, role: 'USER', status: 'active' },
   ] });
+  const organizationB = await seedOrganization({ members: [
+    { uid: adminB.uid, role: 'ADMIN', status: 'active' },
+    { uid: target.uid, role: 'USER', status: 'active' },
+  ] });
+  const globalProfileBefore = (await adminDb.doc(`users/${target.uid}`).get()).data();
 
-  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'disable' }), 200, 'Account disablement');
-  assert.equal((await adminAuth.getUser(target.uid)).disabled, true);
-  assert.deepEqual((await adminDb.doc(`users/${target.uid}`).get()).data(), {
-    uid: target.uid,
-    name: 'account-action-target',
-    email: `${target.uid}@example.test`,
-    displayName: 'account-action-target',
-    status: 'disabled',
-    role: 'USER',
-    active: false,
-  });
-  assert.equal((await adminDb.doc(`organizations/${organizationId}/members/${target.uid}`).get()).data().status, 'inactive');
-
-  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'reactivate' }), 200, 'Account reactivation');
+  await expectStatus(patchMembership(adminA.token, organizationA, target.uid, { status: 'inactive' }), 200, 'Organization A membership deactivation');
+  assert.equal((await adminDb.doc(`organizations/${organizationA}/members/${target.uid}`).get()).data().status, 'inactive');
+  assert.equal((await adminDb.doc(`organizations/${organizationB}/members/${target.uid}`).get()).data().status, 'active');
+  assert.deepEqual((await adminDb.doc(`users/${target.uid}`).get()).data(), globalProfileBefore);
   assert.equal((await adminAuth.getUser(target.uid)).disabled, false);
-  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().status, 'active');
-  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().active, true);
-  assert.equal((await adminDb.doc(`organizations/${organizationId}/members/${target.uid}`).get()).data().status, 'active');
-});
 
-test('a non-ADMIN cannot trigger account reactivation', async () => {
-  const admin = await createToken('unauthorized-action-admin');
-  const user = await createToken('unauthorized-action-user');
-  const target = await createToken('unauthorized-action-target');
-  const organizationId = await seedOrganization({ members: [
-    { uid: admin.uid, role: 'ADMIN', status: 'active' },
-    { uid: user.uid, role: 'USER', status: 'active' },
-    { uid: target.uid, role: 'USER', status: 'active' },
-  ] });
-  await expectStatus(patchMembership(admin.token, organizationId, target.uid, { accountAction: 'disable' }), 200, 'Target disablement');
-  await expectStatus(patchMembership(user.token, organizationId, target.uid, { accountAction: 'reactivate' }), 403, 'Unauthorized reactivation');
+  await expectStatus(patchMembership(adminA.token, organizationA, target.uid, { accountAction: 'reactivate' }), 400, 'Removed global account action');
+
+  await adminAuth.updateUser(target.uid, { disabled: true });
+  await adminDb.doc(`users/${target.uid}`).update({ status: 'disabled', active: false });
+  await expectStatus(patchMembership(adminA.token, organizationA, target.uid, { status: 'active' }), 200, 'Organization A membership activation');
+  assert.equal((await adminDb.doc(`organizations/${organizationA}/members/${target.uid}`).get()).data().status, 'active');
+  assert.equal((await adminDb.doc(`organizations/${organizationB}/members/${target.uid}`).get()).data().status, 'active');
   assert.equal((await adminAuth.getUser(target.uid)).disabled, true);
   assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().status, 'disabled');
+  assert.equal((await adminDb.doc(`users/${target.uid}`).get()).data().active, false);
 });

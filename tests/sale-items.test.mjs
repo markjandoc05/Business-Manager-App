@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { changeSaleQuantity, createOtherSaleLineItem, createSaleLineItem, createSaleLineItemsFromDeal, getSaleItemsTotal, normalizeSaleLineItems, recalculateSaleLineItem } from '../lib/sale-items.ts';
-import { createSaleNumber, getLocalCalendarDate, normalizeSaleDate, normalizeSalePayment } from '../lib/sale-workflow.ts';
+import { createSaleNumber, getLocalCalendarDate, normalizeAdditionalSalePayment, normalizeSaleDate, normalizeSalePayment } from '../lib/sale-workflow.ts';
 
 const catalogItem = (overrides = {}) => ({ id: 'catalog-1', type: 'SERVICE', name: 'Website Design', code: 'WEB-01', categoryId: 'web', category: 'Web', unit: 'project', regularPrice: 40000, salePrice: 35000, effectivePrice: 35000, status: 'ACTIVE', archived: false, createdBy: 'admin', createdAt: '2026-01-01T00:00:00.000Z', updatedBy: 'admin', updatedAt: '2026-01-01T00:00:00.000Z', ...overrides });
 
@@ -40,6 +40,13 @@ test('payment status produces mutually consistent paid and balance values', () =
   assert.deepEqual(normalizeSalePayment(100, 'PARTIAL', 'GCASH', 25), { paymentStatus: 'PARTIAL', paymentMethod: 'GCASH', amountPaid: 25, balance: 75 });
   assert.throws(() => normalizeSalePayment(100, 'PARTIAL', 'CASH', 0), /greater than zero/);
   assert.throws(() => normalizeSalePayment(100, 'PAID', '', 100), /payment method/);
+});
+
+test('additional payments advance the balance without allowing overpayment', () => {
+  assert.deepEqual(normalizeAdditionalSalePayment(100, 25, 50, 'GCASH'), { amount: 50, method: 'GCASH', amountPaid: 75, balance: 25, paymentStatus: 'PARTIAL' });
+  assert.deepEqual(normalizeAdditionalSalePayment(100, 75, 25, 'CASH'), { amount: 25, method: 'CASH', amountPaid: 100, balance: 0, paymentStatus: 'PAID' });
+  assert.throws(() => normalizeAdditionalSalePayment(100, 75, 25.01, 'CASH'), /cannot exceed/);
+  assert.throws(() => normalizeAdditionalSalePayment(100, 100, 1, 'CASH'), /cannot exceed/);
 });
 
 test('Sale numbers are doc-ID derived and dates preserve local calendar days', () => {

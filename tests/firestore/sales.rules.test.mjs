@@ -18,6 +18,36 @@ test('Sales rules reject non-managers, cross-org writes, malformed payment data,
 
 test('only the void lifecycle transition is permitted after recording a Sale', async () => { const adminDb = testEnv.authenticatedContext(ADMIN).firestore(); const ref = doc(adminDb, `${salePath()}/sale-1`); await setDoc(ref, saleData()); await assertFails(updateDoc(ref, { total: 1, updatedAt: serverTimestamp(), updatedBy: ADMIN })); await assertSucceeds(updateDoc(ref, { status: 'VOIDED', voidedAt: serverTimestamp(), voidedBy: ADMIN, voidReason: null, updatedAt: serverTimestamp(), updatedBy: ADMIN })); await assertFails(updateDoc(ref, { status: 'ACTIVE', updatedAt: serverTimestamp(), updatedBy: ADMIN })); });
 
+test('additional Sale payments are atomic, tenant-scoped, and immutable', async () => {
+  const adminDb = testEnv.authenticatedContext(ADMIN).firestore();
+  const saleRef = doc(adminDb, `${salePath()}/sale-payment`);
+  await setDoc(saleRef, saleData(ADMIN, { paymentStatus: 'PARTIAL', amountPaid: 100, balance: 400 }));
+  const paymentRef = doc(collection(adminDb, `${salePath()}/sale-payment/payments`));
+  const batch = writeBatch(adminDb);
+  batch.set(paymentRef, { saleId: 'sale-payment', amount: 200, method: 'GCASH', paymentDate: '2026-09-04', notes: null, createdAt: serverTimestamp(), createdBy: ADMIN });
+  batch.update(saleRef, { paymentStatus: 'PARTIAL', paymentMethod: 'GCASH', amountPaid: 300, balance: 200, lastPaymentId: paymentRef.id, updatedAt: serverTimestamp(), updatedBy: ADMIN });
+  await assertSucceeds(batch.commit());
+  assert.equal((await getDoc(saleRef)).data().amountPaid, 300);
+  await assertSucceeds(getDoc(doc(testEnv.authenticatedContext(USER).firestore(), paymentRef.path)));
+  await assertFails(getDoc(doc(testEnv.authenticatedContext(OTHER_ADMIN).firestore(), paymentRef.path)));
+  await assertFails(updateDoc(paymentRef, { amount: 1 }));
+
+  const orphanRef = doc(collection(adminDb, `${salePath()}/sale-payment/payments`));
+  await assertFails(setDoc(orphanRef, { saleId: 'sale-payment', amount: 1, method: 'CASH', paymentDate: '2026-09-04', notes: null, createdAt: serverTimestamp(), createdBy: ADMIN }));
+  const overpayRef = doc(collection(adminDb, `${salePath()}/sale-payment/payments`));
+  const overpay = writeBatch(adminDb);
+  overpay.set(overpayRef, { saleId: 'sale-payment', amount: 201, method: 'CASH', paymentDate: '2026-09-04', notes: null, createdAt: serverTimestamp(), createdBy: ADMIN });
+  overpay.update(saleRef, { paymentStatus: 'PAID', paymentMethod: 'CASH', amountPaid: 501, balance: -1, lastPaymentId: overpayRef.id, updatedAt: serverTimestamp(), updatedBy: ADMIN });
+  await assertFails(overpay.commit());
+
+  const userDb = testEnv.authenticatedContext(USER).firestore();
+  const userPaymentRef = doc(collection(userDb, `${salePath()}/sale-payment/payments`));
+  const unauthorized = writeBatch(userDb);
+  unauthorized.set(userPaymentRef, { saleId: 'sale-payment', amount: 200, method: 'CASH', paymentDate: '2026-09-04', notes: null, createdAt: serverTimestamp(), createdBy: USER });
+  unauthorized.update(doc(userDb, `${salePath()}/sale-payment`), { paymentStatus: 'PAID', paymentMethod: 'CASH', amountPaid: 500, balance: 0, lastPaymentId: userPaymentRef.id, updatedAt: serverTimestamp(), updatedBy: USER });
+  await assertFails(unauthorized.commit());
+});
+
 test('Sales archive and Trash transitions preserve immutable financial data', async () => {
   const adminDb = testEnv.authenticatedContext(ADMIN).firestore(); const ref = doc(adminDb, `${salePath()}/sale-lifecycle`);
   await setDoc(ref, saleData());

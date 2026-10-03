@@ -40,6 +40,21 @@ export function normalizeSalePayment(totalValue: unknown, statusValue: unknown, 
   return { paymentStatus: status, paymentMethod: method, amountPaid, balance: roundSaleMoney(total - amountPaid) };
 }
 
+export function normalizeAdditionalSalePayment(totalValue: unknown, paidValue: unknown, amountValue: unknown, methodValue: unknown) {
+  const total = roundSaleMoney(Number(totalValue));
+  const amountPaid = roundSaleMoney(Number(paidValue));
+  const amount = roundSaleMoney(Number(amountValue));
+  const method = paymentMethod(methodValue);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(amountPaid) || amountPaid < 0 || amountPaid > total) throw new Error('The Sale payment totals are invalid.');
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Payment amount must be greater than zero.');
+  if (!method) throw new Error('Choose a valid payment method.');
+  const balance = roundSaleMoney(total - amountPaid);
+  if (amount > balance) throw new Error('Payment amount cannot exceed the outstanding balance.');
+  const nextAmountPaid = roundSaleMoney(amountPaid + amount);
+  const nextBalance = roundSaleMoney(total - nextAmountPaid);
+  return { amount, method, amountPaid: nextAmountPaid, balance: nextBalance, paymentStatus: nextBalance === 0 ? 'PAID' as const : 'PARTIAL' as const };
+}
+
 /** Uses Firestore's generated ID, avoiding unsafe count-plus-one sequencing. */
 export function createSaleNumber(documentId: string) {
   const suffix = documentId.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase();

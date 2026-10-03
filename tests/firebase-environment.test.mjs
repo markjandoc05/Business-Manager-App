@@ -7,6 +7,7 @@ test('Firebase emulator mode requires the explicit flag in development', () => {
   assert.equal(isLocalFirebaseEmulatorMode({ ...demo, NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'true' }), true);
   assert.equal(isLocalFirebaseEmulatorMode({ ...demo, NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'false' }), false);
   assert.equal(isLocalFirebaseEmulatorMode({ ...demo }), false);
+  assert.equal(isLocalFirebaseEmulatorMode({ ...demo, NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'true', NEXT_PUBLIC_FIREBASE_PROJECT_ID: 'demo-bsm-console' }), true);
   assert.equal(isLocalFirebaseEmulatorMode({ ...demo, NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'true', NEXT_PUBLIC_FIREBASE_PROJECT_ID: 'bsm-client-app-web' }), false);
 });
 

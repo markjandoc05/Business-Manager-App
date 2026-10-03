@@ -1,5 +1,6 @@
 'use client';
 
+import { MobileNavigationTabs } from '@/components/MobileNavigationTabs';
 import { ResponsiveTable } from '@/components/ResponsiveTable';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -45,7 +46,7 @@ import type { LifecycleDecision } from '@/lib/record-lifecycle';
 import { previewBulkLifecycle } from '@/lib/repositories/lifecycle';
 import type { BulkLifecycleAction, BulkLifecycleResult } from '@/lib/repositories/lifecycle';
 import { BulkActionToolbar } from '@/components/BulkActionToolbar';
-import { TablePagination } from '@/components/TablePagination';
+import { LoadedListStatus } from '@/components/LoadedListStatus';
 import { SortableColumnHeader } from '@/components/SortableColumnHeader';
 import { compareDate, compareNumber, compareText, type SortDirection } from '@/lib/table-sorting';
 import { MoneyInput } from '@/components/MoneyInput';
@@ -55,6 +56,7 @@ import { listActivitiesForClientPage } from '@/lib/repositories/activities';
 import { activityBelongsToClient } from '@/lib/activity-history';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
+import { CLIENT_PAGE_SIZE } from '@/lib/repositories/clients';
 import { createSale, getActiveSaleForDeal, listClientSalesPage, getClientSalesSummary, type CreateSaleInput } from '@/lib/repositories/sales';
 import { RecordSaleModal, SaleDetailsModal } from '@/components/SaleRecordModal';
 import { Archive, Download, FileText, ReceiptText, RotateCcw, Trash2, Upload } from 'lucide-react';
@@ -64,6 +66,7 @@ type ClientColumn = 'select' | 'client' | 'company' | 'contact' | 'clientSince' 
 type ClientSortKey = Exclude<ClientColumn, 'select' | 'action'>;
 type ClientSort = { key: ClientSortKey; direction: SortDirection } | null;
 type ClientDealForm = { title: string; value: number; items: DealLineItem[]; stage: string; expectedCloseDate: string; notes: string; lossReason: string };
+type ClientDetailTab = 'overview' | 'deals' | 'sales' | 'tasks' | 'activity' | 'notes' | 'documents';
 const CLIENT_SALES_LOAD_ERROR = 'Unable to load Client Sales History. Please try again.';
 function currentDateTimeValue() {
   const date = new Date();
@@ -198,8 +201,6 @@ export default function ClientsPage() {
   const [bulkClientAction, setBulkClientAction] = useState<BulkLifecycleAction | ''>('');
   const [bulkClientBusy, setBulkClientBusy] = useState(false);
   const [bulkClientConfirmation, setBulkClientConfirmation] = useState<{ action: BulkLifecycleAction; ids: string[]; results: BulkLifecycleResult[] } | null>(null);
-  const [clientPage, setClientPage] = useState(1);
-  const [clientPageSize, setClientPageSize] = useState(25);
   const [clientSort, setClientSort] = useState<ClientSort>(null);
   const [showArchivedDeals, setShowArchivedDeals] = useState(false);
   const [showArchivedTasks, setShowArchivedTasks] = useState(false);
@@ -216,7 +217,7 @@ export default function ClientsPage() {
   const [clientSinceFrom, setClientSinceFrom] = useState('');
   const [clientSinceTo, setClientSinceTo] = useState('');
   const [selectedClientId, setSelectedClientId] = useState<string | null>(() => searchParams.get('clientId'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'deals' | 'tasks' | 'activity' | 'notes' | 'documents' | 'sales'>('overview');
+  const [activeTab, setActiveTab] = useState<ClientDetailTab>('overview');
 
   // Modal states
   const [showAddModal, setShowAddModal] = useState(false);
@@ -601,9 +602,9 @@ export default function ClientsPage() {
   }), [clientQuickFilter, clientRows, clientSinceFrom, clientSinceTo, companyFilter, searchTerm]);
   useEffect(() => {
     if (showArchived || showTrash || !currentOrganizationId || !user) return;
-    const timer = window.setTimeout(() => void refreshClients(undefined, searchTerm, clientPageSize), searchTerm.trim() ? 220 : 0);
+    const timer = window.setTimeout(() => void refreshClients(undefined, searchTerm, CLIENT_PAGE_SIZE), searchTerm.trim() ? 220 : 0);
     return () => window.clearTimeout(timer);
-  }, [clientPageSize, currentOrganizationId, refreshClients, searchTerm, showArchived, showTrash, user]);
+  }, [currentOrganizationId, refreshClients, searchTerm, showArchived, showTrash, user]);
   const sortedClientRows = useMemo(() => {
     if (!clientSort) return filteredClientRows;
     const sorted = [...filteredClientRows];
@@ -624,9 +625,7 @@ export default function ClientsPage() {
     : showTrash
       ? trashedClients
       : filteredClientRows.map(({ client }) => client);
-  const clientPageCount = Math.max(1, Math.ceil(filteredClientRows.length / clientPageSize));
-  const safeClientPage = Math.min(clientPage, clientPageCount);
-  const currentPageClients = showArchived || showTrash ? selectableClientRows : sortedClientRows.slice((safeClientPage - 1) * clientPageSize, safeClientPage * clientPageSize).map(({ client }) => client);
+  const currentPageClients = showArchived || showTrash ? selectableClientRows : sortedClientRows.map(({ client }) => client);
   const selectedMatchingClientIds = selectableClientRows.filter((client) => selectedClientIds.has(client.id)).map((client) => client.id);
   const selectedVisibleClientIds = currentPageClients.filter((client) => selectedClientIds.has(client.id)).map((client) => client.id);
   const allVisibleClientsSelected = currentPageClients.length > 0 && selectedVisibleClientIds.length === currentPageClients.length;
@@ -659,7 +658,6 @@ export default function ClientsPage() {
   });
   const selectAllMatchingClients = () => setSelectedClientIds((current) => new Set([...current, ...selectableClientRows.map((client) => client.id)]));
   const resetClientTableContext = () => {
-    setClientPage(1);
     setSelectedClientIds(new Set());
   };
   const handleClientSearchChange = (value: string) => { resetClientTableContext(); setSearchTerm(value); };
@@ -678,7 +676,6 @@ export default function ClientsPage() {
     setClientSort((current) => current?.key === key
       ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
       : { key, direction: 'asc' });
-    setClientPage(1);
   };
   const runBulkClientPreview = async () => {
     if (!user || !currentOrganizationId || !bulkClientAction || selectedMatchingClientIds.length === 0) return;
@@ -717,7 +714,6 @@ export default function ClientsPage() {
 
   const toggleArchived = () => {
     const next = !showArchived;
-    setClientPage(1);
     setShowArchived(next);
     setShowTrash(false);
     setSelectedClientIds(new Set());
@@ -727,7 +723,6 @@ export default function ClientsPage() {
 
   const toggleTrash = () => {
     const next = !showTrash;
-    setClientPage(1);
     setShowTrash(next);
     setShowArchived(false);
     setSelectedClientIds(new Set());
@@ -1038,7 +1033,7 @@ export default function ClientsPage() {
             <div className="client-profile-hero overflow-hidden rounded-[var(--app-radius-panel)] bg-[var(--app-primary)] px-5 py-5 text-white shadow-[var(--app-shadow-sm)] sm:px-6 sm:py-6">
               <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex min-w-0 items-center gap-4">
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white text-2xl font-semibold text-[var(--app-primary)] shadow-[var(--app-shadow-xs)] sm:h-20 sm:w-20 sm:text-3xl" aria-hidden="true">
+                  <div className="client-profile-avatar flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-white text-2xl font-semibold text-[var(--app-primary)] shadow-[var(--app-shadow-xs)] sm:h-20 sm:w-20 sm:text-3xl" aria-hidden="true">
                     {selectedClient.name.trim().charAt(0).toUpperCase() || 'C'}
                   </div>
                   <div className="min-w-0">
@@ -1062,13 +1057,13 @@ export default function ClientsPage() {
                       assignedToName: selectedClient.assignedToName || selectedClient.assignedTo || ''
                     });
                     setShowEditModal(true);
-                  }} className="gap-2">
+                  }} className="gap-2" data-mobile-label="Edit" aria-label="Edit Client">
                     <Edit size={16} /> Edit Client
                   </Button>}
-                  {canManage && <Button variant="warning" onClick={() => void requestClientLifecycleAction('archive', selectedClient)} className="gap-2">
+                  {canManage && <Button variant="warning" onClick={() => void requestClientLifecycleAction('archive', selectedClient)} className="gap-2" data-mobile-label="Archive" aria-label="Archive Client">
                     Archive Client
                   </Button>}
-                  {canManageDeal && <Button variant="secondary" onClick={openAddDeal} className="gap-2">
+                  {canManageDeal && <Button variant="secondary" onClick={openAddDeal} className="gap-2" data-mobile-label="Add Deal" aria-label="Add Deal">
                     <Plus size={16} /> Add Deal
                   </Button>}
                 </div>
@@ -1078,7 +1073,7 @@ export default function ClientsPage() {
           </div>
 
           {/* Client Summary Banner */}
-          <Card className="grid grid-cols-2 gap-3 border-[var(--app-border)] bg-white px-[15px] py-4 sm:gap-4 sm:px-[15px] sm:py-5 md:grid-cols-4">
+          <Card className="client-summary-card grid grid-cols-2 gap-3 border-[var(--app-border)] bg-white px-[15px] py-4 sm:gap-4 sm:px-[15px] sm:py-5 md:grid-cols-4">
             <div className="min-w-0 space-y-3">
               <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--app-muted)]">Company & Contact</p>
               <div className="flex min-w-0 items-center gap-2">
@@ -1116,8 +1111,8 @@ export default function ClientsPage() {
           </Card>
 
           {/* Profile Navigation Tabs */}
-          <div className="client-profile-tabs flex gap-6 overflow-x-auto border-b border-[var(--app-border)]" aria-label="Client detail sections">
-            {[
+          <MobileNavigationTabs activeKey={activeTab} className="client-profile-tabs flex gap-6 overflow-x-auto border-b border-[var(--app-border)]" aria-label="Client detail sections">
+            {([
               { id: 'overview', label: 'Overview' },
                 { id: 'deals', label: 'Deals' },
                 { id: 'sales', label: 'Sales' },
@@ -1125,10 +1120,12 @@ export default function ClientsPage() {
                 { id: 'activity', label: 'Activity Log' },
                 { id: 'notes', label: 'Notes' },
                 { id: 'documents', label: 'Documents' },
-            ].map((tab) => (
+            ] satisfies Array<{ id: ClientDetailTab; label: string }>).map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                type="button"
+                aria-pressed={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
                 className={`client-profile-tab whitespace-nowrap pb-3 font-semibold text-sm transition-colors border-b-2 -mb-px ${
                   activeTab === tab.id 
                     ? 'border-[var(--app-primary)] text-[var(--app-primary)]'
@@ -1138,7 +1135,7 @@ export default function ClientsPage() {
                 {tab.label}
               </button>
             ))}
-          </div>
+          </MobileNavigationTabs>
 
           {/* Tab Content */}
           <div className="space-y-6">
@@ -1160,7 +1157,7 @@ export default function ClientsPage() {
               <div className="space-y-4">
                 <Card className="space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold text-[var(--app-text)]">Client Deals</h3><div className="flex flex-wrap gap-2">{canManageDeal && <Button size="sm" onClick={openAddDeal} className="gap-2"><Plus size={14} /> Add Deal</Button>}<Button size="sm" variant="outline" onClick={() => { setShowArchivedDeals((current) => !current); if (!showArchivedDeals) void loadArchivedRecords(); }}>{showArchivedDeals ? 'Active Deals' : 'Archived Deals'}</Button></div></div>
-                  <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><input aria-label="Search client deals" className="min-w-[12rem] flex-1" placeholder="Search deals" value={clientDealSearch} onChange={(event) => setClientDealSearch(event.target.value)} /><select aria-label="Filter client deals by stage" value={clientDealStageFilter} onChange={(event) => setClientDealStageFilter(event.target.value)}><option value="ALL">All stages</option>{['New', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'].map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select><span className="text-xs text-[var(--app-muted)]">Filters apply to loaded results</span></div>
+                  <div className="compact-filter-strip compact-filter-grid flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><span className="compact-filter-field"><input aria-label="Search client deals" className="min-w-[12rem] flex-1" placeholder="Search deals" value={clientDealSearch} onChange={(event) => setClientDealSearch(event.target.value)} /></span><span className="compact-filter-field"><select aria-label="Filter client deals by stage" value={clientDealStageFilter} onChange={(event) => setClientDealStageFilter(event.target.value)}><option value="ALL">All stages</option>{['New', 'Qualified', 'Proposal', 'Negotiation', 'Won', 'Lost'].map((stage) => <option key={stage} value={stage}>{stage}</option>)}</select></span><span className="text-xs text-[var(--app-muted)]">Filters apply to loaded results</span></div>
                   {dealsLoading ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">Loading deals…</p> : dealsError ? <p className="rounded-xl bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-8 text-center text-sm text-[var(--app-danger)]" role="alert">{dealsError}</p> : clientDeals.length === 0 ? <div className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center"><p className="text-sm text-[var(--app-muted)]">No deals recorded for this client.</p>{canManageDeal && <Button size="sm" onClick={openAddDeal} className="mt-3">Add Deal</Button>}</div> : <div className="overflow-x-auto"><ResponsiveTable columns={["Deal", "Product / service", "Stage", "Probability", "Value", "Expected close", "Tasks", "Actions"]} primaryColumn={0} summaryColumns={[2, 4]} actionColumn={7} className="w-full min-w-[900px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Deal</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Product / Service</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Stage</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Prob.</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Value</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Expected Close</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Tasks</th><th className="px-3 py-3 text-right text-xs font-bold uppercase text-[var(--app-muted)]">Actions</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">
                   {pagedClientDeals.map(deal => {
                     const openTaskCount = pendingDealTaskCounts.get(deal.id) || 0;
@@ -1179,7 +1176,7 @@ export default function ClientsPage() {
             {activeTab === 'sales' && (
               <Card className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2"><div><h3 className="font-bold text-[var(--app-text)]">Client Sales History</h3><p className="text-xs text-[var(--app-muted)]">Recorded transactions for this Client. Voided Sales remain visible.</p></div><p className="text-sm font-bold text-[var(--app-text)]">Active total: {formatCurrency(clientSalesTotal, settings.currency)}</p></div>
-                <div className="flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><select aria-label="Filter client sales by source" value={clientSalesSourceFilter} onChange={(event) => setClientSalesSourceFilter(event.target.value as typeof clientSalesSourceFilter)}><option value="ALL">All sources</option><option value="DEAL">Deal</option><option value="CLIENT">Client</option></select><select aria-label="Filter client sales by payment" value={clientSalesPaymentFilter} onChange={(event) => setClientSalesPaymentFilter(event.target.value as typeof clientSalesPaymentFilter)}><option value="ALL">All payments</option><option value="PAID">Paid</option><option value="PARTIAL">Partial</option><option value="UNPAID">Unpaid</option></select><select aria-label="Filter client sales by lifecycle" value={clientSalesLifecycleFilter} onChange={(event) => setClientSalesLifecycleFilter(event.target.value as typeof clientSalesLifecycleFilter)}><option value="ALL">All statuses</option><option value="ACTIVE">Active</option><option value="VOIDED">Voided</option></select></div>
+                <div className="compact-filter-strip compact-filter-grid flex flex-wrap items-center gap-2 rounded-lg bg-[var(--app-surface-subtle)] p-2"><span className="compact-filter-field"><select aria-label="Filter client sales by source" value={clientSalesSourceFilter} onChange={(event) => setClientSalesSourceFilter(event.target.value as typeof clientSalesSourceFilter)}><option value="ALL">All sources</option><option value="DEAL">Deal</option><option value="CLIENT">Client</option></select></span><span className="compact-filter-field"><select aria-label="Filter client sales by payment" value={clientSalesPaymentFilter} onChange={(event) => setClientSalesPaymentFilter(event.target.value as typeof clientSalesPaymentFilter)}><option value="ALL">All payments</option><option value="PAID">Paid</option><option value="PARTIAL">Partial</option><option value="UNPAID">Unpaid</option></select></span><span className="compact-filter-field"><select aria-label="Filter client sales by lifecycle" value={clientSalesLifecycleFilter} onChange={(event) => setClientSalesLifecycleFilter(event.target.value as typeof clientSalesLifecycleFilter)}><option value="ALL">All statuses</option><option value="ACTIVE">Active</option><option value="VOIDED">Voided</option></select></span></div>
                 {clientSalesLoading && clientSales.length === 0 ? <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading Sales…</p> : clientSalesError ? <div className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert"><p>{CLIENT_SALES_LOAD_ERROR}</p><Button className="mt-2" size="sm" variant="outline" onClick={() => setClientSalesReloadToken((token) => token + 1)}>Retry</Button></div> : clientSales.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">No sales recorded for this client yet.</p> : <div className="overflow-x-auto"><ResponsiveTable columns={["Sale number", "Date", "Source", "Sale total", "Amount paid", "Balance", "Payment", "Status"]} primaryColumn={0} summaryColumns={[3, 6]} className="w-full min-w-[820px] text-left"><thead><tr className="border-b border-[var(--app-border)]"><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Sale #</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Date</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Source</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Sale Total</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Amount Paid</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Balance</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Payment</th><th className="px-3 py-3 text-xs font-bold uppercase text-[var(--app-muted)]">Status</th></tr></thead><tbody className="divide-y divide-[var(--app-border-subtle)]">{visibleClientSales.map((sale) => <tr key={sale.id} className="cursor-pointer hover:bg-[var(--app-surface-subtle)]" onClick={() => setSelectedClientSale(sale)}><td className="px-3 py-3 font-semibold">{sale.saleNumber}</td><td className="px-3 py-3 text-sm">{sale.saleDate}</td><td className="px-3 py-3"><Badge variant="gray">{sale.source === 'DEAL' ? 'Deal' : sale.source === 'CLIENT' ? 'Client' : 'Walk-in'}</Badge></td><td className="px-3 py-3 text-sm font-semibold">{formatCurrency(sale.total, settings.currency)}</td><td className="px-3 py-3 text-sm">{formatCurrency(sale.amountPaid, settings.currency)}</td><td className="px-3 py-3 text-sm">{formatCurrency(sale.balance, settings.currency)}</td><td className="px-3 py-3"><Badge variant={sale.paymentStatus === 'PAID' ? 'green' : sale.paymentStatus === 'PARTIAL' ? 'orange' : 'gray'}>{sale.paymentStatus === 'PAID' ? 'Paid' : sale.paymentStatus === 'PARTIAL' ? 'Partial' : 'Unpaid'}</Badge></td><td className="px-3 py-3"><Badge variant={sale.status === 'VOIDED' ? 'red' : 'green'}>{sale.status === 'VOIDED' ? 'Voided' : 'Active'}</Badge></td></tr>)}</tbody></ResponsiveTable></div>}
                 {clientSalesHasMore && <div className="text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientSales()} disabled={clientSalesLoading}>{clientSalesLoading ? 'Loading…' : 'Load More'}</Button></div>}
               </Card>
@@ -1265,11 +1262,11 @@ export default function ClientsPage() {
         </div>
       ) : (
         /* Client List View */
-        <div className="space-y-6">
-          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<>{<Button variant="outline" onClick={toggleArchived}>{showArchived ? 'Active Clients' : 'Archived Clients'}</Button>}<Button variant="outline" onClick={toggleTrash}>{showTrash ? 'Active Clients' : 'Trash'}</Button>{canManage && <Button onClick={openAddClient} className="gap-2"><Plus size={18} /> Add Client</Button>}</>} mobileQuickActions={<MobileQuickActionMenu items={[{ label: 'Add Client', onSelect: openAddClient, disabled: !canManage }, { label: 'Archived', onSelect: toggleArchived }, { label: 'Trash', onSelect: toggleTrash }]} />} />
+        <div className="clients-list-layout space-y-6">
+          <PageHeader title="Clients" subtitle="Manage customer accounts and relationships." actions={<><Button variant="outline" onClick={toggleArchived} className="mobile-compact-action" data-mobile-label={showArchived ? 'Active' : 'Archive'} aria-label={showArchived ? 'Show active clients' : 'Show archived clients'}><Archive size={16} />{showArchived ? 'Active Clients' : 'Archived Clients'}</Button><Button variant="outline" onClick={toggleTrash} className="mobile-compact-action" data-mobile-label={showTrash ? 'Active' : 'Trash'} aria-label={showTrash ? 'Show active clients' : 'Show client trash'}><Trash2 size={16} />{showTrash ? 'Active Clients' : 'Trash'}</Button>{canManage && <Button onClick={openAddClient} className="gap-2" aria-label="Add Client"><Plus size={18} /> Add Client</Button>}</>} />
 
-          <Card className="page-filter-panel flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
-            <div className="relative min-w-0 flex-1 md:min-w-[240px]">
+          <Card className="compact-filter-panel page-filter-panel flex flex-col gap-4 p-4 md:flex-row md:flex-wrap md:items-center">
+            <div className="compact-filter-field compact-filter-search relative min-w-0 flex-1 md:min-w-[240px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--app-tertiary)]" size={20} />
               <input
                 type="text"
@@ -1279,22 +1276,22 @@ export default function ClientsPage() {
                 onChange={(event) => handleClientSearchChange(event.target.value)}
               />
             </div>
-            <div className="flex flex-wrap gap-2">
-              <select aria-label="Client quick filter" className="h-9 rounded-lg border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]/50" value={clientQuickFilter} onChange={(event) => handleClientQuickFilterChange(event.target.value as ClientQuickFilter)}>
+            <div className="compact-filter-quick-actions flex flex-wrap gap-2">
+              <span className="compact-filter-field"><select aria-label="Client quick filter" className="h-9 rounded-lg border border-[var(--app-border)] bg-white px-2.5 py-1.5 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]/50" value={clientQuickFilter} onChange={(event) => handleClientQuickFilterChange(event.target.value as ClientQuickFilter)}>
                 <option>All</option>
                 <option>Active Deals</option>
                 <option>No Active Deals</option>
                 <option>Follow-up Due</option>
                 <option>No Follow-up</option>
-              </select>
+              </select></span>
               {clientQuickFilter !== 'All' && <span className="self-center text-[11px] text-[var(--app-muted)]">Applies to loaded clients</span>}
               <Button variant="outline" onClick={() => setShowClientFilters((current) => !current)} className="mobile-compact-action" data-mobile-label="Filter" aria-label="Filter clients"><Filter size={18} /> Filter</Button>
-              <Button variant="outline" onClick={() => void refreshClients()} disabled={clientsLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh clients"><RefreshCw size={16} /> Refresh</Button>
+              <Button variant="outline" onClick={() => void refreshClients(undefined, searchTerm, CLIENT_PAGE_SIZE)} disabled={clientsLoading} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh clients"><RefreshCw size={16} /> Refresh</Button>
             </div>
             {showClientFilters && <div className="flex w-full flex-wrap items-end gap-3 border-t border-[var(--app-border-subtle)] pt-3">
-              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Company<input type="text" value={companyFilter} onChange={(event) => handleCompanyFilterChange(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Client since<input type="date" value={clientSinceFrom} onChange={(event) => handleClientSinceFromChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
-              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Through<input type="date" value={clientSinceTo} onChange={(event) => handleClientSinceToChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></label>
+              <label className="compact-filter-label flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Company<span className="compact-filter-field"><input type="text" value={companyFilter} onChange={(event) => handleCompanyFilterChange(event.target.value)} placeholder="Filter by company" className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></span></label>
+              <label className="compact-filter-label flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Client since<span className="compact-filter-field"><input type="date" value={clientSinceFrom} onChange={(event) => handleClientSinceFromChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></span></label>
+              <label className="compact-filter-label flex flex-col gap-1 text-xs font-medium text-[var(--app-muted)]">Through<span className="compact-filter-field"><input type="date" value={clientSinceTo} onChange={(event) => handleClientSinceToChange(event.target.value)} className="rounded-lg border border-[var(--app-border)] bg-white px-3 py-2 text-sm font-normal text-[var(--app-text)] focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]" /></span></label>
               <Button variant="ghost" onClick={clearClientTableFilters}>Clear filters</Button>
             </div>}
           </Card>
@@ -1304,7 +1301,7 @@ export default function ClientsPage() {
           {showTrash && <Card className="p-0"><div className="border-b bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] px-6 py-3 text-sm font-semibold text-[var(--app-danger)]">Client Trash</div>{trashedClients.length === 0 ? <p className="p-6 text-sm text-[var(--app-muted)]">Trash is empty.</p> : <div className="divide-y divide-[var(--app-border-subtle)]">{trashedClients.map((client) => { const decision = trashDecisions[client.id]; const blocked = decision?.outcome === 'BLOCKED'; const blockingCount = decision ? Object.values(decision.blockingRecords).reduce((total, count) => total + count, 0) : 0; return <div key={client.id} className="flex items-center justify-between px-6 py-4"><div className="flex items-center gap-3"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} /><div><p className="font-semibold text-[var(--app-text)]">{client.name}</p><p className={`text-sm ${blocked ? 'text-[var(--app-danger)]' : 'text-[var(--app-muted)]'}`}>{blocked ? `Deletion blocked — ${blockingCount} related record${blockingCount === 1 ? '' : 's'}.` : decision?.outcome === 'ALLOWED_WITH_WARNING' ? 'Ready to delete with cleanup warning.' : 'Deletion status will be checked before confirmation.'}</p></div></div><div className="flex gap-2"><IconActionButton icon={<RotateCcw size={15} />} label="Restore Client from Trash" variant="success" onClick={() => setConfirmAction({ kind: "restore", id: client.id, name: client.name })} />{canManage && <IconActionButton icon={<Trash2 size={15} />} label={blocked ? 'View deletion block' : decision ? 'Delete Client permanently' : 'Check deletion'} variant="danger" disabled={confirmBusy} onClick={() => void handlePermanentDelete(client)} />}</div></div>; })}</div>}{trashedClientsHasMore && <div className="p-3 text-center"><Button variant="outline" onClick={() => void loadMoreTrashedClients()}>Load More</Button></div>}</Card>}
 
           {/* Client Table */}
-          {!showArchived && !showTrash && <Card className="overflow-hidden rounded-xl border border-[var(--app-border)]/80 bg-white p-0 shadow-none">
+          {!showArchived && !showTrash && <Card className="clients-table-card overflow-hidden rounded-xl border border-[var(--app-border)]/80 bg-white p-0 shadow-none">
             {clientsLoading ? <p className="flex min-h-[220px] items-center justify-center p-10 text-center text-sm text-[var(--app-muted)]">Loading clients…</p> : filteredClientRows.length === 0 ? <p className="p-10 text-center text-sm text-[var(--app-muted)]">{clientsError ? 'Clients could not be loaded.' : <>No clients yet.<span className="mt-1 block text-xs font-normal text-[var(--app-tertiary)]">Convert a lead or add a client to get started.</span></>}</p> : <div className="overflow-x-auto overscroll-x-contain">
               <ResponsiveTable columns={["Selection", "Client", "Company", "Contact", "Client since", "Active deals", "Won deal value", "Actions"]} primaryColumn={1} summaryColumns={[2, 6]} selectionColumn={0} actionColumn={7} className="clients-data-table w-full min-w-[980px] xl:min-w-0 table-fixed border-separate border-spacing-0 text-left">
                 <colgroup>
@@ -1330,11 +1327,11 @@ export default function ClientsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--app-border)]/80">
-                  {sortedClientRows.slice((safeClientPage - 1) * clientPageSize, safeClientPage * clientPageSize).map(({ client, activeDeals, totalSales }) => {
+                  {sortedClientRows.map(({ client, activeDeals, totalSales }) => {
                     return (
                       <tr key={client.id} onClick={(event) => { if (!(event.target as HTMLElement).closest('button,select,input')) setSelectedClientId(client.id); }} className={`cursor-pointer transition-colors hover:bg-[var(--app-surface-subtle)]/80 ${selectedClientIds.has(client.id) ? 'bg-[var(--app-accent-soft)]/40' : ''}`}>
                         <td className="w-10 px-2 py-2.5 align-middle"><input type="checkbox" checked={selectedClientIds.has(client.id)} onChange={() => toggleClientSelection(client.id)} aria-label={`Select ${client.name}`} className="h-4 w-4 rounded border-[var(--app-border)] accent-[var(--app-primary)]" /></td>
-                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="line-clamp-2 max-w-full break-words text-left font-normal leading-5 text-[var(--app-text)] hover:text-[var(--app-primary)]">{client.name}</button></td>
+                        <td className="min-w-0 px-4 py-2 align-middle"><button onClick={() => setSelectedClientId(client.id)} className="client-table-name-link line-clamp-2 max-w-full break-words text-left font-normal leading-5 text-[var(--app-text)] hover:text-[var(--app-primary)]">{client.name}</button></td>
                         <td className="px-4 py-2 align-middle text-sm leading-5 text-[var(--app-muted)]"><span className="line-clamp-2 break-words">{client.company || 'Private'}</span></td>
                         <td className="min-w-0 pl-4 pr-2 py-2 align-middle text-xs leading-4 text-[var(--app-muted)]">
                           <div className="flex min-w-0 items-center gap-1"><Mail className="shrink-0" size={12}/><span className="truncate">{client.email}</span></div>
@@ -1354,8 +1351,8 @@ export default function ClientsPage() {
                 </tbody>
               </ResponsiveTable>
             </div>}
-            {!showArchived && !showTrash && <TablePagination page={safeClientPage} pageSize={clientPageSize} totalCount={filteredClientRows.length} hasMore={clientsHasMore} onPageChange={setClientPage} onPageSizeChange={(nextPageSize) => { setClientPageSize(nextPageSize); setClientPage(1); }} />}
           </Card>}
+          {!showArchived && !showTrash && clients.length > 0 && <LoadedListStatus loadedCount={clients.length} visibleCount={filteredClientRows.length} hasMore={clientsHasMore} noun="clients" loadedScope="Quick filters, date filters, and sorting" />}
           {!showArchived && !showTrash && clientsHasMore && <div className="flex justify-center"><Button variant="outline" onClick={() => void loadMoreClients()} disabled={clientsLoading}>{clientsLoading ? 'Loading…' : 'Load More Clients'}</Button></div>}
         </div>
       )}
@@ -1573,7 +1570,7 @@ export default function ClientsPage() {
                   <select 
                     className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm bg-white"
                     value={taskForm.priority}
-                    onChange={e => setTaskForm({...taskForm, priority: e.target.value as any})}
+                    onChange={e => setTaskForm({...taskForm, priority: e.target.value as typeof taskForm.priority})}
                   >
                     <option value="Low">Low</option>
                     <option value="Medium">Medium</option>

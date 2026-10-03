@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Button } from '@/components/ui/core';
+import { Card, Button, EmptyState } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
@@ -9,13 +9,13 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import { loadReportData, type ReportData } from '@/lib/repositories/reports';
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { startOfDay, startOfMonth, subMonths, startOfQuarter, startOfYear, addDays } from 'date-fns';
-import { BarChart3, BriefcaseBusiness, CircleDollarSign, Download, HandCoins, Percent, ReceiptText, Target, TrendingDown, Trophy, UserCheck, Users, WalletCards } from 'lucide-react';
+import { BarChart3, BriefcaseBusiness, CircleDollarSign, Download, HandCoins, Percent, ReceiptText, Settings2, Target, TrendingDown, Trophy, UserCheck, Users, WalletCards } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatting';
 import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
 import { KpiCardGrid, MovableKpiCard, StandardKpiCard } from '@/components/KpiCard';
 import { KpiCustomizationModal } from '@/components/KpiCustomizationModal';
-import { readKpiPreference, reorderKpiIds, writeKpiPreference } from '@/lib/kpi-preferences';
+import { organizationPreferenceKey, readKpiPreference, reorderKpiIds, writeKpiPreference } from '@/lib/kpi-preferences';
 
 type ReportKpiId = 'totalLeads' | 'clients' | 'convertedLeads' | 'activeDeals' | 'totalSales' | 'transactions' | 'amountPaid' | 'outstanding' | 'wonDeals' | 'lostDeals' | 'pipelineValue' | 'conversionRate';
 const REPORT_KPIS: ReadonlyArray<{ id: ReportKpiId; label: string; description: string }> = [
@@ -68,7 +68,7 @@ export default function ReportsPage() {
   const [customizeKpis, setCustomizeKpis] = useState(false);
   const [draggingKpi, setDraggingKpi] = useState<string | null>(null);
 
-  useEffect(() => { setReportKpiIds(readKpiPreference(window.localStorage, REPORT_KPI_STORAGE_KEY, REPORT_DEFAULT_KPI_IDS, REPORT_KPIS.map((metric) => metric.id), REPORT_MIN_KPIS, REPORT_MAX_KPIS)); }, []);
+  useEffect(() => { if (currentOrganizationId) setReportKpiIds(readKpiPreference(window.localStorage, organizationPreferenceKey(REPORT_KPI_STORAGE_KEY, currentOrganizationId), REPORT_DEFAULT_KPI_IDS, REPORT_KPIS.map((metric) => metric.id), REPORT_MIN_KPIS, REPORT_MAX_KPIS)); }, [currentOrganizationId]);
 
   const range = useMemo(() => {
     const now = new Date();
@@ -96,8 +96,7 @@ export default function ReportsPage() {
   }, [currentOrganizationId, range, settings.leadSources, user, workspaceReady]);
 
   const exportCSV = () => {
-    const csvContent = "data:text/csv;charset=utf-8," +
-      "Metric,Value\n" +
+    const csvContent = "Metric,Value\n" +
       `Total Leads,${reportData?.totalLeads || 0}\n` +
       `Clients,${reportData?.clients || 0}\n` +
       `Converted Leads,${reportData?.convertedLeads || 0}\n` +
@@ -109,16 +108,18 @@ export default function ReportsPage() {
       `Amount Paid,${reportData?.amountPaid || 0}\n` +
       `Outstanding,${reportData?.outstanding || 0}\n` +
       `Pipeline Value,${reportData?.pipelineValue || 0}`;
-    const encodedUri = encodeURI(csvContent);
+    const objectUrl = URL.createObjectURL(new Blob([csvContent], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", objectUrl);
     link.setAttribute("download", "report.csv");
     document.body.appendChild(link);
     link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
   };
 
   const openCustomizeKpis = () => { setReportKpiDraft([...reportKpiIds]); setCustomizeKpis(true); };
-  const moveReportKpi = (targetId: string) => { if (!draggingKpi || draggingKpi === targetId) return; setReportKpiIds((current) => { const next = reorderKpiIds(current, draggingKpi, targetId); writeKpiPreference(window.localStorage, REPORT_KPI_STORAGE_KEY, next); return next; }); };
+  const moveReportKpi = (targetId: string) => { if (!draggingKpi || draggingKpi === targetId) return; setReportKpiIds((current) => { const next = reorderKpiIds(current, draggingKpi, targetId); if (currentOrganizationId) writeKpiPreference(window.localStorage, organizationPreferenceKey(REPORT_KPI_STORAGE_KEY, currentOrganizationId), next); return next; }); };
   const reportMetrics = [
     { id: 'totalLeads' as const, label: 'Total Leads', value: reportData?.totalLeads || 0, description: 'Total number of leads recorded.', icon: Users, context: REPORT_KPI_CONTEXTS.totalLeads },
     { id: 'clients' as const, label: 'Clients', value: reportData?.clients || 0, description: 'Active clients currently recorded in BSM.', icon: UserCheck, context: REPORT_KPI_CONTEXTS.clients },
@@ -134,25 +135,28 @@ export default function ReportsPage() {
     { id: 'conversionRate' as const, label: 'Conversion Rate', value: `${reportData && reportData.totalLeads > 0 ? (reportData.convertedLeads / reportData.totalLeads * 100).toFixed(1) : 0}%`, description: 'Percentage of leads that converted.', icon: Percent, context: REPORT_KPI_CONTEXTS.conversionRate },
   ];
   const reportMetricById = new Map(reportMetrics.map((metric) => [metric.id, metric]));
+  const pipelineChartData = DEAL_STAGES.map((stage) => ({ stage, value: reportData?.pipelineByStage[stage] || 0 }));
+  const outcomeChartData = [{ name: 'Won', value: reportData?.wonVsLost.won || 0 }, { name: 'Lost', value: reportData?.wonVsLost.lost || 0 }];
+  const leadSourceChartData = settings.leadSources.map((source) => ({ source: source.name, count: reportData?.leadsBySource[source.name] || 0 }));
 
   return (
     <div className="space-y-5">
       <PageHeader title="Reports & Analytics" subtitle="Review sales performance and business activity." actions={<>
-            <select className="border rounded-lg px-3 py-2 text-sm" value={dateRange} onChange={(e) => setDateRange(e.target.value as any)}>
+            <span className="compact-filter-field"><select aria-label="Report date range" className="border rounded-lg px-3 py-2 text-sm" value={dateRange} onChange={(e) => setDateRange(e.target.value as typeof dateRange)}>
                 <option value="ThisMonth">This Month</option>
                 <option value="LastMonth">Last Month</option>
                 <option value="ThisQuarter">This Quarter</option>
                 <option value="ThisYear">This Year</option>
-            </select>
-            <Button variant="outline" className="gap-2" onClick={exportCSV}><Download size={16}/> Export CSV</Button>
+            </select></span>
+            <Button variant="outline" className="gap-2" onClick={exportCSV} disabled={loading || !reportData}><Download size={16}/> Export CSV</Button>
       </>} />
 
       {error && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{error}</p>}
       {loading && <p className="text-sm text-[var(--app-muted)]">Loading organization-wide report data…</p>}
 
-      <section><div className="mb-2 flex justify-end"><Button size="sm" variant="outline" onClick={openCustomizeKpis}>Customize Cards</Button></div><KpiCardGrid>{reportKpiIds.map((id, index) => { const metric = reportMetricById.get(id as ReportKpiId); if (!metric) return null; return <MovableKpiCard key={id} cardId={metric.label} order={index} onDragStart={setDraggingKpi} onDragEnd={() => setDraggingKpi(null)} onDrop={() => moveReportKpi(id)}><StandardKpiCard label={metric.label} value={metric.value} description={metric.description} context={metric.context} icon={metric.icon} /></MovableKpiCard>; })}</KpiCardGrid></section>
+      <section><div className="mb-2 flex justify-end"><Button size="sm" variant="outline" onClick={openCustomizeKpis} className="mobile-compact-action" data-mobile-label="Customize" aria-label="Customize Cards"><Settings2 size={16} /> Customize Cards</Button></div><KpiCardGrid>{reportKpiIds.map((id, index) => { const metric = reportMetricById.get(id as ReportKpiId); if (!metric) return null; return <MovableKpiCard key={id} cardId={metric.label} order={index} onDragStart={setDraggingKpi} onDragEnd={() => setDraggingKpi(null)} onDrop={() => moveReportKpi(id)}><StandardKpiCard label={metric.label} value={metric.value} description={metric.description} context={metric.context} icon={metric.icon} /></MovableKpiCard>; })}</KpiCardGrid></section>
 
-      {customizeKpis && <KpiCustomizationModal idPrefix="reports" ariaLabel="Customize Reports KPI cards" title="Customize Report Cards" subtitle="Choose the metrics you want to see in Reports & Analytics." draftIds={reportKpiDraft} defaultIds={REPORT_DEFAULT_KPI_IDS} options={REPORT_KPI_OPTIONS} categories={REPORT_KPI_CATEGORIES} maximum={REPORT_MAX_KPIS} onDraftChange={(ids) => setReportKpiDraft(ids)} onClose={() => setCustomizeKpis(false)} onSave={(ids) => { setReportKpiIds(ids); writeKpiPreference(window.localStorage, REPORT_KPI_STORAGE_KEY, ids); setCustomizeKpis(false); }} />}
+      {customizeKpis && <KpiCustomizationModal idPrefix="reports" ariaLabel="Customize Reports KPI cards" title="Customize Report Cards" subtitle="Choose the metrics you want to see in Reports & Analytics." draftIds={reportKpiDraft} defaultIds={REPORT_DEFAULT_KPI_IDS} options={REPORT_KPI_OPTIONS} categories={REPORT_KPI_CATEGORIES} maximum={REPORT_MAX_KPIS} onDraftChange={(ids) => setReportKpiDraft(ids)} onClose={() => setCustomizeKpis(false)} onSave={(ids) => { setReportKpiIds(ids); if (currentOrganizationId) writeKpiPreference(window.localStorage, organizationPreferenceKey(REPORT_KPI_STORAGE_KEY, currentOrganizationId), ids); setCustomizeKpis(false); }} />}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card className="p-4"><h3 className="text-sm font-semibold text-[var(--app-text)]">Sales by Source</h3><div className="mt-3 grid grid-cols-3 gap-2 text-sm">{[['Walk-in', 'WALK_IN'], ['Client', 'CLIENT'], ['Deal', 'DEAL']].map(([label, key]) => <div key={key} className="rounded-lg bg-[var(--app-surface-subtle)] p-3"><p className="text-xs text-[var(--app-muted)]">{label}</p><p className="mt-1 font-bold">{reportData?.salesBySource[key as 'WALK_IN' | 'CLIENT' | 'DEAL'] || 0}</p></div>)}</div></Card>
@@ -162,9 +166,9 @@ export default function ReportsPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Card className="p-4">
             <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Pipeline Performance (Value)</h3>
-            <div className="h-64">
+            {pipelineChartData.some((entry) => entry.value > 0) ? <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={DEAL_STAGES.map(stage => ({stage, value: reportData?.pipelineByStage[stage] || 0}))}>
+                <BarChart data={pipelineChartData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="stage" />
                     <YAxis />
@@ -172,14 +176,14 @@ export default function ReportsPage() {
                     <Bar dataKey="value" fill="#032D20" />
                 </BarChart>
                 </ResponsiveContainer>
-            </div>
+            </div> : <EmptyState title="No pipeline data" description="No Deal value was recorded in this period." />}
         </Card>
         <Card className="p-4">
             <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Won vs Lost Deals</h3>
-            <div className="h-64">
+            {outcomeChartData.some((entry) => entry.value > 0) ? <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                        <Pie data={[{name: 'Won', value: reportData?.wonVsLost.won || 0}, {name: 'Lost', value: reportData?.wonVsLost.lost || 0}]} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill="#032D20" label>
+                        <Pie data={outcomeChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} fill="#032D20" label>
                             <Cell fill="#003B2B" />
                             <Cell fill="#B34D3E" />
                         </Pie>
@@ -187,13 +191,13 @@ export default function ReportsPage() {
                         <Legend />
                     </PieChart>
                 </ResponsiveContainer>
-            </div>
+            </div> : <EmptyState title="No closed Deals" description="Won and Lost Deal results will appear here." />}
         </Card>
         <Card className="p-4">
             <h3 className="mb-3 text-sm font-semibold text-[var(--app-text)]">Leads by Source</h3>
-            <div className="h-64">
+            {leadSourceChartData.some((entry) => entry.count > 0) ? <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={settings.leadSources.map(s => ({source: s.name, count: reportData?.leadsBySource[s.name] || 0}))}>
+                    <BarChart data={leadSourceChartData}>
                         <CartesianGrid strokeDasharray="3 3" />
                         <XAxis dataKey="source" />
                         <YAxis />
@@ -201,7 +205,7 @@ export default function ReportsPage() {
                         <Bar dataKey="count" fill="#60736A" />
                     </BarChart>
                 </ResponsiveContainer>
-            </div>
+            </div> : <EmptyState title="No lead source data" description="Lead source activity will appear here." />}
         </Card>
       </div>
     </div>

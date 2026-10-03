@@ -1,19 +1,21 @@
 'use client';
 
+import { MobileNavigationTabs } from '@/components/MobileNavigationTabs';
 import { ResponsiveTable } from '@/components/ResponsiveTable';
 
 import React, { useEffect, useState } from 'react';
 import { Card, Button, Badge } from '@/components/ui/core';
 import { PageHeader } from '@/components/PageHeader';
 import { useApp } from '@/context/AppContext';
-import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus } from 'lucide-react';
+import { Settings as SettingsIcon, Users, ListFilter as Pipeline, Tag, CreditCard, Paintbrush, Building2, Plus, RefreshCw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { UserRole } from '@/types/auth';
-import type { Settings } from '@/types';
+import type { BusinessType, Settings } from '@/types';
 import { canManageSettings } from '@/lib/permissions';
 import { listOrganizationMembers, updateOrganizationMember, type ManagedOrganizationMember } from '@/lib/repositories/users';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { DEAL_STAGES } from '@/lib/deal-workflow';
+import { COMMON_TIMEZONES } from '@/lib/timezones';
 
 function formatLastLogin(value: unknown) {
   if (!value || typeof value !== 'object' || !('toDate' in value) || typeof value.toDate !== 'function') {
@@ -189,7 +191,7 @@ export default function SettingsPage() {
       {settingsNotice && <p className="rounded-lg bg-[var(--app-accent-soft)] p-3 text-sm text-[var(--app-primary)]" role="status">{settingsNotice}</p>}
       
       <div className="flex flex-col gap-4 md:flex-row">
-        <aside className="settings-navigation w-full space-y-1 md:w-64" aria-label="Settings sections">
+        <MobileNavigationTabs as="aside" activeKey={activeTab} className="settings-navigation w-full space-y-1 md:w-64" aria-label="Settings sections">
           {tabs.map(tab => (
             <button
               key={tab.id}
@@ -203,7 +205,7 @@ export default function SettingsPage() {
               {tab.label}
             </button>
           ))}
-        </aside>
+        </MobileNavigationTabs>
         
         <section className="min-w-0 flex-1" aria-label={`${tabs.find(t => t.id === activeTab)?.label || 'Settings'} settings`}>
           <Card className="p-4">
@@ -221,7 +223,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Business Type</label>
-                    <select className="w-full p-2 border rounded-lg" value={profile.businessType} onChange={e => setProfile({...profile, businessType: e.target.value as any})}>
+                    <select className="w-full p-2 border rounded-lg" value={profile.businessType} onChange={e => setProfile({...profile, businessType: e.target.value as BusinessType})}>
                       {['Solo Entrepreneur', 'Agency', 'Real Estate', 'Professional Services', 'Retail', 'Insurance', 'Freelancer/Consultant', 'Small Business', 'Other'].map(t => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
@@ -249,7 +251,10 @@ export default function SettingsPage() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Timezone</label>
-                    <input className="w-full p-2 border rounded-lg" value={profile.timezone} onChange={e => setProfile({...profile, timezone: e.target.value})} />
+                    <select className="w-full p-2 border rounded-lg" value={profile.timezone} onChange={e => setProfile({...profile, timezone: e.target.value})}>
+                      {!COMMON_TIMEZONES.includes(profile.timezone as typeof COMMON_TIMEZONES[number]) && <option value={profile.timezone}>{profile.timezone}</option>}
+                      {COMMON_TIMEZONES.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}
+                    </select>
                   </div>
                 </div>
                 <div className="space-y-1">
@@ -278,7 +283,7 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div><h4 className="font-semibold">Team Members</h4><p className="text-xs text-[var(--app-muted)]">Manage activation and roles for other users.</p></div>
-                  <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading || isReadOnly}>Refresh</Button>
+                  <Button size="sm" variant="outline" onClick={() => void loadUsers()} disabled={usersLoading || isReadOnly} className="mobile-compact-action" data-mobile-label="Refresh" aria-label="Refresh team members"><RefreshCw size={16} /> Refresh</Button>
                 </div>
                 {usersError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]" role="alert">{usersError}</p>}
                 {usersLoading && <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading users…</p>}

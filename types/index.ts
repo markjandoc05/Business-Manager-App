@@ -280,6 +280,18 @@ export interface Sale {
   updatedBy: string;
 }
 
+/** An immutable payment event recorded after the Sale was created. */
+export interface SalePayment {
+  id: string;
+  saleId: string;
+  amount: number;
+  method: SalePaymentMethod;
+  paymentDate: string;
+  notes?: string;
+  createdAt: string;
+  createdBy: string;
+}
+
 export interface Task {
   id: string;
   title: string;

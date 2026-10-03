@@ -25,15 +25,35 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 
+function emulatorEndpoint(value: string | undefined, fallbackHost: string, fallbackPort: number) {
+  const rawValue = value?.trim();
+  const candidate = rawValue ? (rawValue.includes('://') ? rawValue : `http://${rawValue}`) : `http://${fallbackHost}:${fallbackPort}`;
+  try {
+    const url = new URL(candidate);
+    const port = Number(url.port) || fallbackPort;
+    if (!url.hostname || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid emulator port.');
+    return { host: url.hostname, port };
+  } catch {
+    return { host: fallbackHost, port: fallbackPort };
+  }
+}
+
+// Keep direct process.env references so Next.js can inline these public,
+// local-only overrides into the browser bundle. Defaults preserve the existing
+// emulator behavior for the standard 9099/8080/9199 setup.
+const authEmulator = emulatorEndpoint(process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_HOST, '127.0.0.1', 9099);
+const firestoreEmulator = emulatorEndpoint(process.env.NEXT_PUBLIC_FIRESTORE_EMULATOR_HOST, '127.0.0.1', 8080);
+const storageEmulator = emulatorEndpoint(process.env.NEXT_PUBLIC_FIREBASE_STORAGE_EMULATOR_HOST, '127.0.0.1', 9199);
+
 // Emulator connections are browser-only because this module is also imported
 // by server-rendered components. The global marker keeps Fast Refresh from
 // attempting to connect the same SDK instances twice.
 const emulatorConnections = globalThis as typeof globalThis & { __bsmFirebaseEmulatorsConnected?: boolean };
 if (typeof window !== 'undefined' && isLocalFirebaseEmulatorMode()) {
   if (!emulatorConnections.__bsmFirebaseEmulatorsConnected) {
-    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
-    connectStorageEmulator(storage, '127.0.0.1', 9199);
+    connectAuthEmulator(auth, `http://${authEmulator.host}:${authEmulator.port}`, { disableWarnings: true });
+    connectFirestoreEmulator(db, firestoreEmulator.host, firestoreEmulator.port);
+    connectStorageEmulator(storage, storageEmulator.host, storageEmulator.port);
     emulatorConnections.__bsmFirebaseEmulatorsConnected = true;
   }
 }

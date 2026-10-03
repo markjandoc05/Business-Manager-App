@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { EMULATOR_FIREBASE_PROJECT_ID, PRODUCTION_FIREBASE_PROJECT_ID, resolveFirebaseProjectIdentity } from '../lib/server/firebase-project.ts';
+import { EMULATOR_FIREBASE_PROJECT_ID, PLATFORM_EMULATOR_FIREBASE_PROJECT_ID, PRODUCTION_FIREBASE_PROJECT_ID, resolveFirebaseProjectIdentity } from '../lib/server/firebase-project.ts';
 
 const production = {
   FIREBASE_ADMIN_PROJECT_ID: PRODUCTION_FIREBASE_PROJECT_ID,
@@ -32,6 +32,13 @@ test('missing effective project identity is rejected', () => rejects({}));
 
 test('the Client demo project is accepted only with both emulator hosts', () => {
   assert.deepEqual(resolveFirebaseProjectIdentity(emulator), { projectId: EMULATOR_FIREBASE_PROJECT_ID, mode: 'emulator' });
+});
+
+test('the trusted local Platform demo project is accepted only with both emulator hosts', () => {
+  assert.deepEqual(resolveFirebaseProjectIdentity({
+    ...emulator,
+    GOOGLE_CLOUD_PROJECT: PLATFORM_EMULATOR_FIREBASE_PROJECT_ID,
+  }), { projectId: PLATFORM_EMULATOR_FIREBASE_PROJECT_ID, mode: 'emulator' });
 });
 
 test('a demo project without emulator conditions is rejected', () => rejects({ FIREBASE_ADMIN_PROJECT_ID: EMULATOR_FIREBASE_PROJECT_ID }));

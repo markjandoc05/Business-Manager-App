@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readKpiPreference, reorderKpiIds, writeKpiPreference } from '../lib/kpi-preferences.ts';
+import { organizationPreferenceKey, readKpiPreference, reorderKpiIds, writeKpiPreference } from '../lib/kpi-preferences.ts';
 
 function storage() {
   const values = new Map();
@@ -18,4 +18,9 @@ test('KPI preferences sanitize invalid IDs and enforce selection bounds', () => 
   assert.deepEqual(readKpiPreference(store, 'reports', ['total', 'transactions', 'amount'], ['total', 'transactions', 'amount']), ['total', 'transactions', 'amount']);
   writeKpiPreference(store, 'reports', ['total']);
   assert.deepEqual(readKpiPreference(store, 'reports', ['total', 'transactions', 'amount'], ['total', 'transactions', 'amount']), ['total', 'transactions', 'amount']);
+});
+
+test('organization preference keys isolate workspace-specific layouts', () => {
+  assert.equal(organizationPreferenceKey('reports', 'org-a'), 'reports:org-a');
+  assert.notEqual(organizationPreferenceKey('reports', 'org-a'), organizationPreferenceKey('reports', 'org-b'));
 });

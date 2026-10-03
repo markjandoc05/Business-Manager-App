@@ -2,6 +2,11 @@ import { getApps } from 'firebase-admin/app';
 
 export const PRODUCTION_FIREBASE_PROJECT_ID = 'bsm-client-app-web';
 export const EMULATOR_FIREBASE_PROJECT_ID = 'demo-bsm-client-app';
+export const PLATFORM_EMULATOR_FIREBASE_PROJECT_ID = 'demo-bsm-console';
+const EMULATOR_FIREBASE_PROJECT_IDS = new Set([
+  EMULATOR_FIREBASE_PROJECT_ID,
+  PLATFORM_EMULATOR_FIREBASE_PROJECT_ID,
+]);
 
 type Environment = Record<string, string | undefined>;
 
@@ -48,13 +53,13 @@ export function resolveFirebaseProjectIdentity(environment: Environment = proces
     if (!hasFirestoreEmulator || !hasAuthEmulator) {
       throw new Error('Firebase emulator configuration is incomplete: FIRESTORE_EMULATOR_HOST and FIREBASE_AUTH_EMULATOR_HOST are both required.');
     }
-    if (expectedOverride && expectedOverride !== EMULATOR_FIREBASE_PROJECT_ID) {
+    if (expectedOverride && !EMULATOR_FIREBASE_PROJECT_IDS.has(expectedOverride)) {
       throw new Error('Firebase emulator project identity is invalid.');
     }
-    if (projectIds.length !== 1 || projectIds[0] !== EMULATOR_FIREBASE_PROJECT_ID) {
-      throw new Error(`Firebase emulator tests require project ${EMULATOR_FIREBASE_PROJECT_ID}.`);
+    if (projectIds.length !== 1 || !EMULATOR_FIREBASE_PROJECT_IDS.has(projectIds[0]!)) {
+      throw new Error(`Firebase emulator tests require one of: ${[...EMULATOR_FIREBASE_PROJECT_IDS].join(', ')}.`);
     }
-    return { projectId: EMULATOR_FIREBASE_PROJECT_ID, mode: 'emulator' as const };
+    return { projectId: projectIds[0]!, mode: 'emulator' as const };
   }
 
   if (expectedOverride && expectedOverride !== PRODUCTION_FIREBASE_PROJECT_ID) {

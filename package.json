@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -11,11 +11,14 @@
     "test:catalog-items": "node --test tests/catalog-items.test.mjs",
     "test:catalog-categories": "node --test tests/catalog-categories.test.mjs",
     "test:deal-catalog-items": "node --test tests/deal-catalog-items.test.mjs",
+    "test:pipeline": "node --experimental-strip-types --test tests/pipeline-pagination.test.mjs tests/deal-client-lookup.test.mjs tests/deal-client-selector.test.mjs tests/deal-catalog-items.test.mjs tests/sale-items.test.mjs",
     "test:sales": "node --test tests/sale-items.test.mjs",
     "test:indexes": "node scripts/validate-firestore-indexes.mjs",
     "test:followups": "node --experimental-strip-types --test tests/follow-up-utils.test.mjs",
     "test:feedback-email": "node --experimental-strip-types --test tests/feedback-email.test.mjs",
     "test:project-identity": "node --experimental-strip-types --test tests/project-identity.test.mjs",
+    "test:subscription-boundary": "node --experimental-strip-types --test tests/platform-subscription-service.test.mjs",
+    "test:onboarding-ui": "firebase emulators:exec --project demo-bsm-client-app --only auth,firestore \"node --test tests/onboarding/workspace-onboarding-flow.integration.test.mjs\"",
     "test:script-safety": "node --test tests/scripts/privileged-script-safety.test.mjs",
     "clean": "next clean",
     "test:rules": "firebase emulators:exec --project demo-bsm-client-app --only firestore \"node --test tests/firestore/application-user.rules.test.mjs && node --test tests/firestore/lead-conversion.rules.test.mjs && node --test tests/firestore/workspace-onboarding.rules.test.mjs && node --test tests/firestore/licensing.rules.test.mjs && node --test tests/firestore/settings.rules.test.mjs && node --test tests/firestore/client-child-lifecycle.rules.test.mjs && node --test tests/firestore/record-lifecycle.rules.test.mjs && node --test tests/firestore/deal-task-authorization.rules.test.mjs && node --test tests/firestore/deal-catalog-items.rules.test.mjs && node --test tests/firestore/task-workflow.rules.test.mjs && node --test tests/firestore/deal-closure.rules.test.mjs && node --test tests/firestore/beta-gate-a.rules.test.mjs && node --test tests/firestore/platform-console-read.rules.test.mjs && node --test tests/firestore/feedback.rules.test.mjs && node --test tests/firestore/catalog-items.rules.test.mjs && node --test tests/firestore/catalog-categories.rules.test.mjs && node --test tests/firestore/sales.rules.test.mjs\"",
@@ -24,7 +27,8 @@
     "test:client-document-delete-api": "firebase emulators:exec --project demo-bsm-client-app --only auth,firestore,storage \"node --test tests/api/client-document-delete-route.integration.test.mjs\"",
     "test:client-note-delete-api": "firebase emulators:exec --project demo-bsm-client-app --only auth,firestore \"node --test tests/api/client-note-delete-route.integration.test.mjs\"",
     "uat:seed": "node scripts/uat/seed-emulator.mjs",
-    "uat:smoke": "node scripts/uat/run-smoke.mjs"
+    "uat:smoke": "node scripts/uat/run-smoke.mjs",
+    "test:uat:local": "node scripts/uat/run-local.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -7,6 +7,7 @@ import { invalidateCachedRequest } from '@/lib/repositories/requestCache';
 import { resolveLicenseState, subscribeToOrganizationLicense } from '@/lib/repositories/licenses';
 import { firestoreWorkspaceErrorMessage, isFirestoreIndexError, userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { recordClientLoginActivity } from '@/lib/auth/loginActivity';
+import { getPlatformSubscriptionService, isPlatformOnboardingEnabled } from '@/lib/subscriptions';
 import type { License, Organization, OrganizationMembership, ResolvedLicenseState } from '@/types/auth';
 import { finishStartupStage, markStartup, markStartupEvent, startStartupStage } from '@/lib/startupTiming';
 
@@ -90,7 +91,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   };
 
   /* Workspace reset is intentionally synchronous so stale tenant state is invalidated immediately. */
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     let cancelled = false;
     const requestId = ++resolutionRequestRef.current;
@@ -112,7 +112,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     setLicenseLoading(false);
     markStartupEvent('WORKSPACE_RESOLUTION_START');
 
-    void listUserMemberships(firebaseUser, { profilePrevalidated: true }).then(async (memberships) => {
+    void listUserMemberships(firebaseUser).then(async (memberships) => {
       if (!isCurrentRequest() || userId !== firebaseUser.uid) return;
       setHasMembership(memberships.length > 0);
       setMembershipSummaries(memberships.map((item) => ({ organizationId: item.organizationId, status: item.status, role: item.role })));
@@ -147,7 +147,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [authStatus, firebaseUser, refreshToken]);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     let cancelled = false;
     const requestId = resolutionRequestRef.current;
@@ -208,7 +207,6 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       unsubscribeLicense();
     };
   }, [firebaseUser, recordLoginActivity, resolvedMemberships, selectedOrganizationId]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   /* Keep the selected membership authoritative while retaining a listener after access is removed so reactivation can be observed. */
   useEffect(() => {
@@ -263,6 +261,20 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     });
     return () => { cancelled = true; unsubscribe(); };
   }, [firebaseUser, recordLoginActivity, selectedOrganizationId]);
+
+  // Platform refreshes are advisory only. The live canonical Firestore license
+  // remains the sole Client authorization source, so an unavailable Platform
+  // request can never restore write access or override a restricted license.
+  useEffect(() => {
+    if (!isPlatformOnboardingEnabled() || !firebaseUser || !selectedOrganizationId) return undefined;
+    let cancelled = false;
+    void getPlatformSubscriptionService().refreshSubscription(selectedOrganizationId).catch((subscriptionError) => {
+      if (!cancelled && process.env.NODE_ENV !== 'production') {
+        console.info('[subscription-refresh] Platform refresh unavailable', { code: (subscriptionError as { code?: unknown })?.code });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [firebaseUser, refreshToken, selectedOrganizationId]);
 
   const ready = !loading && currentOrganization !== null && ['trial', 'active', 'expired', 'suspended'].includes(currentOrganization.status) && membership?.status === 'active';
   const resolvedLicenseState = resolveLicenseState(license);

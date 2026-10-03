@@ -114,9 +114,11 @@ function taskFilterConstraints(filters: TaskListFilters = {}): QueryConstraint[]
     const end = new Date(start); end.setDate(end.getDate() + 1);
     constraints.push(where('dueDate', '>=', start.toISOString()), where('dueDate', '<', end.toISOString()));
   } else if (filters.due === 'Upcoming') {
-    constraints.push(where('dueDate', '>', now.toISOString()));
+    const tomorrow = new Date(now); tomorrow.setHours(0, 0, 0, 0); tomorrow.setDate(tomorrow.getDate() + 1);
+    constraints.push(where('dueDate', '>=', tomorrow.toISOString()));
   } else if (filters.due === 'Overdue') {
-    constraints.push(where('dueDate', '<', now.toISOString()));
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    constraints.push(where('dueDate', '<', today.toISOString()));
   }
   return constraints;
 }
