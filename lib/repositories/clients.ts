@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, endAt, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { type QueryDocumentSnapshot, type QuerySnapshot, addDoc, collection, doc, endAt, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import { authenticatedFetch } from '@/lib/repositories/authenticatedRequest';
@@ -377,10 +377,21 @@ export async function listClientNotes(user: AppUser | null, organizationId: stri
   return (await listClientNotesPage(user, organizationId, clientId)).items;
 }
 
+async function readArchivedClientChildren(organizationId: string, clientId: string, child: 'notes' | 'documents', dateField: 'createdAt' | 'uploadedAt') {
+  const archived: QueryDocumentSnapshot<Record<string, unknown>>[] = [];
+  let cursor: FirestoreCursor = null;
+  for (;;) {
+    const snapshot: QuerySnapshot<Record<string, unknown>> = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, child), orderBy(dateField, 'desc'), ...(cursor ? [startAfter(cursor)] : []), limit(100)));
+    archived.push(...snapshot.docs.filter((item) => item.data().archived === true));
+    if (snapshot.size < 100) return archived;
+    cursor = snapshot.docs.at(-1) || null;
+  }
+}
+
 export async function listArchivedClientNotes(user: AppUser | null, organizationId: string, clientId: string) {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'notes'), orderBy('createdAt', 'desc'), limit(100)));
-  return snapshot.docs.filter((noteDoc) => noteDoc.data().archived === true).map((noteDoc) => mapClientNote(noteDoc.id, clientId, noteDoc.data()));
+  const archived = await readArchivedClientChildren(organizationId, clientId, 'notes', 'createdAt');
+  return archived.map((noteDoc) => mapClientNote(noteDoc.id, clientId, noteDoc.data()));
 }
 
 export async function archiveClientNote(user: AppUser | null, organizationId: string, clientId: string, noteId: string) {
@@ -503,8 +514,8 @@ async function setDocumentArchived(user:AppUser|null,organizationId:string,clien
 
 export async function listArchivedClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
   await requireActiveUser(user, organizationId);
-  const snapshot = await getDocs(query(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'), orderBy('uploadedAt', 'desc'), limit(100)));
-  return snapshot.docs.filter((documentDoc) => documentDoc.data().archived === true).map((documentDoc) => {
+  const archived = await readArchivedClientChildren(organizationId, clientId, 'documents', 'uploadedAt');
+  return archived.map((documentDoc) => {
     const data = documentDoc.data();
     return {
       id: documentDoc.id,

@@ -238,9 +238,8 @@ export async function getActiveSaleForDeal(user: AppUser | null, organizationId:
     const sale = await getDoc(organizationDocumentInCollection(db, organizationId, 'sales', lockData.saleId));
     return sale.exists() && sale.data().status === 'ACTIVE' ? mapSale(sale.id, sale.data()) : null;
   }
-  const legacy = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'sales'), where('dealId', '==', dealId), limit(25)));
-  const active = legacy.docs.find((saleDoc) => saleDoc.data().status === 'ACTIVE');
-  return active ? mapSale(active.id, active.data()) : null;
+  const legacy = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'sales'), where('dealId', '==', dealId), where('status', '==', 'ACTIVE'), limit(1)));
+  return legacy.empty ? null : mapSale(legacy.docs[0].id, legacy.docs[0].data());
 }
 
 export async function getSalesSummary(user: AppUser | null, organizationId: string, dateFromValue: string, dateToValue: string) {

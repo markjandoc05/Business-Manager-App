@@ -32,6 +32,7 @@ const duplicateFieldOverrideKeys = fieldOverrideKeys.filter((key, index) => fiel
 assert.equal(duplicateFieldOverrideKeys.length, 0, 'firestore.indexes.json must not contain exact duplicate field overrides.');
 
 const requiredIndexes = [
+  ['sales', 'COLLECTION', [['dealId', 'ASCENDING'], ['status', 'ASCENDING']]],
   ["deals", "COLLECTION", [["archived", "ASCENDING"], ["status", "ASCENDING"], ["value", "ASCENDING"]]],
   ["deals", "COLLECTION", [["archived", "ASCENDING"], ["status", "ASCENDING"], ["stage", "ASCENDING"], ["value", "ASCENDING"]]],
   ["deals", "COLLECTION", [["assignedToUid", "ASCENDING"], ["archived", "ASCENDING"], ["status", "ASCENDING"], ["value", "ASCENDING"]]],
