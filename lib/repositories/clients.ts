@@ -1,4 +1,4 @@
-import { addDoc, collection, doc, endAt, getDoc, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, endAt, getDoc, getDocFromServer, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
@@ -518,13 +518,13 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
   const storagePath = `organizations/${organizationId}/clients/${clientId}/documents/${documentRef.id}/${safeStorageFilename(file.name)}`;
   const storageRef = ref(storage, storagePath);
   const mimeType = clientDocumentMimeType(file);
-  let uploaded = false;
+  let metadataAttempted = false;
+  let metadata: Record<string, unknown> | undefined;
 
   try {
     await uploadBytes(storageRef, file, { contentType: mimeType });
-    uploaded = true;
     const downloadURL = await getDownloadURL(storageRef);
-    await setDoc(documentRef, {
+    metadata = {
       name: file.name,
       storagePath,
       downloadURL,
@@ -536,7 +536,9 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
       archived: false,
       archivedAt: null,
       archivedBy: null,
-    });
+    };
+    metadataAttempted = true;
+    await setDoc(documentRef, metadata);
 
     return {
       id: documentRef.id,
@@ -552,20 +554,22 @@ export async function uploadClientDocument(user: AppUser | null, organizationId:
       archived: false,
     } satisfies DocumentItem;
   } catch (error) {
-    if (uploaded) {
-      await (async () => {
-        await authenticatedFetch(`/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/documents/${encodeURIComponent(documentRef.id)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ storagePath }),
-        });
-      })().catch(() => undefined);
+    if (metadataAttempted && metadata) {
+      try {
+        // Read the server, not the local pending-write cache. A rejected write
+        // promise can follow a successful commit whose acknowledgment was lost.
+        const committed = await getDocFromServer(documentRef);
+        const data = committed.data();
+        if (committed.exists() && data && ['name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedByUid'].every((field) => data[field] === metadata![field])) {
+          return mapClientDocument(documentRef.id, clientId, data);
+        }
+      } catch { /* Uncertain completion must preserve the uploaded object. */ }
     }
     console.error('Unable to upload client document', error);
     if (error && typeof error === 'object' && 'code' in error && error.code === 'storage/unauthorized') {
       throw new Error('Upload failed. You do not have permission to upload documents for this client.');
     }
-    throw new Error('Unable to upload the document. Please try again.');
+    throw new Error('Upload completion could not be confirmed. Refresh Client Documents before uploading again. Any uploaded file has been preserved for recovery.');
   }
 }
 

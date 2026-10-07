@@ -38,8 +38,9 @@ service firebase.storage {
     match /organizations/{organizationId}/clients/{clientId}/documents/{documentId}/{fileName} {
       allow read: if organizationMember(organizationId)
         && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId));
-      // Storage Rules have a two-document Firestore access limit. Membership
-      // and the organization license mirror are checked here; Client
+      // Storage supports at most two distinct Firestore document accesses.
+      // The global user, membership and license guards below require three;
+      // guard-preserving upload/read remediation is a release blocker. Client
       // existence/status is enforced by the matching Firestore metadata create
       // rule before the upload is considered complete.
       allow create, update: if organizationCanManageClients(organizationId)

@@ -14,8 +14,8 @@ const EMULATOR_HOSTS = ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST'
 if (process.env.GOOGLE_CLOUD_PROJECT === 'bsm-client-app-web' || process.env.GCLOUD_PROJECT === 'bsm-client-app-web') {
   throw new Error('Refusing Client Document delete API tests with the production project ID.');
 }
-if (!EMULATOR_HOSTS.every((name) => process.env[name])) {
-  throw new Error(`Client Document delete API tests require ${EMULATOR_HOSTS.join(', ')}.`);
+if (!EMULATOR_HOSTS.every((name) => /^(127\.0\.0\.1|localhost):\d+$/.test(process.env[name] || ''))) {
+  throw new Error(`Client Document delete API tests require loopback ${EMULATOR_HOSTS.join(', ')}.`);
 }
 
 process.env.GOOGLE_CLOUD_PROJECT = PROJECT_ID;
@@ -143,6 +143,13 @@ async function startNext(port = PORT, environment = {}) {
       ...process.env,
       GOOGLE_CLOUD_PROJECT: PROJECT_ID,
       GCLOUD_PROJECT: PROJECT_ID,
+      NEXT_DIST_DIR: '.next-client-document-tests',
+      NEXT_PUBLIC_FIREBASE_API_KEY: 'demo-key',
+      NEXT_PUBLIC_FIREBASE_APP_ID: 'demo-app',
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: `${PROJECT_ID}.firebaseapp.com`,
+      NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'true',
+      NEXT_PUBLIC_LOCAL_UAT: 'true',
+      NEXT_TELEMETRY_DISABLED: '1',
       NEXT_PUBLIC_FIREBASE_PROJECT_ID: PROJECT_ID,
       NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: `${PROJECT_ID}.firebasestorage.app`,
       ...environment,
@@ -279,16 +286,25 @@ test('a missing Storage object is treated as an orphan and metadata is cleaned u
   assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).get()).exists, false);
 });
 
-test('authorized upload cleanup removes the object without requiring metadata', async () => {
+test('upload cleanup refuses a registered document and preserves the object and metadata', async () => {
   const admin = await createToken('cleanup-admin');
   const target = await seedDocument({ members: [{ uid: admin.uid, role: 'ADMIN', status: 'active' }] });
   await putObject(target.path);
   assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).get()).exists, true);
 
   const response = await cleanupRequest(admin.token, target);
-  assert.equal(response.status, 200);
-  assert.equal(await objectExists(target.path), false);
+  assert.equal(response.status, 409);
+  assert.equal(await objectExists(target.path), true);
   assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).get()).exists, true);
+});
+
+test('authorized orphan cleanup still removes an unregistered object', async () => {
+  const admin = await createToken('orphan-cleanup-admin');
+  const target = await seedDocument({ members: [{ uid: admin.uid, role: 'ADMIN', status: 'active' }] });
+  await putObject(target.path);
+  await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).delete();
+  assert.equal((await cleanupRequest(admin.token, target)).status, 200);
+  assert.equal(await objectExists(target.path), false);
 });
 
 test('upload cleanup remains tenant- and role-protected', async () => {

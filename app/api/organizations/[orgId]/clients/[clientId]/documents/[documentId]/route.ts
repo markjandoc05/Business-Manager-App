@@ -132,6 +132,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ or
   }
 
   try {
+    const documentSnapshot = await clientRef.collection('documents').doc(documentId).get();
+    if (documentSnapshot.exists) return errorResponse(409, 'Registered documents must use the normal document deletion workflow.');
+  } catch {
+    return errorResponse(503, 'Unable to verify document registration. The uploaded file has been retained.');
+  }
+
+  try {
     await adminStorageBucket().file(storagePath).delete();
   } catch (error) {
     if (!isMissingStorageObject(error)) {

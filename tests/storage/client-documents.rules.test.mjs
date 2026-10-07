@@ -6,6 +6,9 @@ import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'fire
 import { deleteObject, getBytes, ref, uploadBytes } from 'firebase/storage';
 
 const PROJECT_ID = 'demo-bsm-client-app';
+for (const name of ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_STORAGE_EMULATOR_HOST']) {
+  if (!/^(127\.0\.0\.1|localhost):\d+$/.test(process.env[name] || '')) throw new Error(`Storage tests require loopback ${name}.`);
+}
 const ORG_A = 'storage-org-a';
 const ORG_B = 'storage-org-b';
 const ADMIN = 'storage-admin';
@@ -68,6 +71,17 @@ test('USER cannot upload client documents', async () => {
 test('inactive organization members cannot upload client documents', async () => {
   await assertFails(upload(INACTIVE_USER, objectPath(ORG_A)));
 });
+
+for (const [label, patch] of [['inactive profile', { status: 'inactive' }], ['disabled profile', { active: false }], ['mismatched identity', { uid: 'another-user' }]]) {
+  test(`global ${label} denies Storage upload and SDK read despite an active manager membership`, async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await uploadBytes(ref(context.storage(), objectPath(ORG_A)), new Uint8Array([1]), { contentType: 'application/pdf' });
+      await updateDoc(doc(context.firestore(), `users/${ADMIN}`), patch);
+    });
+    await assertFails(upload(ADMIN, objectPath(ORG_A, 'client-a', 'revoked.pdf')));
+    await assertFails(getBytes(ref(storageFor(ADMIN), objectPath(ORG_A))));
+  });
+}
 
 test('cross-organization document access is denied', async () => {
   await assertFails(upload(ADMIN, objectPath(ORG_B, 'client-b')));
