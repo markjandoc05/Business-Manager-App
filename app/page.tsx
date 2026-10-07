@@ -31,14 +31,16 @@ import { useWorkspace } from '@/context/WorkspaceContext';
 import { canManageClients, canManageLeads, canManageTasks } from '@/lib/permissions';
 import { formatCompactDateTime, isFollowUpTask } from '@/lib/task-utils';
 import { PipelineFunnel } from '@/components/PipelineFunnel';
-import { loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
+import { invalidateDashboardMetrics, loadDashboardMetrics, type DashboardDateRange, type DashboardMetrics } from '@/lib/repositories/dashboard';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getPipelineStageSummaries, invalidatePipelineStageSummaryRequests, type PipelineStageSummary } from '@/lib/repositories/deals';
 import { DASHBOARD_KPI_STORAGE_KEY, DEFAULT_DASHBOARD_KPI_IDS, getKpiDefinition, KPI_REGISTRY, MAX_DASHBOARD_KPIS, MIN_DASHBOARD_KPIS, normalizeDashboardKpiIds, readDashboardKpiPreference, type DashboardKpiId } from '@/lib/dashboard-kpis';
 import { DEAL_ACTIVE_STAGES } from '@/lib/deal-workflow';
 import { IconActionButton } from '@/components/IconActionButton';
 import { ModalCloseButton } from '@/components/ModalCloseButton';
-import { endOfDay, format, isToday, startOfDay, subDays } from 'date-fns';
+import { isToday } from 'date-fns';
+import { addCalendarDays, getWorkspaceCalendarDate, rollingWorkspaceRange, workspaceCalendarRange } from '@/lib/workspace-calendar';
+import { FINANCIAL_HISTORY_NOTE, SALE_COHORT_NOTE } from '@/lib/report-export';
 import { emitStartupTiming, finishStartupStage, markStartup, markStartupEvent, observeStartupLcp, startStartupStage } from '@/lib/startupTiming';
 import { MovableKpiCard } from '@/components/KpiCard';
 import { organizationPreferenceKey } from '@/lib/kpi-preferences';
@@ -76,18 +78,12 @@ function DashboardCurrencyValue({ value, currency, className }: { value: number;
   </span>;
 }
 
-function getDashboardDateRange(preset: DashboardRangePreset, customStartDate: string, customEndDate: string): DashboardDateRange | null {
-  if (preset === 'custom') {
-    if (!customStartDate || !customEndDate) return null;
-    const start = startOfDay(new Date(`${customStartDate}T00:00:00`));
-    const end = endOfDay(new Date(`${customEndDate}T00:00:00`));
-    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) return null;
-    return { start, end };
-  }
-
-  const days = DASHBOARD_RANGE_OPTIONS.find((option) => option.value === preset)?.days || 28;
-  const end = endOfDay(new Date());
-  return { start: startOfDay(subDays(end, days - 1)), end };
+function getDashboardDateRange(preset: DashboardRangePreset, customStartDate: string, customEndDate: string, today: string, timeZone: string): DashboardDateRange | null {
+  try {
+    if (preset === 'custom') return workspaceCalendarRange(customStartDate, addCalendarDays(customEndDate, 1), timeZone);
+    const days = DASHBOARD_RANGE_OPTIONS.find((option) => option.value === preset)?.days || 28;
+    return workspaceCalendarRange(addCalendarDays(today, 1 - days), addCalendarDays(today, 1), timeZone);
+  } catch { return null; }
 }
 
 function getDashboardLayoutPreference(organizationId?: string | null) {
@@ -112,8 +108,8 @@ export default function DashboardPage() {
   const canManageTasksAction = canManageTasks(membership) && canWrite;
   const [currentTime, setCurrentTime] = useState(() => Date.now());
   const [rangePreset, setRangePreset] = useState<DashboardRangePreset>('28');
-  const [customStartDate, setCustomStartDate] = useState(() => format(subDays(new Date(), 27), 'yyyy-MM-dd'));
-  const [customEndDate, setCustomEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [customStartDate, setCustomStartDate] = useState(() => rollingWorkspaceRange(28, new Date(), settings.timezone).startDay);
+  const [customEndDate, setCustomEndDate] = useState(() => getWorkspaceCalendarDate(new Date(), settings.timezone));
   const [primaryCardOrder, setPrimaryCardOrder] = useState<PrimaryDashboardCard[]>(DEFAULT_DASHBOARD_LAYOUT.primary);
   const [secondaryCardOrder, setSecondaryCardOrder] = useState<SecondaryDashboardCard[]>(DEFAULT_DASHBOARD_LAYOUT.secondary);
   const [selectedKpis, setSelectedKpis] = useState<DashboardKpiId[]>([...DEFAULT_DASHBOARD_KPI_IDS]);
@@ -126,10 +122,10 @@ export default function DashboardPage() {
   const [savingKpis, setSavingKpis] = useState(false);
   const [customizeMessage, setCustomizeMessage] = useState<string | null>(null);
   const [draggingCard, setDraggingCard] = useState<string | null>(null);
-  const [dashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
-  const [dashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
-  const [pipelineStageSummary, setPipelineStageSummary] = useState<PipelineStageSummary | null>(null);
-  const [pipelineMetricsError, setPipelineMetricsError] = useState<string | null>(null);
+  const [loadedDashboardMetrics, setDashboardMetrics] = useState<DashboardMetrics | null>(null);
+  const [loadedDashboardMetricsError, setDashboardMetricsError] = useState<string | null>(null);
+  const [loadedPipelineStageSummary, setPipelineStageSummary] = useState<PipelineStageSummary | null>(null);
+  const [loadedPipelineMetricsError, setPipelineMetricsError] = useState<string | null>(null);
   const pipelineRequestVersion = useRef(0);
   const pipelineLastRequestAt = useRef(0);
   const [dashboardRangeOpen, setDashboardRangeOpen] = useState(false);
@@ -141,12 +137,28 @@ export default function DashboardPage() {
   const dashboardComplete = useRef(false);
   const dashboardRequestVersion = useRef(0);
   const preferenceOrganizationRef = useRef<string | null>(null);
-  const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate), [customEndDate, customStartDate, rangePreset]);
+  const workspaceToday = getWorkspaceCalendarDate(new Date(currentTime), settings.timezone);
+  const dashboardDateRange = useMemo(() => getDashboardDateRange(rangePreset, customStartDate, customEndDate, workspaceToday, settings.timezone), [customEndDate, customStartDate, rangePreset, workspaceToday, settings.timezone]);
   const selectedKpiMetricKey = useMemo(() => [...selectedKpis].sort().join('|'), [selectedKpis]);
   const selectedKpisForMetrics = useMemo(() => selectedKpiMetricKey.split('|').filter(Boolean) as DashboardKpiId[], [selectedKpiMetricKey]);
+  const customDatesEdited = useRef(false);
+  const customDatesOrganization = useRef<string | null>(null);
+  const [dashboardMetricsScope, setDashboardMetricsScope] = useState<string | null>(null);
+  const [pipelineScope, setPipelineScope] = useState<string | null>(null);
+  const dashboardScope = JSON.stringify([user?.uid, currentOrganizationId, membership?.role, workspaceReady, workspaceLoading, settingsLoading, settings.timezone, selectedKpiMetricKey, dashboardDateRange?.start.toISOString(), dashboardDateRange?.end.toISOString()]);
+  const currentPipelineScope = JSON.stringify([user?.uid, currentOrganizationId, membership?.role, workspaceReady, workspaceLoading]);
+  const dashboardMetrics = dashboardMetricsScope === dashboardScope && workspaceReady && !settingsLoading ? loadedDashboardMetrics : null;
+  const pipelineStageSummary = pipelineScope === currentPipelineScope && workspaceReady ? loadedPipelineStageSummary : null;
+  const dashboardMetricsError = dashboardMetricsScope === dashboardScope ? loadedDashboardMetricsError : null;
+  const pipelineMetricsError = pipelineScope === currentPipelineScope ? loadedPipelineMetricsError : null;
+  useEffect(() => {
+    if (!currentOrganizationId || settingsLoading) return;
+    if (customDatesOrganization.current !== currentOrganizationId) { customDatesOrganization.current = currentOrganizationId; customDatesEdited.current = false; }
+    if (!customDatesEdited.current) { setCustomStartDate(addCalendarDays(workspaceToday, -27)); setCustomEndDate(workspaceToday); }
+  }, [currentOrganizationId, settingsLoading, settings.timezone, workspaceToday]);
   const dashboardRangeLabel = rangePreset === 'custom' ? 'Custom range' : `Last ${rangePreset} days`;
   const dashboardRangePresetLabel = DASHBOARD_RANGE_OPTIONS.find((option) => option.value === rangePreset)?.label || '4 weeks';
-  const dashboardDateRangeLabel = dashboardDateRange ? `${format(dashboardDateRange.start, 'MMM d')} – ${format(dashboardDateRange.end, 'MMM d, yyyy')}` : 'Choose a valid range';
+  const dashboardDateRangeLabel = dashboardDateRange ? `${getWorkspaceCalendarDate(dashboardDateRange.start, settings.timezone)} – ${getWorkspaceCalendarDate(new Date(dashboardDateRange.end.getTime() - 1), settings.timezone)}` : 'Choose a valid range';
 
   useEffect(() => {
     if (!dashboardStarted.current) {
@@ -203,7 +215,10 @@ export default function DashboardPage() {
 
   const reloadDashboardMetrics = useCallback(async () => {
     const requestVersion = ++dashboardRequestVersion.current;
-    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
+    setDashboardMetricsError(null);
+    setDashboardMetricsScope(dashboardScope);
+    setDashboardMetrics(null);
+    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading || settingsLoading) {
       setDashboardMetrics(null);
       return;
     }
@@ -213,6 +228,7 @@ export default function DashboardPage() {
       return;
     }
     setDashboardMetricsError(null);
+    setDashboardMetrics(null);
     if (!dashboardDataStarted.current) {
       dashboardDataStarted.current = true;
       markStartupEvent('DASHBOARD_DATA_START');
@@ -220,9 +236,10 @@ export default function DashboardPage() {
     }
     startStartupStage('dashboard-kpi-metrics');
     try {
-      const metrics = await loadDashboardMetrics(user, currentOrganizationId, selectedKpisForMetrics, dashboardDateRange);
+      const metrics = await loadDashboardMetrics(user, currentOrganizationId, selectedKpisForMetrics, dashboardDateRange, settings.timezone);
       if (requestVersion !== dashboardRequestVersion.current) return;
       setDashboardMetrics(metrics);
+      setDashboardMetricsScope(dashboardScope);
       markStartup('dashboard-data-ready');
       emitStartupTiming();
     } catch (error) {
@@ -233,7 +250,7 @@ export default function DashboardPage() {
     } finally {
       finishStartupStage('dashboard-kpi-metrics');
     }
-  }, [currentOrganizationId, dashboardDateRange, selectedKpisForMetrics, user, workspaceLoading, workspaceReady]);
+  }, [currentOrganizationId, dashboardDateRange, dashboardScope, selectedKpisForMetrics, settings.timezone, settingsLoading, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
     let cancelled = false;
@@ -246,13 +263,17 @@ export default function DashboardPage() {
     window.addEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
     return () => {
       cancelled = true;
+      dashboardRequestVersion.current += 1;
       window.removeEventListener('bsm-dashboard-metrics-invalidated', handleInvalidation);
     };
   }, [reloadDashboardMetrics]);
 
   const reloadPipelineStageSummary = useCallback(async () => {
     const requestVersion = ++pipelineRequestVersion.current;
-    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading) {
+    setPipelineMetricsError(null);
+    setPipelineScope(currentPipelineScope);
+    setPipelineStageSummary(null);
+    if (!user || !workspaceReady || !currentOrganizationId || workspaceLoading || settingsLoading) {
       setPipelineStageSummary(null);
       return;
     }
@@ -263,14 +284,16 @@ export default function DashboardPage() {
       const summary = await getPipelineStageSummaries(user, currentOrganizationId);
       if (requestVersion !== pipelineRequestVersion.current) return;
       setPipelineStageSummary(summary);
+      setPipelineScope(currentPipelineScope);
     } catch (error) {
       if (requestVersion !== pipelineRequestVersion.current) return;
+      setPipelineStageSummary(null);
       console.error('Unable to load Pipeline Overview aggregates', error);
       setPipelineMetricsError('Pipeline Overview could not be refreshed. Please try again.');
     } finally {
       finishStartupStage('dashboard-pipeline-aggregates');
     }
-  }, [currentOrganizationId, user, workspaceLoading, workspaceReady]);
+  }, [currentOrganizationId, currentPipelineScope, settingsLoading, user, workspaceLoading, workspaceReady]);
 
   useEffect(() => {
     void reloadPipelineStageSummary();
@@ -370,7 +393,7 @@ export default function DashboardPage() {
   const isWithinDashboardRange = (value?: string) => {
     if (!dashboardDateRange || !value) return false;
     const time = Date.parse(value);
-    return Number.isFinite(time) && time >= dashboardDateRange.start.getTime() && time <= dashboardDateRange.end.getTime();
+    return Number.isFinite(time) && time >= dashboardDateRange.start.getTime() && time < dashboardDateRange.end.getTime();
   };
   const totalLeads = leads.filter((lead) => !lead.archived).length;
 
@@ -517,9 +540,9 @@ export default function DashboardPage() {
             {dashboardRangeOpen && <div className={`dashboard-range-menu ${rangePreset === 'custom' ? 'dashboard-range-menu-with-custom' : 'dashboard-range-menu-simple'}`} role="listbox" aria-label="Dashboard time range options">
               <div className="dashboard-range-menu-options">
                 {DASHBOARD_RANGE_OPTIONS.map((option) => {
-                  const optionRange = getDashboardDateRange(option.value, customStartDate, customEndDate);
+                  const optionRange = getDashboardDateRange(option.value, customStartDate, customEndDate, workspaceToday, settings.timezone);
                   const optionDateRangeLabel = optionRange
-                    ? `${format(optionRange.start, optionRange.start.getFullYear() === optionRange.end.getFullYear() ? 'MMM d' : 'MMM d, yyyy')} – ${format(optionRange.end, 'MMM d, yyyy')}`
+                    ? `${getWorkspaceCalendarDate(optionRange.start, settings.timezone)} – ${getWorkspaceCalendarDate(new Date(optionRange.end.getTime() - 1), settings.timezone)}`
                     : 'Choose start and end dates';
                   return <button key={option.value} type="button" role="option" aria-selected={rangePreset === option.value} className={`dashboard-range-option ${rangePreset === option.value ? 'dashboard-range-option-active' : ''}`} onClick={() => { setRangePreset(option.value); if (option.value !== 'custom') setDashboardRangeOpen(false); }}>
                     <span className="dashboard-range-option-copy">
@@ -533,11 +556,11 @@ export default function DashboardPage() {
               {rangePreset === 'custom' && <div className="dashboard-range-custom-panel">
                 <label>
                   Start date
-                  <input type="date" value={customStartDate} onChange={(event) => setCustomStartDate(event.target.value)} />
+                  <input type="date" value={customStartDate} onChange={(event) => { customDatesEdited.current = true; setCustomStartDate(event.target.value); }} />
                 </label>
                 <label>
                   End date
-                  <input type="date" value={customEndDate} onChange={(event) => setCustomEndDate(event.target.value)} />
+                  <input type="date" value={customEndDate} onChange={(event) => { customDatesEdited.current = true; setCustomEndDate(event.target.value); }} />
                 </label>
               </div>}
             </div>}
@@ -555,7 +578,7 @@ export default function DashboardPage() {
       <div className="grid items-stretch gap-4 lg:grid-cols-2">
         <MovableDashboardCard cardId="pipeline" order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
           {pipelineMetricsError && <p className="mb-2 rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-2 text-xs text-[var(--app-danger)]" role="alert">{pipelineMetricsError} <button type="button" className="font-semibold underline" onClick={() => void reloadPipelineStageSummary()}>Retry</button></p>}
-          <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={pipelineStageSummary ?? {}} />
+          {pipelineStageSummary ? <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={pipelineStageSummary} /> : !pipelineMetricsError && <p role="status" className="text-sm text-[var(--app-muted)]">Loading Pipeline totals…</p>}
         </MovableDashboardCard>
 
         {/* Follow-ups Due */}
@@ -752,7 +775,8 @@ export default function DashboardPage() {
       </div>}
 
       {/* Modals for Quick Actions */}
-      {dashboardMetricsError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] p-3 text-sm text-[var(--app-text)]" role="status">{dashboardMetricsError}</p>}
+      <p className="text-xs text-[var(--app-muted)]">Workspace calendar: {settings.timezone}. {SALE_COHORT_NOTE} {FINANCIAL_HISTORY_NOTE} Legacy Task dates without a timezone require review.</p>
+      {dashboardMetricsError && <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-warning)_13%,white)] p-3 text-sm text-[var(--app-text)]" role="status">{dashboardMetricsError} <Button size="sm" variant="outline" onClick={() => currentOrganizationId && invalidateDashboardMetrics(currentOrganizationId)}>Retry metrics</Button></p>}
       {activeModal && (
         <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4">
           <div className="app-modal-panel relative w-full max-w-lg space-y-5 p-5" role="dialog" aria-modal="true" aria-label={`${activeModal === 'lead' ? 'Add Lead' : activeModal === 'client' ? 'Add Client' : 'Add Task'} dialog`}>

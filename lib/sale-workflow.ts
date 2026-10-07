@@ -13,9 +13,8 @@ export function getLocalCalendarDate(date = new Date()) {
 
 export function normalizeSaleDate(value: unknown) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('Sale date must use YYYY-MM-DD.');
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(year, month - 1, day);
-  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) throw new Error('Sale date is not valid.');
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new Error('Sale date is not valid.');
   return value;
 }
 

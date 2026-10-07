@@ -175,14 +175,13 @@ export type PipelineStageSummary = Record<string, { count: number; value: number
 // preserving a fresh read for every later refresh.
 const pipelineSummaryRequests = new Map<string, Promise<PipelineStageSummary>>();
 
-function pipelineSummaryRequestKey(user: AppUser | null, organizationId: string) {
-  return `${user?.uid || 'anonymous'}:${organizationId}`;
+function pipelineSummaryRequestKey(user: AppUser | null, organizationId: string, role: string) {
+  return `${user?.uid || 'anonymous'}:${role}:${organizationId}`;
 }
 
-async function loadPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
-  const { membership } = await requireOrganizationAccess(user, organizationId);
+async function loadPipelineStageSummaries(user: AppUser | null, organizationId: string, role: string): Promise<PipelineStageSummary> {
   const dealsCollection = organizationCollection<DocumentData>(db, organizationId, 'deals');
-  const assigned = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
+  const assigned = role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
   const stages = [...DEAL_ACTIVE_STAGES, 'Won', 'Lost'] as const;
   const summaries = await Promise.all(stages.map(async (stage) => {
     incrementStartupCounter('dashboard-pipeline-aggregate-queries');
@@ -201,10 +200,11 @@ async function loadPipelineStageSummaries(user: AppUser | null, organizationId: 
  * the paginated Deal list used to render the board cards.
  */
 export async function getPipelineStageSummaries(user: AppUser | null, organizationId: string): Promise<PipelineStageSummary> {
-  const key = pipelineSummaryRequestKey(user, organizationId);
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const key = pipelineSummaryRequestKey(user, organizationId, membership.role);
   const pending = pipelineSummaryRequests.get(key);
   if (pending) return pending;
-  const request = loadPipelineStageSummaries(user, organizationId).finally(() => {
+  const request = loadPipelineStageSummaries(user, organizationId, membership.role).finally(() => {
     if (pipelineSummaryRequests.get(key) === request) pipelineSummaryRequests.delete(key);
   });
   pipelineSummaryRequests.set(key, request);

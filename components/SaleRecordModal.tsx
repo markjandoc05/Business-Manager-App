@@ -8,7 +8,8 @@ import { MoneyInput } from '@/components/MoneyInput';
 import { SaleItemsField } from '@/components/SaleItemsField';
 import { formatCurrency } from '@/lib/formatting';
 import { createSaleLineItemsFromDeal, getSaleItemsTotal, normalizeSaleLineItems } from '@/lib/sale-items';
-import { getLocalCalendarDate, normalizeAdditionalSalePayment, normalizeSalePayment, SALE_PAYMENT_METHODS } from '@/lib/sale-workflow';
+import { normalizeAdditionalSalePayment, normalizeSalePayment, SALE_PAYMENT_METHODS } from '@/lib/sale-workflow';
+import { getWorkspaceCalendarDate } from '@/lib/workspace-calendar';
 import { searchActiveClients } from '@/lib/repositories/clients';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import type { CreateSaleInput, RecordSalePaymentInput } from '@/lib/repositories/sales';
@@ -38,9 +39,9 @@ type SaleForm = {
   notes: string;
 };
 
-function emptyForm(prefill?: DealSalePrefill, defaults?: { paymentStatus?: SalePaymentStatus; paymentMethod?: SalePaymentMethod }): SaleForm {
+function emptyForm(prefill?: DealSalePrefill, defaults?: { paymentStatus?: SalePaymentStatus; paymentMethod?: SalePaymentMethod }, timeZone = 'UTC'): SaleForm {
   return {
-    saleDate: getLocalCalendarDate(),
+    saleDate: getWorkspaceCalendarDate(new Date(), timeZone),
     customerType: prefill ? 'CLIENT' : 'WALK_IN',
     source: prefill ? 'DEAL' : 'WALK_IN',
     customerName: prefill?.clientName || '',
@@ -58,17 +59,18 @@ function paymentLabel(value: SalePaymentStatus) {
   return value === 'PAID' ? 'Paid' : value === 'PARTIAL' ? 'Partial' : 'Unpaid';
 }
 
-export function RecordSaleModal({ user, organizationId, currency, prefill, defaultPaymentStatus, defaultPaymentMethod, onClose, onSubmit }: {
+export function RecordSaleModal({ user, organizationId, currency, timeZone = 'UTC', prefill, defaultPaymentStatus, defaultPaymentMethod, onClose, onSubmit }: {
   user: AppUser;
   organizationId: string;
   currency: string;
+  timeZone?: string;
   prefill?: DealSalePrefill;
   defaultPaymentStatus?: SalePaymentStatus;
   defaultPaymentMethod?: SalePaymentMethod;
   onClose: () => void;
   onSubmit: (input: CreateSaleInput) => Promise<void>;
 }) {
-  const [form, setForm] = useState<SaleForm>(() => emptyForm(prefill, { paymentStatus: defaultPaymentStatus, paymentMethod: defaultPaymentMethod }));
+  const [form, setForm] = useState<SaleForm>(() => emptyForm(prefill, { paymentStatus: defaultPaymentStatus, paymentMethod: defaultPaymentMethod }, timeZone));
   const [clients, setClients] = useState<Client[]>([]);
   const [clientSearch, setClientSearch] = useState('');
   const [clientsLoading, setClientsLoading] = useState(false);
@@ -180,10 +182,10 @@ export function SaleDetailsModal({ sale, currency, canManage, payments = [], pay
   </div></div>;
 }
 
-export function RecordPaymentModal({ sale, currency, onClose, onSubmit }: { sale: Sale; currency: string; onClose: () => void; onSubmit: (input: RecordSalePaymentInput) => Promise<void> }) {
+export function RecordPaymentModal({ sale, currency, timeZone = 'UTC', onClose, onSubmit }: { sale: Sale; currency: string; timeZone?: string; onClose: () => void; onSubmit: (input: RecordSalePaymentInput) => Promise<void> }) {
   const [amount, setAmount] = useState(sale.balance);
   const [method, setMethod] = useState<SalePaymentMethod>('CASH');
-  const [paymentDate, setPaymentDate] = useState(getLocalCalendarDate());
+  const [paymentDate, setPaymentDate] = useState(() => getWorkspaceCalendarDate(new Date(), timeZone));
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

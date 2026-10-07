@@ -14,7 +14,7 @@ export function cachedRequest<T>(key: string, ttlMs: number, loader: () => Promi
   const requestGeneration = generation;
   const request = loader()
     .then((value) => {
-      values.set(key, { value, expiresAt: Date.now() + ttlMs });
+      if (requestGeneration === generation) values.set(key, { value, expiresAt: Date.now() + ttlMs });
       return value;
     })
     .finally(() => {
@@ -25,6 +25,9 @@ export function cachedRequest<T>(key: string, ttlMs: number, loader: () => Promi
 }
 
 export function invalidateCachedRequest(keyPrefix: string) {
+  // An older in-flight read must neither serve the next request nor repopulate
+  // the cache after a mutation or identity change.
+  generation += 1;
   for (const key of values.keys()) {
     if (key.startsWith(keyPrefix)) values.delete(key);
   }

@@ -2,7 +2,7 @@ import { count, getAggregateFromServer, query, sum, where } from 'firebase/fires
 import { db } from '@/lib/firebase/client';
 import { requireOrganizationAccess } from '@/lib/permissions';
 import { organizationCollection } from '@/lib/organizations/paths';
-import { getLocalCalendarDate } from '@/lib/sale-workflow';
+import { getWorkspaceCalendarDate } from '@/lib/workspace-calendar';
 import type { AppUser } from '@/types/auth';
 
 export type ReportData = {
@@ -29,17 +29,17 @@ export type ReportData = {
 const SALE_SOURCES = ['WALK_IN', 'CLIENT', 'DEAL'] as const;
 const SALE_PAYMENT_STATUSES = ['PAID', 'PARTIAL', 'UNPAID'] as const;
 
-export async function loadReportData(user: AppUser | null, organizationId: string, startDate: Date, endDate: Date, stages: string[], sources: string[]) {
+export async function loadReportData(user: AppUser | null, organizationId: string, startDate: Date, endDate: Date, stages: string[], sources: string[], timeZone = 'UTC') {
   const { membership } = await requireOrganizationAccess(user, organizationId);
   const leads = organizationCollection(db, organizationId, 'leads');
   const clients = organizationCollection(db, organizationId, 'clients');
   const deals = organizationCollection(db, organizationId, 'deals');
   const sales = organizationCollection(db, organizationId, 'sales');
   const leadDateRange = [where('archived', '==', false), where('createdAt', '>=', startDate), where('createdAt', '<', endDate)] as const;
-  const dealDateRange = [where('archived', '==', false), where('createdAt', '>=', startDate), where('createdAt', '<', endDate)] as const;
+  const openDeals = [where('archived', '==', false), where('status', '==', 'Active')] as const;
   const wonDateRange = [where('archived', '==', false), where('wonAt', '>=', startDate), where('wonAt', '<', endDate)] as const;
   const lostDateRange = [where('archived', '==', false), where('lostAt', '>=', startDate), where('lostAt', '<', endDate)] as const;
-  const saleDateRange = [where('status', '==', 'ACTIVE'), where('saleDate', '>=', getLocalCalendarDate(startDate)), where('saleDate', '<', getLocalCalendarDate(endDate))] as const;
+  const saleDateRange = [where('status', '==', 'ACTIVE'), where('saleDate', '>=', getWorkspaceCalendarDate(startDate, timeZone)), where('saleDate', '<', getWorkspaceCalendarDate(endDate, timeZone))] as const;
   const assignedDeal = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
   const assignedLead = membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : [];
   const [leadTotals, qualifiedTotals, convertedTotals, clientTotals, wonTotals, lostTotals, activeTotals, salesTotals, salesBySourceTotals, salesByPaymentStatusTotals] = await Promise.all([
@@ -49,7 +49,7 @@ export async function loadReportData(user: AppUser | null, organizationId: strin
     getAggregateFromServer(query(clients, where('archived', '==', false)), { count: count() }),
     getAggregateFromServer(query(deals, ...wonDateRange, ...assignedDeal, where('status', '==', 'Won')), { count: count(), value: sum('value') }),
     getAggregateFromServer(query(deals, ...lostDateRange, ...assignedDeal, where('status', '==', 'Lost')), { count: count(), value: sum('value') }),
-    getAggregateFromServer(query(deals, ...dealDateRange, ...assignedDeal, where('status', '==', 'Active')), { count: count(), value: sum('value') }),
+    getAggregateFromServer(query(deals, ...openDeals, ...assignedDeal), { count: count(), value: sum('value') }),
     getAggregateFromServer(query(sales, ...saleDateRange), { count: count(), total: sum('total'), amountPaid: sum('amountPaid'), balance: sum('balance') }),
     Promise.all(SALE_SOURCES.map((source) => getAggregateFromServer(query(sales, ...saleDateRange, where('source', '==', source)), { count: count() }))),
     Promise.all(SALE_PAYMENT_STATUSES.map((paymentStatus) => getAggregateFromServer(query(sales, ...saleDateRange, where('paymentStatus', '==', paymentStatus)), { count: count() }))),
@@ -58,7 +58,7 @@ export async function loadReportData(user: AppUser | null, organizationId: strin
     Promise.all(stages.map((stage) => {
       if (stage === 'Won') return Promise.resolve(wonTotals);
       if (stage === 'Lost') return Promise.resolve(lostTotals);
-      return getAggregateFromServer(query(deals, ...dealDateRange, ...assignedDeal, where('stage', '==', stage)), { value: sum('value') });
+      return getAggregateFromServer(query(deals, ...openDeals, ...assignedDeal, where('stage', '==', stage)), { value: sum('value') });
     })),
     Promise.all(sources.map((source) => getAggregateFromServer(query(leads, ...leadDateRange, ...assignedLead, where('source', '==', source)), { count: count() }))),
   ]);
