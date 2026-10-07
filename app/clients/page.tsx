@@ -60,15 +60,15 @@ import { useClientRecordHistory } from '@/hooks/use-client-record-history';
 import { listClientDealsPage } from '@/lib/repositories/deals';
 import { listClientTasksPage } from '@/lib/repositories/tasks';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
-import { getClientDocumentSizeError } from '@/lib/client-documents';
-import { CLIENT_PAGE_SIZE, getClientById } from '@/lib/repositories/clients';
+import { getClientDocumentSizeError, isScopedClientDocumentPath } from '@/lib/client-documents';
+import { CLIENT_PAGE_SIZE, downloadClientDocument, getClientById } from '@/lib/repositories/clients';
 import { useRecordDetails } from '@/hooks/use-record-details';
 import { RecordDetailsStatusDialog } from '@/components/RecordDetailsStatusDialog';
 import { createSale, getActiveSaleForDeal, listClientSalesPage, getClientSalesSummary, type CreateSaleInput } from '@/lib/repositories/sales';
 import { RecordSaleModal, SaleDetailsModal } from '@/components/SaleRecordModal';
 import { Archive, Download, FileText, ReceiptText, RotateCcw, Trash2, Upload } from 'lucide-react';
 import type { ChangeEvent } from 'react';
-import type { Activity, Client, Deal, DealLineItem, Sale, Task } from '@/types';
+import type { Activity, Client, Deal, DealLineItem, DocumentItem, Sale, Task } from '@/types';
 type ClientColumn = 'select' | 'client' | 'company' | 'contact' | 'clientSince' | 'activeDeals' | 'totalSales' | 'action';
 type ClientSortKey = Exclude<ClientColumn, 'select' | 'action'>;
 type ClientSort = { key: ClientSortKey; direction: SortDirection } | null;
@@ -511,6 +511,25 @@ export default function ClientsPage() {
     } finally {
       setDocumentSaving(false);
     }
+  };
+
+  const handleDocumentDownload = async (item: DocumentItem) => {
+    if (!selectedClientId || !currentOrganizationId) return;
+    // Historical migrations copied unscoped paths and token links without an
+    // ownership mapping. Preserve that existing link workflow; never grant the
+    // Admin proxy access to an unverified root object on that basis.
+    if (!isScopedClientDocumentPath(item.storagePath, currentOrganizationId, selectedClientId, item.id)) {
+      if (item.downloadURL) window.open(item.downloadURL, '_blank', 'noopener,noreferrer');
+      else setActionError('This legacy document has no verified download path. Its record has been retained.');
+      return;
+    }
+    try {
+      const blob = await downloadClientDocument(user, currentOrganizationId, selectedClientId, item.id);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = item.name; link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) { setActionError(userFacingErrorMessage(error, 'Unable to download the document.')); }
   };
 
   const dealsByClientId = useMemo(() => {
@@ -1263,15 +1282,15 @@ export default function ClientsPage() {
                   <div>
                     <h3 className="font-bold text-[var(--app-text)]">Client Documents</h3>
                     <p className="text-xs text-[var(--app-muted)]">Secure files stored for this client.</p>
-                    <p className="text-xs text-[var(--app-tertiary)]">Maximum file size: 1 MB</p>
+                    <p className="text-xs text-[var(--app-tertiary)]">Maximum file size: 1 MB. Legacy download links remain unchanged and can still be used by anyone who already has the link.</p>
                   </div>
                   <div className="flex flex-wrap gap-2">{canManage && !selectedClient.archived && <label className={`inline-flex cursor-pointer items-center gap-2 rounded-lg bg-[var(--app-primary)] px-3 py-2 text-sm font-medium text-white hover:bg-[var(--app-primary-hover)] ${documentSaving ? 'pointer-events-none opacity-60' : ''}`}>
                     <Upload size={14} /> {documentSaving ? 'Uploading…' : 'Upload document'}
                     <input type="file" className="sr-only" accept=".pdf,.doc,.docx,.xls,.xlsx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png" disabled={documentSaving} onChange={(event) => void handleDocumentUpload(event)} />
                   </label>}<Button size="sm" variant="outline" onClick={() => setShowArchivedDocuments((current) => !current)}>{showArchivedDocuments ? 'Active Documents' : 'Archived Documents'}</Button></div>
                 </div>
-                {clientDocumentsLoading ? <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading documents…</p> : clientDocumentsError ? <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{clientDocumentsError}</p> : clientDocuments.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">No documents uploaded yet.</p> : <><div className="divide-y divide-[var(--app-border-subtle)] rounded-lg border border-[var(--app-border)]">{clientDocuments.map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)} · {document.uploadedByName || document.uploadedBy || 'Unknown user'}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <IconActionButton icon={<Archive size={15} />} label="Archive Document" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'archive', id: document.id, name: document.name })} />}</div></div>)}</div>{clientDocumentsHasMore && <div className="pt-2 text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientDocuments()} disabled={clientDocumentsLoading}>Load More</Button></div>}</>}
-                {showArchivedDocuments && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Documents</p>{archivedClientDocuments.filter((document) => document.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived documents.</p> : archivedClientDocuments.filter((document) => document.clientId === selectedClientId).map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)}</p></div></div><div className="flex shrink-0 gap-1">{document.downloadURL && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => window.open(document.downloadURL, '_blank', 'noopener,noreferrer')} />}{canManage && <><IconActionButton icon={<RotateCcw size={15} />} label="Restore Document" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'restore', id: document.id, name: document.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Document permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'delete', id: document.id, name: document.name })} /></>}</div></div>)}</div>}
+                {clientDocumentsLoading ? <p className="py-8 text-center text-sm text-[var(--app-muted)]">Loading documents…</p> : clientDocumentsError ? <p className="rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-3 text-sm text-[var(--app-danger)]">{clientDocumentsError}</p> : clientDocuments.length === 0 ? <p className="rounded-xl border border-dashed border-[var(--app-border)] p-8 text-center text-sm text-[var(--app-muted)]">No documents uploaded yet.</p> : <><div className="divide-y divide-[var(--app-border-subtle)] rounded-lg border border-[var(--app-border)]">{clientDocuments.map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)} · {document.uploadedByName || document.uploadedBy || 'Unknown user'}</p></div></div><div className="flex shrink-0 gap-1">{(document.storagePath || document.downloadURL) && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => void handleDocumentDownload(document)} />}{canManage && <IconActionButton icon={<Archive size={15} />} label="Archive Document" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'archive', id: document.id, name: document.name })} />}</div></div>)}</div>{clientDocumentsHasMore && <div className="pt-2 text-center"><Button size="sm" variant="outline" onClick={() => void loadMoreClientDocuments()} disabled={clientDocumentsLoading}>Load More</Button></div>}</>}
+                {showArchivedDocuments && <div className="space-y-2 border-t border-[var(--app-border-subtle)] pt-4"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)]">Archived Documents</p>{archivedClientDocuments.filter((document) => document.clientId === selectedClientId).length === 0 ? <p className="text-sm text-[var(--app-muted)]">No archived documents.</p> : archivedClientDocuments.filter((document) => document.clientId === selectedClientId).map((document) => <div key={document.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-subtle)] p-3"><div className="flex min-w-0 items-center gap-3"><FileText size={18} className="shrink-0 text-[var(--app-tertiary)]" /><div className="min-w-0"><p className="truncate text-sm font-medium text-[var(--app-text)]">{document.name}</p><p className="text-xs text-[var(--app-muted)]">{formatDocumentSize(document.size)} · {document.mimeType} · {formatCompactDateTime(document.uploadedAt, settings.timezone)}</p></div></div><div className="flex shrink-0 gap-1">{(document.storagePath || document.downloadURL) && <IconActionButton icon={<Download size={15} />} label={`Download ${document.name}`} variant="primary" onClick={() => void handleDocumentDownload(document)} />}{canManage && <><IconActionButton icon={<RotateCcw size={15} />} label="Restore Document" variant="success" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'restore', id: document.id, name: document.name })} /><IconActionButton icon={<Trash2 size={15} />} label="Delete Document permanently" variant="danger" onClick={() => setDetailConfirmAction({ entity: 'Document', kind: 'delete', id: document.id, name: document.name })} /></>}</div></div>)}</div>}
               </Card>
             )}
 

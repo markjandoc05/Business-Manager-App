@@ -1430,9 +1430,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
+    const organizationId = currentOrganizationId;
+    const requestId = clientDocumentsRequestRef.current;
     const newDoc = await uploadClientDocument(user, currentOrganizationId, clientId, file);
-    setClientDocuments(prev => [newDoc, ...prev]);
-    setClientDocumentsOrganizationId(currentOrganizationId);
+    if (currentOrganizationRef.current !== organizationId || clientDocumentsRequestRef.current !== requestId) return;
+    if (newDoc.archived) { await loadArchivedClientDocuments(clientId); return; }
+    setClientDocuments(prev => [newDoc, ...prev.filter(item => item.id !== newDoc.id)]);
+    setClientDocumentsOrganizationId(organizationId);
+    setClientDocumentsClientId(clientId);
   };
 
   const archiveClientDocument = async (clientId: string, documentId: string) => {

@@ -1,6 +1,5 @@
-import { addDoc, collection, doc, endAt, getDoc, getDocFromServer, getDocs, limit, orderBy, query, serverTimestamp, setDoc, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { db, storage } from '@/lib/firebase/client';
+import { addDoc, collection, doc, endAt, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, startAt, updateDoc, where, writeBatch } from 'firebase/firestore';
+import { db } from '@/lib/firebase/client';
 import type { AppUser } from '@/types/auth';
 import { authenticatedFetch } from '@/lib/repositories/authenticatedRequest';
 import type { Client, DocumentItem, Note } from '@/types';
@@ -9,7 +8,7 @@ import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection, organizationSubcollection, organizationSubcollectionDocument } from '@/lib/organizations/paths';
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
-import { getClientDocumentSizeError } from '@/lib/client-documents';
+import { clientDocumentMimeType, getClientDocumentSizeError } from '@/lib/client-documents';
 import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositories/lifecycle';
 import { matchesClientSearch } from '@/lib/client-search';
 
@@ -413,42 +412,6 @@ export async function permanentlyDeleteClientNote(user: AppUser | null, organiza
   if (!response.ok) throw new Error(payload?.error || 'Unable to permanently delete this note.');
 }
 
-function safeStorageFilename(filename: string) {
-  const trimmed = filename.trim().replace(/[^a-zA-Z0-9._-]/g, '_');
-  return trimmed || 'document';
-}
-
-const ALLOWED_CLIENT_DOCUMENT_TYPES = new Set([
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'image/jpeg',
-  'image/png',
-]);
-const ALLOWED_CLIENT_DOCUMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png']);
-
-function isSupportedClientDocument(file: File) {
-  const extension = file.name.toLowerCase().split('.').pop() || '';
-  return ALLOWED_CLIENT_DOCUMENT_TYPES.has(file.type) || ALLOWED_CLIENT_DOCUMENT_EXTENSIONS.has(extension);
-}
-
-function clientDocumentMimeType(file: File) {
-  if (ALLOWED_CLIENT_DOCUMENT_TYPES.has(file.type)) return file.type;
-  const extension = file.name.toLowerCase().split('.').pop() || '';
-  return ({
-    pdf: 'application/pdf',
-    doc: 'application/msword',
-    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    xls: 'application/vnd.ms-excel',
-    xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    png: 'image/png',
-  } as Record<string, string>)[extension] || 'application/octet-stream';
-}
-
 function mapClientDocument(id: string, clientId: string, data: Record<string, unknown>): DocumentItem {
   return {
     id,
@@ -502,75 +465,40 @@ export async function listClientDocuments(user: AppUser | null, organizationId: 
   return (await listClientDocumentsPage(user, organizationId, clientId)).items;
 }
 
+const pendingDocumentIds = new Map<string,string>();
+function documentEndpoint(organizationId:string,clientId:string,id:string) { return `/api/organizations/${encodeURIComponent(organizationId)}/clients/${encodeURIComponent(clientId)}/documents/${encodeURIComponent(id)}`; }
 export async function uploadClientDocument(user: AppUser | null, organizationId: string, clientId: string, file: File) {
-  await requireClientManager(user, organizationId);
-  if (!user) throw new Error('You must be signed in to upload a client document.');
-  if (!file || file.size === 0) throw new Error('Please select a file to upload.');
-  const sizeError = getClientDocumentSizeError(file.size);
-  if (sizeError) throw new Error(sizeError);
-  if (!isSupportedClientDocument(file)) throw new Error('That file type is not supported. Use PDF, DOC, DOCX, XLS, XLSX, JPG, JPEG, or PNG.');
-
-  const clientSnapshot = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
-  if (!clientSnapshot.exists()) throw new Error('The selected client was not found.');
-  if (clientSnapshot.data().archived === true || clientSnapshot.data().status === 'ARCHIVED') throw new Error('Documents cannot be uploaded to an archived client.');
-
-  const documentRef = doc(organizationSubcollection<Record<string, unknown>>(db, organizationId, 'clients', clientId, 'documents'));
-  const storagePath = `organizations/${organizationId}/clients/${clientId}/documents/${documentRef.id}/${safeStorageFilename(file.name)}`;
-  const storageRef = ref(storage, storagePath);
-  const mimeType = clientDocumentMimeType(file);
-  let metadataAttempted = false;
-  let metadata: Record<string, unknown> | undefined;
-
-  try {
-    await uploadBytes(storageRef, file, { contentType: mimeType });
-    const downloadURL = await getDownloadURL(storageRef);
-    metadata = {
-      name: file.name,
-      storagePath,
-      downloadURL,
-      mimeType,
-      size: file.size,
-      uploadedAt: serverTimestamp(),
-      uploadedByUid: user.uid,
-      uploadedByName: user.name,
-      archived: false,
-      archivedAt: null,
-      archivedBy: null,
-    };
-    metadataAttempted = true;
-    await setDoc(documentRef, metadata);
-
-    return {
-      id: documentRef.id,
-      clientId,
-      name: file.name,
-      storagePath,
-      downloadURL,
-      mimeType,
-      size: file.size,
-      uploadedAt: new Date().toISOString(),
-      uploadedByUid: user.uid,
-      uploadedByName: user.name,
-      archived: false,
-    } satisfies DocumentItem;
-  } catch (error) {
-    if (metadataAttempted && metadata) {
-      try {
-        // Read the server, not the local pending-write cache. A rejected write
-        // promise can follow a successful commit whose acknowledgment was lost.
-        const committed = await getDocFromServer(documentRef);
-        const data = committed.data();
-        if (committed.exists() && data && ['name', 'storagePath', 'downloadURL', 'mimeType', 'size', 'uploadedByUid'].every((field) => data[field] === metadata![field])) {
-          return mapClientDocument(documentRef.id, clientId, data);
-        }
-      } catch { /* Uncertain completion must preserve the uploaded object. */ }
-    }
-    console.error('Unable to upload client document', error);
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'storage/unauthorized') {
-      throw new Error('Upload failed. You do not have permission to upload documents for this client.');
-    }
-    throw new Error('Upload completion could not be confirmed. Refresh Client Documents before uploading again. Any uploaded file has been preserved for recovery.');
-  }
+  await requireClientManager(user,organizationId);
+  if(!user)throw new Error('You must be signed in to upload a client document.');
+  if(!file || file.size===0)throw new Error('Please select a file to upload.');
+  const sizeError=getClientDocumentSizeError(file.size);if(sizeError)throw new Error(sizeError);
+  const mimeType=clientDocumentMimeType(file);if(!mimeType)throw new Error('That file type is not supported. Use PDF, DOC, DOCX, XLS, XLSX, JPG, JPEG, or PNG.');
+  const digest=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());
+  const hash=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,'0')).join('');
+  const identity=JSON.stringify([user.uid,organizationId,clientId,file.name,mimeType,file.size,hash]);
+  const identityDigest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(identity));
+  const storageKey='ventale_pending_document_'+Array.from(new Uint8Array(identityDigest),byte=>byte.toString(16).padStart(2,'0')).join('');
+  let persisted:string|null=null;try{if(typeof window!=='undefined')persisted=window.localStorage.getItem(storageKey);}catch{/* Server recovery also covers unavailable local storage. */}
+  const id=pendingDocumentIds.get(identity)||(persisted && /^[a-zA-Z0-9-]{8,128}$/.test(persisted)?persisted:crypto.randomUUID());pendingDocumentIds.set(identity,id);
+  try{if(typeof window!=='undefined')window.localStorage.setItem(storageKey,id);}catch{/* Keep in-memory and server recovery. */}
+  const response=await authenticatedFetch(documentEndpoint(organizationId,clientId,id),{method:'PUT',headers:{'Content-Type':mimeType,'X-Document-Name':encodeURIComponent(file.name)},body:file});
+  const payload=await response.json().catch(()=>null) as {error?:string;document?:Record<string,unknown>}|null;
+  if(!response.ok || !payload?.document)throw new Error(payload?.error||'Upload completion could not be confirmed. Retry the same file; any uploaded file has been retained.');
+  if(typeof payload.document.id!=='string')throw new Error('Upload completion could not be confirmed. Retry the same file.');
+  pendingDocumentIds.delete(identity);
+  try{if(typeof window!=='undefined')window.localStorage.removeItem(storageKey);}catch{/* Confirmed server completion is sufficient. */}
+  return mapClientDocument(payload.document.id,clientId,payload.document);
+}
+export async function downloadClientDocument(user:AppUser|null,organizationId:string,clientId:string,id:string) {
+  await requireActiveUser(user,organizationId);
+  const response=await authenticatedFetch(documentEndpoint(organizationId,clientId,id));
+  if(!response.ok){const payload=await response.json().catch(()=>null) as {error?:string}|null;throw new Error(payload?.error||'Unable to download the document.');}
+  return response.blob();
+}
+async function setDocumentArchived(user:AppUser|null,organizationId:string,clientId:string,id:string,archived:boolean) {
+  await requireClientManager(user,organizationId);
+  const response=await authenticatedFetch(documentEndpoint(organizationId,clientId,id),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({archived})});
+  if(!response.ok){const payload=await response.json().catch(()=>null) as {error?:string}|null;throw new Error(payload?.error||'Unable to change the document lifecycle.');}
 }
 
 export async function listArchivedClientDocuments(user: AppUser | null, organizationId: string, clientId: string) {
@@ -598,15 +526,10 @@ export async function listArchivedClientDocuments(user: AppUser | null, organiza
 }
 
 export async function archiveClientDocument(user: AppUser | null, organizationId: string, clientId: string, documentId: string) {
-  await requireClientManager(user, organizationId);
-  if (!user) throw new Error('You must be signed in to archive a client document.');
-  await updateDoc(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'documents', documentId), { archived: true, archivedAt: serverTimestamp(), archivedBy: user.uid });
+  await setDocumentArchived(user,organizationId,clientId,documentId,true);
 }
-
 export async function restoreClientDocument(user: AppUser | null, organizationId: string, clientId: string, documentId: string) {
-  await requireClientManager(user, organizationId);
-  if (!user) throw new Error('You must be signed in to restore a client document.');
-  await updateDoc(organizationSubcollectionDocument(db, organizationId, 'clients', clientId, 'documents', documentId), { archived: false, archivedAt: null, archivedBy: null });
+  await setDocumentArchived(user,organizationId,clientId,documentId,false);
 }
 
 export async function permanentlyDeleteClientDocument(user: AppUser | null, organizationId: string, clientId: string, documentId: string) {

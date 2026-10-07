@@ -4,6 +4,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import ts from 'typescript';
+import * as nodeCrypto from 'node:crypto';
 
 // Real repository calls with a synthetic SDK adapter. This deliberately does
 // not claim emulator authorization, indexes or transaction concurrency coverage.
@@ -54,6 +55,7 @@ export function repositoryFixture(role = 'ADMIN', overrides = {}) {
   };
   const cache = new Map();
   const dependencies = {
+    'node:crypto': nodeCrypto,
     'firebase/firestore': firestore, 'firebase/storage': {}, '@/lib/firebase/client': { db: database, storage: {} },
     '@/lib/permissions': { requireOrganizationAccess: async (actor, organizationId, roles) => { assert.equal(organizationId, org); assert.equal(actor?.uid, user.uid); if (roles && !roles.includes(role)) throw new Error('Forbidden role'); return { membership: { userId: user.uid, role, status: 'active' } }; } },
     '@/lib/repositories/authenticatedRequest': { authenticatedFetch: async () => { throw new Error('Unexpected HTTP call'); } },

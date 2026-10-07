@@ -298,13 +298,13 @@ test('upload cleanup refuses a registered document and preserves the object and 
   assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).get()).exists, true);
 });
 
-test('authorized orphan cleanup still removes an unregistered object', async () => {
+test('unverified orphan cleanup retains the object for recovery', async () => {
   const admin = await createToken('orphan-cleanup-admin');
   const target = await seedDocument({ members: [{ uid: admin.uid, role: 'ADMIN', status: 'active' }] });
   await putObject(target.path);
   await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`).delete();
-  assert.equal((await cleanupRequest(admin.token, target)).status, 200);
-  assert.equal(await objectExists(target.path), false);
+  assert.equal((await cleanupRequest(admin.token, target)).status, 409);
+  assert.equal(await objectExists(target.path), true);
 });
 
 test('upload cleanup remains tenant- and role-protected', async () => {
@@ -318,7 +318,7 @@ test('upload cleanup remains tenant- and role-protected', async () => {
 
   assert.equal((await cleanupRequest(user.token, target)).status, 403);
   assert.equal(await objectExists(target.path), true);
-  assert.equal((await cleanupRequest(admin.token, target, BASE_URL, `organizations/other-org/clients/${target.clientId}/documents/${target.documentId}/file.pdf`)).status, 400);
+  assert.equal((await cleanupRequest(admin.token, target, BASE_URL, `organizations/other-org/clients/${target.clientId}/documents/${target.documentId}/file.pdf`)).status, 409);
   assert.equal(await objectExists(target.path), true);
 });
 
@@ -332,7 +332,39 @@ test('a non-missing Storage failure preserves metadata and returns a controlled 
     FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:1',
     STORAGE_EMULATOR_HOST: 'http://127.0.0.1:1',
   });
-  const response = await deleteRequest(admin.token, target, failureBaseUrl);
-  assert.equal(response.status, 502);
-  await expectStillPresent(target);
+  const upload=(baseUrl,id)=>fetch(`${baseUrl}/api/organizations/${target.organizationId}/clients/${target.clientId}/documents/${id}`,{method:'PUT',headers:{Authorization:`Bearer ${admin.token}`,'Content-Type':'application/pdf','X-Document-Name':'recovery.pdf'},body:Buffer.from('Recovery fixture')});
+  try {
+    const response = await deleteRequest(admin.token, target, failureBaseUrl);
+    assert.equal(response.status, 502);
+    await expectStillPresent(target);
+    assert.equal((await upload(failureBaseUrl,'pending-upload')).status,503);
+    assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documentOperations/pending-upload`).get()).data()?.state,'PREPARED');
+  } finally { await stopNext(); await startNext(); }
+  const recovered=await upload(BASE_URL,'restarted-upload');assert.equal(recovered.status,200);assert.equal((await recovered.json()).document.id,'pending-upload');
+  assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documentOperations/pending-upload`).get()).data()?.state,'REGISTERED');
+  assert.equal((await adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documentOperations/restarted-upload`).get()).exists,false);
+});
+
+test('server upload/download/archive/restore preserves private objects, replay and expired-license reads',async()=>{
+  const admin=await createToken('server-doc-admin');const user=await createToken('server-doc-user');
+  const target=await seedDocument({members:[{uid:admin.uid,role:'ADMIN',status:'active'},{uid:user.uid,role:'USER',status:'active'}]});
+  const documentId='server-upload';const endpoint=`${BASE_URL}/api/organizations/${target.organizationId}/clients/${target.clientId}/documents/${documentId}`;
+  const upload=()=>fetch(endpoint,{method:'PUT',headers:{Authorization:`Bearer ${admin.token}`,'Content-Type':'application/pdf','X-Document-Name':'synthetic.pdf'},body:Buffer.from('Synthetic PDF')});
+  assert.equal((await upload()).status,200);assert.equal((await upload()).status,200);
+  const docRef=adminDb.doc(`organizations/${target.organizationId}/clients/${target.clientId}/documents/${documentId}`);const data=(await docRef.get()).data();assert.equal(data.downloadURL,undefined);
+  const [metadata]=await bucket.file(data.storagePath).getMetadata();assert.equal(metadata.metadata?.firebaseStorageDownloadTokens,undefined);
+  const patch=archived=>fetch(endpoint,{method:'PATCH',headers:{Authorization:`Bearer ${admin.token}`,'Content-Type':'application/json'},body:JSON.stringify({archived})});
+  assert.equal((await patch(true)).status,200);assert.equal((await patch(false)).status,200);
+  await adminDb.doc(`organizations/${target.organizationId}`).update({status:'expired',licenseStatus:'EXPIRED',licenseWriteEnabled:false});
+  const read=await fetch(endpoint,{headers:{Authorization:`Bearer ${user.token}`}});assert.equal(read.status,200);assert.equal(await read.text(),'Synthetic PDF');assert.equal(read.headers.get('cache-control'),'private, no-store');assert.equal((await patch(true)).status,409);
+});
+
+test('Firebase-disabled and revoked sessions cannot read server documents despite ACTIVE records',async()=>{
+  for(const disabled of [true,false]) {
+    const actor=await createToken(disabled?'disabled-session':'revoked-session');
+    const target=await seedDocument({members:[{uid:actor.uid,role:'ADMIN',status:'active'}]});await putObject(target.path);
+    if(disabled)await adminAuth.updateUser(actor.uid,{disabled:true});
+    else {await new Promise(resolve=>setTimeout(resolve,1100));await adminAuth.revokeRefreshTokens(actor.uid);}
+    const response=await fetch(`${BASE_URL}/api/organizations/${target.organizationId}/clients/${target.clientId}/documents/${target.documentId}`,{headers:{Authorization:`Bearer ${actor.token}`}});assert.equal(response.status,401);await expectStillPresent(target);
+  }
 });

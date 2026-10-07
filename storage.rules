@@ -1,62 +1,10 @@
 rules_version = '2';
-
 service firebase.storage {
   match /b/{bucket}/o {
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    function activeApplicationUser() {
-      return signedIn()
-        && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.uid == request.auth.uid
-        && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.status == 'active'
-        && (!firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.keys().hasAny(['active'])
-          || firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.active == true);
-    }
-
-    function organizationMember(organizationId) {
-      return activeApplicationUser()
-        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid))
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.userId == request.auth.uid
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.status == 'active';
-    }
-
-    function organizationCanManageClients(organizationId) {
-      return organizationMember(organizationId)
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)/members/$(request.auth.uid)).data.role in ['ADMIN', 'MANAGER'];
-    }
-
-    function licenseAllowsWrites(organizationId) {
-      return firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseWriteEnabled == true
-        && firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseStatus in ['TRIAL', 'ACTIVE']
-        && (!firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.keys().hasAny(['licenseExpiresAt'])
-          || firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseExpiresAt == null
-          || request.time <= firestore.get(/databases/(default)/documents/organizations/$(organizationId)).data.licenseExpiresAt);
-    }
-
-    match /organizations/{organizationId}/clients/{clientId}/documents/{documentId}/{fileName} {
-      allow read: if organizationMember(organizationId)
-        && firestore.exists(/databases/(default)/documents/organizations/$(organizationId)/clients/$(clientId));
-      // Storage supports at most two distinct Firestore document accesses.
-      // The global user, membership and license guards below require three;
-      // guard-preserving upload/read remediation is a release blocker. Client
-      // existence/status is enforced by the matching Firestore metadata create
-      // rule before the upload is considered complete.
-      allow create, update: if organizationCanManageClients(organizationId)
-        && licenseAllowsWrites(organizationId)
-        && request.resource.size > 0
-        && request.resource.size <= 1048576
-        && request.resource.contentType in ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'image/jpeg', 'image/png'];
-      allow delete: if false;
-    }
-
-    // Historical unscoped files are retained for administrative migration only.
-    // Browser clients may access documents solely through the organization path above.
-    match /clients/{clientId}/documents/{documentId}/{fileName} {
-      allow read, write: if false;
-    }
-
+    // Client Documents use authenticated server routes. Server authorization
+    // preserves live user/member/license/Client checks without Storage's two
+    // Firestore-document limit. No new token download URLs are created.
+    // Existing objects/tokens are untouched; historical token links remain valid.
     match /{path=**} {
       allow read, write: if false;
     }

@@ -8,10 +8,10 @@ import { repositoryFixture } from './repository-fixture.mjs';
 // invariants. It is not proof of native Firestore isolation or rules behavior.
 export function serverRecordFixture(role = 'ADMIN', overrides = {}) {
   let f; let records = new Map(); let tail = Promise.resolve(); let loseCommit = false;
-  const doc = path => ({ path, id: path.split('/').at(-1), collection: name => collection(`${path}/${name}`), get: async () => snapshot(path) });
-  const collection = (path, filters = []) => ({ path, filters, doc: id => doc(`${path}/${id}`), where: (field, op, value) => { assert.equal(op, '=='); return collection(path, [...filters, [field, value]]); }, get: async () => querySnapshot({path,filters}) });
+  const doc = path => ({ path, id: path.split('/').at(-1), get parent(){return collection(path.split('/').slice(0,-1).join('/'));}, collection: name => collection(`${path}/${name}`), get: async () => snapshot(path) });
+  const collection = (path, filters = [], maximum = Infinity) => ({ path, filters, maximum, get parent(){return path.includes('/')?doc(path.split('/').slice(0,-1).join('/')):null;}, doc: id => doc(`${path}/${id}`), where: (field, op, value) => { assert.equal(op, '=='); return collection(path, [...filters, [field, value]], maximum); }, limit:count=>collection(path,filters,count), get: async () => querySnapshot({path,filters,maximum}) });
   const snapshot = path => ({ id: path.split('/').at(-1), ref: doc(path), exists: records.has(path), data: () => records.has(path) ? { ...records.get(path) } : undefined });
-  const querySnapshot = ref => { const docs = [...records.keys()].filter(path => path.startsWith(ref.path+'/') && !path.slice(ref.path.length+1).includes('/')).map(snapshot).filter(row => ref.filters.every(([key,value]) => row.data()[key] === value)); return { docs, size: docs.length, empty: !docs.length }; };
+  const querySnapshot = ref => { const docs = [...records.keys()].filter(path => path.startsWith(ref.path+'/') && !path.slice(ref.path.length+1).includes('/')).map(snapshot).filter(row => ref.filters.every(([key,value]) => row.data()[key] === value)).slice(0,ref.maximum ?? Infinity); return { docs, size: docs.length, empty: !docs.length }; };
   const db = { doc, collection, runTransaction: callback => {
     const run = async () => {
       let writing = false; const writes = [];
@@ -28,12 +28,12 @@ export function serverRecordFixture(role = 'ADMIN', overrides = {}) {
     };
     const pending = tail.then(run, run); tail = pending.catch(() => {}); return pending;
   }};
-  const objects = new Map(); const deleted = []; let generation = 0; let failSave = null; let failDelete = false;
+  const objects = new Map(); const deleted = []; let generation = 0; let failSave = null; let failDelete = false;let saveGate=null;let deleteGate=null;
   const bucket = { file: (path, options) => ({
-    save: async (bytes, config) => { if (config?.preconditionOpts?.ifGenerationMatch === 0 && objects.has(path)) throw Object.assign(new Error('Exists'), {code:412}); if (failSave === 'before') throw new Error('Synthetic upload failure'); objects.set(path, {bytes:Buffer.from(bytes), metadata:{...config?.metadata, size:String(bytes.length),generation:String(++generation)}}); if (failSave === 'after') throw new Error('Synthetic upload acknowledgement loss'); },
+    save: async (bytes, config) => { if(saveGate)await saveGate.promise;if (config?.preconditionOpts?.ifGenerationMatch === 0 && objects.has(path)) throw Object.assign(new Error('Exists'), {code:412}); if (failSave === 'before') throw new Error('Synthetic upload failure'); objects.set(path, {bytes:Buffer.from(bytes), metadata:{...config?.metadata,contentType:config?.contentType, size:String(bytes.length),generation:String(++generation)}});if(failSave==='commit')loseCommit=true; if (failSave === 'after') throw new Error('Synthetic upload acknowledgement loss'); },
     getMetadata: async () => { if (!objects.has(path)) throw Object.assign(new Error('Missing'), {code:404}); return [{...objects.get(path).metadata}]; },
     download: async () => { const object=objects.get(path); if (!object) throw Object.assign(new Error('Missing'), {code:404}); if(options?.generation && String(options.generation)!==object.metadata.generation) throw Object.assign(new Error('Changed'),{code:412}); return [Buffer.from(object.bytes)]; },
-    delete: async config => { if (failDelete) throw new Error('Synthetic delete failure'); const object=objects.get(path); if(!object) throw Object.assign(new Error('Missing'),{code:404}); if(config?.ifGenerationMatch && String(config.ifGenerationMatch)!==object.metadata.generation) throw Object.assign(new Error('Changed'),{code:412}); objects.delete(path);deleted.push(path); },
+    delete: async () => {if(deleteGate)await deleteGate.promise; if (failDelete) throw new Error('Synthetic delete failure'); const object=objects.get(path); if(!object) throw Object.assign(new Error('Missing'),{code:404});const expected=options?.preconditionOpts?.ifGenerationMatch;if(expected && String(expected)!==object.metadata.generation) throw Object.assign(new Error('Changed'),{code:412}); objects.delete(path);deleted.push(path); },
   })};
   let authenticated = true;
   f = repositoryFixture(role, {'node:crypto':crypto,'firebase-admin/firestore':{Timestamp,FieldValue},'next/server':{NextResponse},'@/lib/server/firebase-admin':{adminDb:db,adminStorageBucket:()=>bucket},'@/lib/server/auth':{getAuthenticatedUser:async()=>authenticated?{uid:f.user.uid}:null,isApplicationUserActive:async()=>records.get(`users/${f.user.uid}`)?.status==='active'},...overrides});
@@ -43,5 +43,6 @@ export function serverRecordFixture(role = 'ADMIN', overrides = {}) {
   records.set(`${f.prefix}/members/${f.user.uid}`,{userId:f.user.uid,status:'active',role});
   records.set(`${f.prefix}/license/current`,{plan:'TEAM',status:'ACTIVE',maxUsers:3,subscriptionEndsAt:expiry});
   records.set(`${f.prefix}/clients/client`,{name:'Synthetic Client',status:'ACTIVE',archived:false});
-  return {...f,records,db,objects,deleted,loseNextCommit:()=>{loseCommit=true;},setAuthenticated:value=>{authenticated=value;},failSave:mode=>{failSave=mode;},failDelete:()=>{failDelete=true;}};
+  const gate=()=>{let release;const promise=new Promise(resolve=>{release=resolve;});return{promise,release};};
+  return {...f,records,db,objects,deleted,loseNextCommit:()=>{loseCommit=true;},setAuthenticated:value=>{authenticated=value;},failSave:mode=>{failSave=mode;},failDelete:value=>{failDelete=value!==false;},holdSave:()=>{saveGate=gate();return()=>{saveGate.release();saveGate=null;};},holdDelete:()=>{deleteGate=gate();return()=>{deleteGate.release();deleteGate=null;};}};
 }

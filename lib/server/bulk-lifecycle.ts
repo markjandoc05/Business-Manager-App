@@ -1,5 +1,6 @@
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
-import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { adminDb } from '@/lib/server/firebase-admin';
+import { removeClientDocumentFiles } from '@/lib/server/client-document-service';
 import { assertClientFinancialRetention } from '@/lib/server/financial-retention';
 import { evaluateLifecycle, type LifecycleDependencies, type LifecycleDecision, type LifecycleEntity } from '@/lib/record-lifecycle';
 
@@ -135,27 +136,8 @@ export async function getBulkLifecycleDecision(entity: LifecycleEntity, organiza
   return evaluateLifecycle(entity, action, plan.dependencies);
 }
 
-function isMissingStorageObject(error: unknown) {
-  if (!error || typeof error !== 'object' || !('code' in error)) return false;
-  const code = (error as { code?: unknown }).code;
-  return code === 404 || code === '404' || code === 'storage/object-not-found';
-}
-
-async function deleteStorageFiles(organizationId: string, clientId: string, documents: CleanupDocument[]) {
-  const prefix = `organizations/${organizationId}/clients/${clientId}/documents/`;
-  for (const { documentId, storagePath } of documents) {
-    const documentPrefix = `${prefix}${documentId}/`;
-    if (!storagePath.startsWith(documentPrefix) || storagePath.length <= documentPrefix.length) throw new Error('INVALID_DOCUMENT_REFERENCE');
-    try {
-      await adminStorageBucket().file(storagePath).delete();
-    } catch (error) {
-      if (!isMissingStorageObject(error)) throw new Error('STORAGE_DELETE_FAILED');
-    }
-  }
-}
-
-async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: string, recordId: string, plan: CleanupPlan) {
-  if (plan.documents.length > 0) await deleteStorageFiles(organizationId, recordId, plan.documents);
+async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: string, recordId: string, plan: CleanupPlan, uid: string) {
+  if (entity === 'Client') await removeClientDocumentFiles(organizationId, recordId, uid, plan.documents);
   const parentRef = adminDb.doc(`organizations/${organizationId}/${entity === 'Lead' ? 'leads' : 'clients'}/${recordId}`);
   await adminDb.runTransaction(async (transaction) => {
     const latest = await transaction.get(parentRef);
@@ -188,6 +170,8 @@ async function updateLifecycleState(entity: LifecycleEntity, organizationId: str
   await adminDb.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(parentRef);
     if (!snapshot.exists) throw new Error('NOT_FOUND');
+    const guard = entity === 'Client' ? await transaction.get(adminDb.doc(`organizations/${organizationId}/clientDocumentGuards/${recordId}`)) : null;
+    if (guard?.exists) throw new Error('Client document deletion is in progress. Retry that deletion before changing the Client.');
     const current = snapshot.data() || {};
     if (action === 'archive' && (current.archived === true || current.trashed === true)) throw new Error('RECORD_STATE');
     if (action === 'trash' && current.trashed === true) throw new Error('RECORD_STATE');
@@ -213,7 +197,7 @@ export async function executeBulkLifecycleAction(entity: LifecycleEntity, organi
         const cleanupCount = Object.values(decision.cleanupRecords).reduce((total, count) => total + count, 0);
         if (decision.outcome === 'BLOCKED') throw new Error(decision.reason);
         if (cleanupCount >= 450) throw new Error('Too many dependent records for one safe operation.');
-        await cleanupAndDeleteParent(entity, organizationId, id, plan);
+        await cleanupAndDeleteParent(entity, organizationId, id, plan, uid);
         results.push({ id, ok: true, decision });
       } else {
         const decision = await getBulkLifecycleDecision(entity, organizationId, id, action);

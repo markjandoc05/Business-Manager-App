@@ -40,6 +40,7 @@ const archivePayload = (actor) => ({ archived: true, archivedAt: serverTimestamp
 const restorePayload = { archived: false, archivedAt: null, archivedBy: null };
 
 before(async () => {
+  if (!/^(127\.0\.0\.1|localhost):\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw new Error('Loopback Firestore emulator required.');
   testEnv = await initializeTestEnvironment({ projectId: PROJECT_ID, firestore: { rules: fs.readFileSync('firestore.rules', 'utf8') } });
 });
 beforeEach(async () => { await testEnv.clearFirestore(); await seed(); });
@@ -56,13 +57,13 @@ test('ADMIN can archive and restore Client notes, but cannot bypass the server p
   assert.equal((await getDoc(noteRef)).exists(), true);
 });
 
-test('ADMIN can archive and restore Client document metadata, but cannot bypass the server permanent-delete endpoint', async () => {
+test('ADMIN document lifecycle requires the coordinated server endpoint', async () => {
   const db = testEnv.authenticatedContext(ADMIN).firestore();
   const documentRef = doc(db, `organizations/${ORG}/clients/client-a/documents/document-a`);
   await assertFails(deleteDoc(documentRef));
-  await assertSucceeds(updateDoc(documentRef, archivePayload(ADMIN)));
-  await assertSucceeds(updateDoc(documentRef, restorePayload));
-  await assertSucceeds(updateDoc(documentRef, archivePayload(ADMIN)));
+  await assertFails(updateDoc(documentRef, archivePayload(ADMIN)));
+  await assertFails(updateDoc(documentRef, restorePayload));
+  await assertFails(updateDoc(documentRef, archivePayload(ADMIN)));
   await assertFails(deleteDoc(documentRef));
   assert.equal((await getDoc(documentRef)).exists(), true);
 });
@@ -73,12 +74,12 @@ test('USER cannot archive or delete Client notes or document metadata', async ()
   await assertFails(updateDoc(doc(db, `organizations/${ORG}/clients/client-a/documents/document-a`), archivePayload(USER)));
 });
 
-test('MANAGER can archive and restore Client document metadata, but cannot bypass the server permanent-delete endpoint', async () => {
+test('MANAGER document lifecycle requires the coordinated server endpoint', async () => {
   const db = testEnv.authenticatedContext(MANAGER).firestore();
   const documentRef = doc(db, `organizations/${ORG}/clients/client-a/documents/document-a`);
-  await assertSucceeds(updateDoc(documentRef, archivePayload(MANAGER)));
-  await assertSucceeds(updateDoc(documentRef, restorePayload));
-  await assertSucceeds(updateDoc(documentRef, archivePayload(MANAGER)));
+  await assertFails(updateDoc(documentRef, archivePayload(MANAGER)));
+  await assertFails(updateDoc(documentRef, restorePayload));
+  await assertFails(updateDoc(documentRef, archivePayload(MANAGER)));
   await assertFails(deleteDoc(documentRef));
 });
 
@@ -121,4 +122,11 @@ test('Client parent lifecycle accepts canonical transitions and rejects arbitrar
   await assertFails(updateDoc(doc(userDb, `organizations/${ORG}/clients/client-a`), { status: 'DISABLED', updatedBy: USER }));
   await assertFails(updateDoc(doc(otherDb, `organizations/${ORG}/clients/client-a`), { status: 'DISABLED', updatedBy: OTHER_ORG_ADMIN }));
   await assertFails(updateDoc(doc(managerDb, `organizations/${ORG}/clients/client-a`), { status: 'ACTIVE', archived: true, archivedAt: null, archivedBy: null, updatedBy: MANAGER }));
+});
+
+test('server Client document deletion guard prevents browser restore or ID reuse',async()=>{
+  await testEnv.withSecurityRulesDisabled(async context=>{await context.firestore().doc(`organizations/${ORG}/clientDocumentGuards/client-a`).set({state:'DELETING',files:[]});});
+  const db=testEnv.authenticatedContext(ADMIN).firestore();
+  await assertFails(updateDoc(doc(db,`organizations/${ORG}/clients/client-a`),{name:'Changed',updatedBy:ADMIN}));
+  await assertSucceeds(getDoc(doc(db,`organizations/${ORG}/clients/client-a`)));
 });

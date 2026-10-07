@@ -35,7 +35,8 @@ export async function requireWorkspaceRecordAccess(transaction: Transaction, org
       || !Number.isInteger(l.maxUsers) || l.maxUsers < 1 || !['TRIAL', 'ACTIVE'].includes(l.status)
       || !(expiry instanceof Timestamp) || expiry.toMillis() < Date.now()
       || o.licenseStatus !== l.status || !(o.licenseExpiresAt instanceof Timestamp)
-      || o.licenseExpiresAt.toMillis() !== expiry.toMillis()) {
+      || o.licenseExpiresAt.toMillis() !== expiry.toMillis()
+      || !((l.status === 'TRIAL' && o.status === 'trial') || (l.status === 'ACTIVE' && o.status === 'active'))) {
       throw new WorkspaceRecordError('Changes are unavailable for the current workspace license.', 409);
     }
   }

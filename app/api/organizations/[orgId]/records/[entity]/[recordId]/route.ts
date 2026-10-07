@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
-import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { adminDb } from '@/lib/server/firebase-admin';
+import { removeClientDocumentFiles } from '@/lib/server/client-document-service';
+import { WorkspaceRecordError } from '@/lib/server/workspace-record-access';
 import { assertClientFinancialRetention } from '@/lib/server/financial-retention';
 import { canInspectLifecycleRecord } from '@/lib/server/lifecycle-access';
 import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
@@ -175,27 +177,8 @@ async function getDecision(entity: LifecycleEntity, organizationId: string, reco
   return { plan, decision: evaluateLifecycle(entity, action, plan.dependencies) };
 }
 
-function isMissingStorageObject(error: unknown) {
-  if (!error || typeof error !== 'object' || !('code' in error)) return false;
-  const code = (error as { code?: unknown }).code;
-  return code === 404 || code === '404' || code === 'storage/object-not-found';
-}
-
-async function deleteStorageFiles(organizationId: string, clientId: string, documents: CleanupDocument[]) {
-  const prefix = `organizations/${organizationId}/clients/${clientId}/documents/`;
-  for (const { documentId, storagePath } of documents) {
-    const documentPrefix = `${prefix}${documentId}/`;
-    if (!storagePath.startsWith(documentPrefix) || storagePath.length <= documentPrefix.length) throw new Error('INVALID_DOCUMENT_REFERENCE');
-    try {
-      await adminStorageBucket().file(storagePath).delete();
-    } catch (error) {
-      if (!isMissingStorageObject(error)) throw new Error('STORAGE_DELETE_FAILED');
-    }
-  }
-}
-
-async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: string, recordId: string, plan: CleanupPlan) {
-  if (plan.documents.length > 0) await deleteStorageFiles(organizationId, recordId, plan.documents);
+async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: string, recordId: string, plan: CleanupPlan, uid: string) {
+  if (entity === 'Client') await removeClientDocumentFiles(organizationId, recordId, uid, plan.documents);
   const parentRef = adminDb.doc(`organizations/${organizationId}/${entity === 'Lead' ? 'leads' : 'clients'}/${recordId}`);
   try {
     await adminDb.runTransaction(async (transaction) => {
@@ -277,9 +260,10 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     if (decision.outcome === 'BLOCKED') return response(409, { error: 'Permanent deletion is blocked.', reason: decision.reason, affectedRecords: decision.affectedRecords, blockingRecords: decision.blockingRecords, preservedRecords: decision.preservedRecords, cleanupRecords: decision.cleanupRecords, recommendedAction: decision.recommendedAction });
     const cleanupCount = Object.values(decision.cleanupRecords).reduce((total, count) => total + count, 0);
     if (cleanupCount >= 450) return response(409, { error: 'Permanent deletion is blocked because it has too many dependent records for one safe operation.', recommendedAction: 'Remove eligible child records individually, then try again.' });
-    await cleanupAndDeleteParent(entity, orgId, recordId, plan);
+    await cleanupAndDeleteParent(entity, orgId, recordId, plan, uid);
     return NextResponse.json({ ok: true, decision });
   } catch (error) {
+    if (error instanceof WorkspaceRecordError) return response(error.status, { error: error.message });
     if (error instanceof Error && error.message === 'FINANCIAL_REFERENCES') return response(409, { error: 'Permanent deletion is blocked by recorded financial history. Keep the Client archived or in Trash.' });
     if (error instanceof Error && error.message === 'INVALID_DOCUMENT_REFERENCE') return response(409, { error: 'Permanent deletion is blocked because a document has an invalid stored file reference.', recommendedAction: 'Repair or remove the document individually, then try again.' });
     if (error instanceof Error && error.message === 'STORAGE_DELETE_FAILED') return response(502, { error: 'Unable to delete a stored document file. No success was reported; please try again.' });
