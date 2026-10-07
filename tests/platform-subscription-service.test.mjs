@@ -123,7 +123,7 @@ test('trial provisioning omits blank optional contact fields', async () => {
 test('the same attempt key is reused across retries and idempotent Platform success remains successful', async () => {
   const key = 'v1234567-1234-4123-8123-123456789abc';
   const { service, calls } = serviceFor(() => success({
-    workspaceId: 'workspace-1', organizationId: 'organization-1', productCode: 'standard', legacy: false, idempotent: true, provisioningStatus: 'PROVISIONED', license: trialLicense,
+    workspaceId: 'workspace-1', organizationId: 'organization-1', productCode: 'standard', legacy: false, idempotent: true, provisioningStatus: 'REUSED', license: trialLicense,
   }));
   const request = { planCode: 'standard', idempotencyKey: key, workspace: { name: 'Acme', businessType: 'Agency', phone: '', website: '', currency: 'USD', timezone: 'UTC' } };
   assert.equal((await service.startTrial(request)).idempotent, true);
@@ -167,5 +167,20 @@ test('idempotency state survives retry and is replaced only for a changed review
     assert.notEqual(getOrCreateProvisioningIdempotencyKey('user-1', changed), nextKey);
   } finally {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
+  }
+});
+
+test('actual REUSED responses preserve current license state and require the replay flag', async () => {
+  const request = { planCode: 'standard', idempotencyKey: 'v1234567-1234-4123-8123-123456789abc', workspace: { name: 'Acme', businessType: 'Agency', phone: '', website: '', currency: 'USD', timezone: 'UTC' } };
+  for (const status of ['ACTIVE', 'EXPIRED', 'SUSPENDED']) {
+    const license = { ...trialLicense, plan: 'STARTER', status, subscriptionStartedAt: '2026-09-28T00:00:00.000Z', expirationDate: '2027-09-28T00:00:00.000Z' };
+    const { service } = serviceFor(() => success({workspaceId:'workspace-1',organizationId:'organization-1',productCode:'standard',legacy:false,idempotent:true,provisioningStatus:'REUSED',license}));
+    const result=await service.startTrial(request);
+    assert.equal(result.provisioningStatus,'REUSED');
+    assert.equal(result.license.status,status);
+  }
+  for (const override of [{idempotent:false},{productCode:'foreign_product'},{legacy:true}]) {
+    const { service } = serviceFor(() => success({workspaceId:'workspace-1',organizationId:'organization-1',productCode:'standard',legacy:false,idempotent:true,provisioningStatus:'REUSED',license:trialLicense,...override}));
+    await assert.rejects(service.startTrial(request), e=>e instanceof PlatformSubscriptionError&&e.code==='INVALID_RESPONSE');
   }
 });

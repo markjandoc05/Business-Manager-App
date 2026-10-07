@@ -70,7 +70,7 @@ export interface StartTrialResult {
   productCode: string;
   legacy: false;
   idempotent: boolean;
-  provisioningStatus: 'PROVISIONED';
+  provisioningStatus: 'PROVISIONED' | 'REUSED';
   license: LicenseStatus;
 }
 
@@ -223,9 +223,10 @@ function parseProvisioning(value: unknown, requestedPlanCode: string): StartTria
     || data.productCode !== requestedPlanCode
     || data.legacy !== false
     || typeof data.idempotent !== 'boolean'
-    || data.provisioningStatus !== 'PROVISIONED') throw new PlatformSubscriptionError('INVALID_RESPONSE', 'The Platform returned an invalid provisioning response.');
+    || !['PROVISIONED', 'REUSED'].includes(data.provisioningStatus as string)
+    || (data.provisioningStatus === 'REUSED' && data.idempotent !== true)) throw new PlatformSubscriptionError('INVALID_RESPONSE', 'The Platform returned an invalid provisioning response.');
   const license = parseLicense(data.license, data.productCode);
-  if (license.plan !== 'TRIAL' || license.status !== 'TRIAL' || !validDate(license.trialStartedAt) || !validDate(license.trialEndsAt) || !validDate(license.expirationDate)) {
+  if (data.provisioningStatus === 'PROVISIONED' && (license.plan !== 'TRIAL' || license.status !== 'TRIAL' || !validDate(license.trialStartedAt) || !validDate(license.trialEndsAt) || !validDate(license.expirationDate))) {
     throw new PlatformSubscriptionError('INVALID_RESPONSE', 'The Platform returned an invalid trial provision.');
   }
   return {
@@ -234,7 +235,7 @@ function parseProvisioning(value: unknown, requestedPlanCode: string): StartTria
     productCode: data.productCode,
     legacy: false,
     idempotent: data.idempotent,
-    provisioningStatus: 'PROVISIONED',
+    provisioningStatus: data.provisioningStatus as StartTrialResult['provisioningStatus'],
     license,
   };
 }
