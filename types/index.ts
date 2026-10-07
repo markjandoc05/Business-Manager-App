@@ -110,6 +110,7 @@ export type CatalogItemStatus = 'ACTIVE' | 'INACTIVE';
 export type CatalogCategoryStatus = 'ACTIVE' | 'INACTIVE';
 
 export interface CatalogCategory {
+  nameConflict?: boolean;
   id: string;
   name: string;
   normalizedName: string;

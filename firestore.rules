@@ -475,32 +475,16 @@ service cloud.firestore {
 
     match /organizations/{organizationId}/catalogCategories/{categoryId} {
       allow read: if organizationCanView(organizationId);
-      allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'normalizedName', 'type', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
-        && request.resource.data.name is string
-        && request.resource.data.name != ''
-        && request.resource.data.normalizedName is string
-        && request.resource.data.normalizedName != ''
-        && request.resource.data.type in ['PRODUCT', 'SERVICE']
-        && request.resource.data.status in ['ACTIVE', 'INACTIVE']
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt is timestamp
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt is timestamp;
-      allow update: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['name', 'normalizedName', 'type', 'status', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt'])
-        && request.resource.data.name is string
-        && request.resource.data.name != ''
-        && request.resource.data.normalizedName is string
-        && request.resource.data.normalizedName != ''
-        && request.resource.data.type in ['PRODUCT', 'SERVICE']
-        && request.resource.data.type == resource.data.type
-        && request.resource.data.status in ['ACTIVE', 'INACTIVE']
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
-      allow delete: if false;
+      // Names and request replay are serialized by the authenticated server.
+      // Legacy duplicate rows remain readable; browser writes cannot bypass it.
+      allow create, update, delete: if false;
+    }
+
+    match /organizations/{organizationId}/catalogCategoryNames/{nameId} {
+      allow read, write: if false;
+    }
+    match /organizations/{organizationId}/catalogCategoryOperations/{operationId} {
+      allow read, write: if false;
     }
 
     match /organizations/{organizationId}/catalogItems/{itemId} {

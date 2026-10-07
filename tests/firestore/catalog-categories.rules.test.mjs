@@ -40,27 +40,34 @@ async function seed() {
 }
 
 before(async () => {
+  if (!/^(127\.0\.0\.1|localhost):\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST || '')) throw new Error('Loopback Firestore emulator required.');
   testEnv = await initializeTestEnvironment({ projectId: PROJECT_ID, firestore: { rules: fs.readFileSync('firestore.rules', 'utf8') } });
 });
 beforeEach(async () => { await testEnv.clearFirestore(); await seed(); });
 after(async () => testEnv.cleanup());
 
-test('ADMIN and MANAGER can create and update reusable categories', async () => {
-  const adminDb = testEnv.authenticatedContext(ADMIN).firestore();
-  const foodRef = doc(adminDb, `organizations/${ORG}/catalogCategories/food`);
-  await assertSucceeds(setDoc(foodRef, categoryData(ADMIN)));
-  await assertSucceeds(updateDoc(foodRef, { name: 'Food & Beverage', normalizedName: 'food & beverage', status: 'INACTIVE', updatedBy: ADMIN, updatedAt: serverTimestamp() }));
-  const managerDb = testEnv.authenticatedContext(MANAGER).firestore();
-  await assertSucceeds(setDoc(doc(managerDb, `organizations/${ORG}/catalogCategories/consulting`), categoryData(MANAGER, { name: 'Consulting', normalizedName: 'consulting', type: 'SERVICE' })));
-  const saved = await getDoc(foodRef);
-  assert.equal(saved.data()?.status, 'INACTIVE');
+test('all browser category/reservation/operation writes are denied; existing category reads remain', async () => {
+  await testEnv.withSecurityRulesDisabled(async context => { await context.firestore().doc(`organizations/${ORG}/catalogCategories/food`).set(categoryData(ADMIN)); });
+  for (const uid of [ADMIN, MANAGER, USER]) {
+    const db=testEnv.authenticatedContext(uid).firestore();
+    await assertSucceeds(getDoc(doc(db, `organizations/${ORG}/catalogCategories/food`)));
+    await assertFails(setDoc(doc(db, `organizations/${ORG}/catalogCategories/new`), categoryData(uid)));
+    await assertFails(updateDoc(doc(db, `organizations/${ORG}/catalogCategories/food`), {name:'Renamed', normalizedName:'renamed'}));
+    for (const collectionName of ['catalogCategoryNames','catalogCategoryOperations']) {
+      await assertFails(setDoc(doc(db, `organizations/${ORG}/${collectionName}/key`), {categoryId:'food'}));
+      await assertFails(getDoc(doc(db, `organizations/${ORG}/${collectionName}/key`)));
+    }
+  }
 });
 
 test('the Catalog category query can list categories for all organization roles', async () => {
   const adminDb = testEnv.authenticatedContext(ADMIN).firestore();
   const path = `organizations/${ORG}/catalogCategories`;
-  await setDoc(doc(adminDb, `${path}/food`), categoryData(ADMIN));
-  await setDoc(doc(adminDb, `${path}/consulting`), categoryData(ADMIN, { name: 'Consulting', normalizedName: 'consulting', type: 'SERVICE' }));
+  await testEnv.withSecurityRulesDisabled(async context => {
+    const db=context.firestore();
+    await db.doc(`${path}/food`).set(categoryData(ADMIN));
+    await db.doc(`${path}/consulting`).set(categoryData(ADMIN, {name:'Consulting', normalizedName:'consulting', type:'SERVICE'}));
+  });
   const categoryQuery = (db) => query(collection(db, 'organizations', ORG, 'catalogCategories'), orderBy('name', 'asc'));
   const adminResult = await getDocs(categoryQuery(adminDb));
   assert.deepEqual(adminResult.docs.map((category) => category.id), ['consulting', 'food']);
@@ -73,7 +80,7 @@ test('the Catalog category query can list categories for all organization roles'
 test('USER cannot manage categories and malformed, cross-tenant, or destructive writes fail', async () => {
   const adminDb = testEnv.authenticatedContext(ADMIN).firestore();
   const foodRef = doc(adminDb, `organizations/${ORG}/catalogCategories/food`);
-  await setDoc(foodRef, categoryData(ADMIN));
+  await testEnv.withSecurityRulesDisabled(async context => { await context.firestore().doc(`organizations/${ORG}/catalogCategories/food`).set(categoryData(ADMIN)); });
   const userDb = testEnv.authenticatedContext(USER).firestore();
   await assertSucceeds(getDoc(doc(userDb, `organizations/${ORG}/catalogCategories/food`)));
   await assertFails(setDoc(doc(userDb, `organizations/${ORG}/catalogCategories/user-category`), categoryData(USER)));
