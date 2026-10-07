@@ -17,6 +17,17 @@ import { incrementStartupCounter } from '@/lib/startupTiming';
 export const PIPELINE_DEAL_LIMIT = 100;
 export const DEAL_PAGE_SIZE = 25;
 
+/** Client Details pages its own history, independently of the global Pipeline feed. */
+export async function listClientDealsPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, archived = false): Promise<PageResult<Deal>> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const snapshot = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'deals'),
+    where('clientId', '==', clientId), where('archived', '==', archived),
+    ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []),
+    orderBy('createdAt', 'desc'), ...(cursor ? [startAfter(cursor)] : []), limit(DEAL_PAGE_SIZE + 1)));
+  const page = splitLookaheadPage(snapshot.docs, DEAL_PAGE_SIZE);
+  return { items: page.items.map((item) => mapDeal(item.id, item.data())), nextCursor: page.hasMore ? page.items.at(-1) || null : null, hasMore: page.hasMore };
+}
+
 export type DealStatus = 'Active' | 'Won' | 'Lost';
 export type DealInput = Pick<Deal, 'title' | 'clientId' | 'leadId' | 'value' | 'stage' | 'expectedCloseDate' | 'productServiceName' | 'notes' | 'assignedToUid' | 'assignedToName' | 'lossReason' | 'items'>;
 

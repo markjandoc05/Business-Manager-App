@@ -8,7 +8,7 @@ import { addClientNote, archiveClient as archiveClientRepository, archiveClientD
 import { archiveLead as archiveLeadRepository, convertLeadToClient as convertLeadRepository, createLead as createLeadRepository, listArchivedLeadsPage, listLeadsPage, listTrashedLeadsPage, permanentlyDeleteLead as permanentlyDeleteLeadRepository, restoreLead as restoreLeadRepository, trashLead as trashLeadRepository, updateLead as updateLeadRepository, updateLeadStatus as updateLeadStatusRepository, type LeadInput, type LeadListFilters } from '@/lib/repositories/leads';
 import { archiveDeal as archiveDealRepository, createDeal as createDealRepository, getDealById, listArchivedDealsPage, listDealsPage, permanentlyDeleteDeal as permanentlyDeleteDealRepository, PIPELINE_DEAL_LIMIT, restoreDeal as restoreDealRepository, updateDeal as updateDealRepository, updateDealStage as updateDealStageRepository } from '@/lib/repositories/deals';
 import { getDealValue } from '@/lib/deal-items';
-import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, listArchivedTasksPage, listLeadTasks, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
+import { archiveTask as archiveTaskRepository, completeTask as completeTaskRepository, createTask as createTaskRepository, getTaskById as getTaskByIdRepository, listArchivedTasksPage, listLeadTasks, listTasksPage, permanentlyDeleteTask as permanentlyDeleteTaskRepository, restoreTask as restoreTaskRepository, updateTask as updateTaskRepository, type TaskListFilters } from '@/lib/repositories/tasks';
 import { defaultSettings, loadSettings, SettingsLoadError, SettingsPersistenceError, updateSettings as updateSettingsRepository } from '@/lib/repositories/settings';
 import { invalidateDashboardMetrics } from '@/lib/repositories/dashboard';
 import { listActivities } from '@/lib/repositories/activities';
@@ -1227,12 +1227,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const completeTask = async (taskId: string) => {
     if (!user) return;
     requireWritableLicense();
-    const task = tasks.find(item => item.id === taskId);
-    if (!task) return;
-    const nextStatus = task.status === 'Pending' ? 'Completed' : 'Pending';
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    await completeTaskRepository(user, currentOrganizationId, taskId, nextStatus);
-    invalidateDashboardMetrics(currentOrganizationId);
+    const organizationId = currentOrganizationId;
+    const task = (tasksOrganizationId === organizationId ? tasks.find(item => item.id === taskId) : undefined) || await getTaskByIdRepository(user, organizationId, taskId);
+    if (organizationId !== currentOrganizationRef.current) throw new Error('The active workspace changed. Please reopen the Task.');
+    const nextStatus = task.status === 'Pending' ? 'Completed' : 'Pending';
+    await completeTaskRepository(user, organizationId, taskId, nextStatus);
+    invalidateDashboardMetrics(organizationId);
+    if (organizationId !== currentOrganizationRef.current) return;
     setTasks(prev => prev.map(item => item.id === taskId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
     setLeadTasks((prev) => prev.map(item => item.id === taskId ? { ...item, status: nextStatus, updatedAt: new Date().toISOString() } : item));
   };

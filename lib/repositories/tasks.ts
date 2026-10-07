@@ -7,10 +7,22 @@ import { resolveAssignment } from '@/lib/ownership';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
+import { splitLookaheadPage } from '@/lib/repositories/pagination';
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import { normalizeTaskSchedule } from '@/lib/task-schedule';
 
 export const TASK_PAGE_SIZE = 25;
+
+/** Cursor history includes Pending and Completed Tasks for this Client only. */
+export async function listClientTasksPage(user: AppUser | null, organizationId: string, clientId: string, cursor: FirestoreCursor = null, archived = false): Promise<PageResult<Task>> {
+  const { membership } = await requireOrganizationAccess(user, organizationId);
+  const snapshot = await getDocs(query(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'),
+    where('relatedTo.type', '==', 'Client'), where('relatedTo.id', '==', clientId), where('archived', '==', archived),
+    ...(membership.role === 'USER' ? [where('assignedToUid', '==', user?.uid)] : []),
+    orderBy('createdAt', 'desc'), ...(cursor ? [startAfter(cursor)] : []), limit(TASK_PAGE_SIZE + 1)));
+  const page = splitLookaheadPage(snapshot.docs, TASK_PAGE_SIZE);
+  return { items: page.items.map((item) => mapTask(item.id, item.data())), nextCursor: page.hasMore ? page.items.at(-1) || null : null, hasMore: page.hasMore };
+}
 export type TaskListFilters = { status?: Task['status'] | 'All'; priority?: Task['priority'] | 'All'; due?: 'Today' | 'Upcoming' | 'Overdue' | 'All'; type?: Task['type'] | 'All' };
 
 export type TaskInput = Pick<Task, 'title' | 'description' | 'type' | 'dueDate' | 'priority' | 'relatedTo' | 'assignedToUid' | 'assignedToName'>;

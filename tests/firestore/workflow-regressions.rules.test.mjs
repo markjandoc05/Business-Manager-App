@@ -50,3 +50,29 @@ test('Task UTC schedule and General relation persist after reload and former par
   await repository.updateTask(f.user, org, task.id, { ...input, relatedTo: undefined });
   assert.equal((await repository.getTaskById(f.user, org, task.id)).relatedTo, undefined);
 });
+
+test('real Client history queries reach older active and archived rows with USER assignment boundaries', async () => {
+  await environment.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore(); const writes = [];
+    for (const archived of [false, true]) for (let i = 0; i < (archived ? 20 : 70); i++) {
+      const name = `history-${archived}-${i}`;
+      const common = { archived, assignedToUid: i % 2 ? 'another-user' : uid, createdAt: sdk.Timestamp.fromMillis(1000000 + i) };
+      writes.push(db.doc(`organizations/${org}/deals/${name}`).set({ ...common, clientId: 'client', title: name, status: 'Active', stage: 'New' }));
+      writes.push(db.doc(`organizations/${org}/tasks/${name}`).set({ ...common, relatedTo: { type: 'Client', id: 'client' }, title: name, status: 'Pending' }));
+    }
+    // The setup Deal belongs to the same Client, so remove it from this count fixture.
+    writes.push(db.doc(`organizations/${org}/deals/deal`).delete()); await Promise.all(writes);
+  });
+  for (const role of ['ADMIN', 'USER']) {
+    await environment.withSecurityRulesDisabled((context) => context.firestore().doc(`organizations/${org}/members/${uid}`).update({ role }));
+    const db = environment.authenticatedContext(uid).firestore();
+    const f = repositoryFixture(role, { 'firebase/firestore': sdk, '@/lib/firebase/client': { db } });
+    const deals = f.load('lib/repositories/deals.ts'); const tasks = f.load('lib/repositories/tasks.ts');
+    for (const loader of [deals.listClientDealsPage, tasks.listClientTasksPage]) for (const archived of [false, true]) {
+      let cursor = null; const ids = [];
+      do { const page = await loader(f.user, org, 'client', cursor, archived); ids.push(...Array.from(page.items, (item) => item.id)); cursor = page.nextCursor; } while (cursor);
+      assert.equal(ids.length, (archived ? 20 : 70) / (role === 'USER' ? 2 : 1));
+      assert.equal(new Set(ids).size, ids.length);
+    }
+  }
+});
