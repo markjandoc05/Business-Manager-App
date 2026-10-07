@@ -23,8 +23,13 @@ export async function authenticatedFetch(input: RequestInfo | URL, init?: Reques
     response = await requestWithToken(input, init, false);
     if (response.status === 401) response = await requestWithToken(input, init, true);
   } catch (error) {
-    clearCachedRequests();
-    void firebaseSignOut(auth).catch(() => undefined);
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+    if (['auth/user-disabled', 'auth/user-token-expired', 'auth/invalid-user-token', 'auth/user-not-found'].includes(String(code))) {
+      clearCachedRequests();
+      void firebaseSignOut(auth).catch(() => undefined);
+    }
+    // A lost API response or unavailable token service does not establish
+    // session revocation. Keep the user and pending operation available to retry.
     throw error;
   }
 

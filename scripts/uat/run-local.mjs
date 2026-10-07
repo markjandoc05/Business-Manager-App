@@ -14,6 +14,7 @@ const testFiles = [
   'tests/uat/authenticated-smoke.spec.mjs',
   'tests/uat/deal-client-selector.spec.mjs',
   'tests/uat/mobile-responsiveness.spec.mjs',
+  'tests/uat/stabilization-workflows.spec.mjs',
 ];
 
 function assertLocalCredentialPath() {

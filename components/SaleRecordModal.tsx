@@ -122,7 +122,7 @@ export function RecordSaleModal({ user, organizationId, currency, timeZone = 'UT
     try {
       normalizeSaleLineItems(form.items);
       const payment = normalizeSalePayment(total, form.paymentStatus, form.paymentMethod, form.amountPaid);
-      await onSubmit({ ...form, ...payment, paymentMethod: payment.paymentMethod, amountPaid: payment.amountPaid });
+      await onSubmit({ ...form, paymentStatus: payment.paymentStatus, paymentMethod: payment.paymentMethod, amountPaid: payment.amountPaid });
     } catch (cause) {
       const message = userFacingErrorMessage(cause, 'Unable to record sale.');
       if (/^Sale item|^A sale must include|^Add each catalog item/.test(message)) setProductsExpanded(true);

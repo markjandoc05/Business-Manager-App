@@ -78,7 +78,11 @@ export function repositoryFixture(role = 'ADMIN', overrides = {}) {
       const target = name.startsWith('@/') ? path.resolve(name.slice(2)) : path.resolve(path.dirname(filename), name);
       return load(target.endsWith('.ts') ? target : `${target}.ts`);
     };
-    vm.runInNewContext(compiled, { module: fixtureModule, exports: fixtureModule.exports, require, URL, Date, console, Error, Promise, Number, String, Object, Set, Map, Math, Buffer, crypto, Headers, Response, File, FormData, Blob, Uint8Array, TextEncoder, performance, process: { env: {} } }, { filename });
+    // The native SDK validates plain objects and arrays by their prototypes.
+    // Execute in its realm so repository payloads are accepted exactly as they
+    // are in the app, while keeping module imports and environment controlled.
+    const evaluate = vm.runInThisContext(`(function(module, exports, require, process) {\n${compiled}\n})`, { filename });
+    evaluate(fixtureModule, fixtureModule.exports, require, { env: {} });
     return fixtureModule.exports;
   }
   const prefix = `organizations/${org}`;

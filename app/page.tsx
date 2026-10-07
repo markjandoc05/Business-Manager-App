@@ -595,7 +595,7 @@ export default function DashboardPage() {
 
       {/* Main Grid: Follow-ups Due & Pipeline Overview */}
       <div className="grid items-stretch gap-4 lg:grid-cols-2">
-        <MovableDashboardCard cardId="pipeline" order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
+        <MovableDashboardCard cardId="pipeline" reorderable={Boolean(pipelineStageSummary)} order={primaryCardOrder.indexOf('pipeline')} onDragStart={setDraggingCard} onDragEnd={() => setDraggingCard(null)} onDrop={() => moveDashboardCard('pipeline', 'primary')}>
           {pipelineMetricsError && <p className="mb-2 rounded-lg bg-[color-mix(in_srgb,var(--app-danger)_9%,white)] p-2 text-xs text-[var(--app-danger)]" role="alert">{pipelineMetricsError} <button type="button" className="font-semibold underline" onClick={() => void reloadPipelineStageSummary()}>Retry</button></p>}
           {pipelineStageSummary ? <PipelineFunnel deals={deals} currency={settings.currency} stageSummary={pipelineStageSummary} /> : !pipelineMetricsError && <p role="status" className="text-sm text-[var(--app-muted)]">Loading Pipeline totals…</p>}
         </MovableDashboardCard>
@@ -1001,11 +1001,11 @@ function reorderCards<T extends string>(cards: T[], source: T, target: T) {
   return next;
 }
 
-function MovableDashboardCard({ cardId, order, onDragStart, onDragEnd, onDrop, children }: { cardId: string; order: number; onDragStart: (cardId: string) => void; onDragEnd: () => void; onDrop: () => void; children: React.ReactNode }) {
-  return <div style={{ order }} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); onDrop(); }} className="kpi-drag-container relative min-w-0">
-    <button type="button" draggable aria-label={`Hold and drag ${cardId} to reorder dashboard cards`} title="Hold to reveal, then drag to reorder" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="dashboard-card-drag-handle absolute right-3 top-3 z-20 cursor-grab rounded-md p-1 text-[var(--app-tertiary)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-muted)] active:cursor-grabbing focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
+function MovableDashboardCard({ cardId, order, onDragStart, onDragEnd, onDrop, children, reorderable = true }: { cardId: string; order: number; onDragStart: (cardId: string) => void; onDragEnd: () => void; onDrop: () => void; children: React.ReactNode; reorderable?: boolean }) {
+  return <div style={{ order }} onDragOver={(event) => { if (reorderable) event.preventDefault(); }} onDrop={(event) => { if (reorderable) { event.preventDefault(); onDrop(); } }} className="kpi-drag-container relative min-w-0">
+    {reorderable && <button type="button" draggable aria-label={`Hold and drag ${cardId} to reorder dashboard cards`} title="Hold to reveal, then drag to reorder" onDragStart={() => onDragStart(cardId)} onDragEnd={onDragEnd} className="dashboard-card-drag-handle absolute right-3 top-3 z-20 cursor-grab rounded-md p-1 text-[var(--app-tertiary)] opacity-0 transition-[opacity,background-color,color] duration-150 hover:bg-[var(--app-surface-subtle)] hover:text-[var(--app-muted)] active:cursor-grabbing focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-primary)]/30">
       <GripVertical size={16} />
-    </button>
+    </button>}
     {children}
   </div>;
 }

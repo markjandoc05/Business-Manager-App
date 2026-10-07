@@ -1,6 +1,21 @@
 import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
+function parseCSVRows(csv) {
+  return csv.split('\n').map((row) => {
+    const cells = []; let field = ''; let quoted = false;
+    for (let index = 0; index < row.length; index++) {
+      const character = row[index];
+      if (character === '"') {
+        if (quoted && row[index + 1] === '"') { field += '"'; index++; }
+        else quoted = !quoted;
+      } else if (character === ',' && !quoted) { cells.push(field); field = ''; }
+      else field += character;
+    }
+    cells.push(field); return cells;
+  });
+}
+
 const PROJECT_ID = 'demo-bsm-client-app';
 const credentialsPath = process.env.BSM_UAT_CREDENTIALS_FILE;
 if (!credentialsPath) throw new Error('BSM_UAT_CREDENTIALS_FILE is required for mobile responsiveness UAT.');
@@ -795,6 +810,7 @@ async function assertMobileControlScale(scope, label) {
       padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
       faceHeight: face.content !== 'none' ? parseFloat(face.height) : null,
       action: element.classList.contains('app-button'), iconOnly,
+      compactTableSort: element.classList.contains('mobile-sort-action') && Boolean(element.closest('th')),
       labelled: !iconOnly || Boolean(element.getAttribute('aria-label')),
       overflow: element.scrollWidth - element.clientWidth,
       icons: [...element.querySelectorAll('svg')].map((icon) => ({ width: icon.getBoundingClientRect().width, height: icon.getBoundingClientRect().height })),
@@ -815,7 +831,7 @@ async function assertMobileControlScale(scope, label) {
     if (!control.iconOnly) {
       expect.soft(control.fontSize, `${message} text`).toBe('14px');
       expect.soft(control.weight, `${message} weight`).toBe('600');
-      expect.soft(control.gap, `${message} icon gap`).toBe('6px');
+      expect.soft(control.gap, `${message} icon gap`).toBe(control.compactTableSort ? '4px' : '6px');
     }
     if (control.action && !control.iconOnly) {
       expect.soft(control.padding, `${message} padding`).toEqual(['6px', '12px', '6px', '12px']);
@@ -1136,9 +1152,11 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 521, height: 1334 
     await expect(dialog).toHaveCount(0);
     expect(download.suggestedFilename()).toBe('report.csv');
     const csv = readFileSync(await download.path(), 'utf8');
-    const rows = csv.split('\n').map((row) => row.split(','));
-    expect(rows.map(([label]) => label)).toEqual(['Metric', 'Total Leads', 'Clients', 'Converted Leads', 'Active Deals', 'Won Deals', 'Lost Deals', 'Total Sales', 'Transactions', 'Amount Paid', 'Outstanding', 'Pipeline Value']);
-    expect(rows.find(([label]) => label === 'Total Sales')[1]).toBe(String(expectedTotalSales));
+    const rows = parseCSVRows(csv);
+    expect(rows.map(([label]) => label)).toEqual(['Metric', 'Workspace timezone', 'Start date (inclusive)', 'End date (exclusive)', 'Display currency (no conversion)', 'Sales and payment scope', 'Historical interpretation', 'Total Leads (created in period)', 'Clients (current)', 'Converted Leads (created in period)', 'Active Deals (current)', 'Won Deals (closed in period)', 'Lost Deals (closed in period)', 'Total Sales (Sale-date cohort)', 'Transactions (Sale-date cohort)', 'Paid to date (Sale-date cohort)', 'Outstanding (Sale-date cohort)', 'Pipeline Value (current)']);
+    expect(rows.find(([label]) => label === 'Workspace timezone')[1]).toBe('Asia/Manila');
+    expect(rows.find(([label]) => label === 'Display currency (no conversion)')[1]).toBe('PHP');
+    expect(rows.find(([label]) => label === 'Total Sales (Sale-date cohort)')[1]).toBe(String(expectedTotalSales));
     expect(await page.evaluate(() => window.exportFileCreations)).toBe(1);
     expect(downloads).toHaveLength(1);
   });
@@ -1165,6 +1183,6 @@ test('Report export confirmation cancels when the active workspace changes', asy
     dialog.getByRole('button', { name: 'Export CSV', exact: true }).click(),
   ]);
   const csv = readFileSync(await download.path(), 'utf8');
-  expect(csv).toContain('Total Sales,0\n');
+  expect(parseCSVRows(csv).find(([label]) => label === 'Total Sales (Sale-date cohort)')[1]).toBe('0');
   expect(downloads).toHaveLength(1);
 });
