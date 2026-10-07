@@ -11,6 +11,7 @@ import { addActivityToBatch } from '@/lib/repositories/activityEvents';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
 import { getLifecycleDecision, permanentlyDeleteRecord } from '@/lib/repositories/lifecycle';
+import { matchesClientSearch } from '@/lib/client-search';
 
 export const CLIENT_PAGE_SIZE = 25;
 
@@ -82,7 +83,7 @@ export async function listClientsPage(user: AppUser | null, organizationId: stri
       lastRawCursor = pageSnapshot.docs.at(-1) || null;
       for (const clientDoc of pageSnapshot.docs) {
         const client = mapClient(clientDoc.id, clientDoc.data());
-        if (!client.archived && !client.trashed && [client.name, client.company || '', client.email, client.phone].some((value) => value.toLowerCase().includes(term))) {
+        if (!client.archived && !client.trashed && matchesClientSearch(client, term)) {
           matches.push(client); matchingCursors.push(clientDoc);
         }
         if (matches.length > pageSize) break;
@@ -101,7 +102,7 @@ export async function listClientsPage(user: AppUser | null, organizationId: stri
   const items = snapshot.docs
     .map((clientDoc) => mapClient(clientDoc.id, clientDoc.data()))
     .filter((client) => !client.archived && !client.trashed)
-    .filter((client) => !term || [client.name, client.company || '', client.email, client.phone].some((value) => value.toLowerCase().includes(term)));
+    .filter((client) => matchesClientSearch(client, term));
   return { items, nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null, hasMore: snapshot.docs.length === pageSize };
 }
 

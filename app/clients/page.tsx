@@ -54,6 +54,7 @@ import { getDealProductServiceName, getDealValue } from '@/lib/deal-items';
 import type { ClientTabCounts } from '@/lib/repositories/clientCounts';
 import { listActivitiesForClientPage } from '@/lib/repositories/activities';
 import { activityBelongsToClient } from '@/lib/activity-history';
+import { matchesClientSearch } from '@/lib/client-search';
 import { isLegacyTaskSchedule } from '@/lib/task-schedule';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
@@ -595,7 +596,7 @@ export default function ClientsPage() {
     const createdAt = Date.parse(client.createdAt);
     const fromTime = clientSinceFrom ? Date.parse(`${clientSinceFrom}T00:00:00`) : Number.NEGATIVE_INFINITY;
     const toTime = clientSinceTo ? Date.parse(`${clientSinceTo}T23:59:59.999`) : Number.POSITIVE_INFINITY;
-    const matchesSearch = !query || [client.name, client.company || '', client.email].some((value) => value.toLowerCase().includes(query));
+    const matchesSearch = matchesClientSearch(client, query);
     const matchesCompany = !companyQuery || (client.company || '').toLowerCase().includes(companyQuery);
     const matchesDate = (!clientSinceFrom && !clientSinceTo) || (Number.isFinite(createdAt) && createdAt >= fromTime && createdAt <= toTime);
     const matchesQuickFilter = clientQuickFilter === 'All'

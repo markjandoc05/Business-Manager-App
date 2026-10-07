@@ -8,7 +8,7 @@ import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 const PROJECT_ID = 'demo-bsm-client-app';
 const PORT = 3104;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
-if (!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_AUTH_EMULATOR_HOST) throw new Error('Record delete API tests require Firestore and Auth emulators.');
+for (const name of ['FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST']) if (!/^(127\.0\.0\.1|localhost):\d+$/.test(process.env[name] || '')) throw new Error('Record delete API tests require loopback Firestore and Auth emulators.');
 process.env.GOOGLE_CLOUD_PROJECT = PROJECT_ID;
 process.env.GCLOUD_PROJECT = PROJECT_ID;
 process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID = PROJECT_ID;
@@ -53,7 +53,7 @@ async function request(token, path, options = {}) {
 
 async function startNext() {
   server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'dev', '--hostname', '127.0.0.1', '--port', String(PORT)], {
-    cwd: process.cwd(), env: { ...process.env, GOOGLE_CLOUD_PROJECT: PROJECT_ID, GCLOUD_PROJECT: PROJECT_ID }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: process.cwd(), env: { ...process.env, GOOGLE_CLOUD_PROJECT: PROJECT_ID, GCLOUD_PROJECT: PROJECT_ID, NEXT_DIST_DIR: '.next-record-delete-tests', NEXT_PUBLIC_FIREBASE_API_KEY: 'demo-key', NEXT_PUBLIC_FIREBASE_APP_ID: 'demo-app', NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: `${PROJECT_ID}.firebaseapp.com`, NEXT_PUBLIC_USE_FIREBASE_EMULATORS: 'true', NEXT_PUBLIC_LOCAL_UAT: 'true', NEXT_TELEMETRY_DISABLED: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
   });
   const output = [];
   server.stdout.on('data', (chunk) => output.push(chunk.toString()));
@@ -154,4 +154,19 @@ test('Permanent delete route rejects cross-organization access', async () => {
   await otherOrganization.collection('clients').doc(clientId).set({ name: 'Other Client', status: 'ARCHIVED', archived: true, trashed: true });
   const response = await request(actor.token, `/api/organizations/${otherOrganizationId}/records/client/${clientId}`, { method: 'DELETE' });
   assert.equal(response.status, 403);
+});
+
+test('USER lifecycle previews deny unassigned converted Leads while retaining assigned Lead and Client access', async () => {
+  const actor = await createToken('preview-user'); const organizationId = id('preview-org');
+  const organization = await seedOrganization(actor, organizationId, 'USER');
+  const convertedClientId = id('converted-client'); await organization.collection('clients').doc(convertedClientId).set({ name: 'Private Client' });
+  for (const assigned of [false, true]) {
+    const leadId = id('lead');
+    await organization.collection('leads').doc(leadId).set({ name: 'Converted Lead', status: 'Client', assignedToUid: assigned ? actor.uid : 'other-user', convertedClientId });
+    const response = await request(actor.token, `/api/organizations/${organizationId}/records/lead/${leadId}?action=archive`);
+    assert.equal(response.status, assigned ? 200 : 403);
+    if (!assigned) assert.equal((await response.text()).includes('Private Client'), false);
+  }
+  const clientPreview = await request(actor.token, `/api/organizations/${organizationId}/records/client/${convertedClientId}?action=archive`);
+  assert.equal(clientPreview.status, 200);
 });

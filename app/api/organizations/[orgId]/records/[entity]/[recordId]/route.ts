@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
 import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
 import { assertClientFinancialRetention } from '@/lib/server/financial-retention';
+import { canInspectLifecycleRecord } from '@/lib/server/lifecycle-access';
 import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 import { evaluateLifecycle, type LifecycleAction, type LifecycleDependencies, type LifecycleEntity } from '@/lib/record-lifecycle';
 
@@ -70,12 +71,13 @@ type CleanupPlan = {
   documents: CleanupDocument[];
 };
 
-async function buildCleanupPlan(entity: LifecycleEntity, organizationId: string, recordId: string, action: LifecycleAction): Promise<CleanupPlan> {
+async function buildCleanupPlan(entity: LifecycleEntity, organizationId: string, recordId: string, action: LifecycleAction, viewer?: { uid: string; role: string }): Promise<CleanupPlan> {
   const organization = adminDb.doc(`organizations/${organizationId}`);
   if (entity === 'Lead') {
     const lead = await organization.collection('leads').doc(recordId).get();
     if (!lead.exists) throw new Error('NOT_FOUND');
     const data = lead.data() || {};
+    if (viewer && !canInspectLifecycleRecord(entity, viewer.role, viewer.uid, data)) throw new Error('FORBIDDEN');
     const taskQuery = organization.collection('tasks').where('relatedTo.id', '==', recordId);
     const taskActivityQuery = action === 'permanent-delete' ? organization.collection('activities').where('entityType', '==', 'Task') : undefined;
     const timelineQuery = lead.ref.collection('timeline');
@@ -168,8 +170,8 @@ async function getAuthorizedMembership(organizationId: string, uid: string) {
   return { organization, organizationSnapshot, membership };
 }
 
-async function getDecision(entity: LifecycleEntity, organizationId: string, recordId: string, action: LifecycleAction) {
-  const plan = await buildCleanupPlan(entity, organizationId, recordId, action);
+async function getDecision(entity: LifecycleEntity, organizationId: string, recordId: string, action: LifecycleAction, viewer?: { uid: string; role: string }) {
+  const plan = await buildCleanupPlan(entity, organizationId, recordId, action, viewer);
   return { plan, decision: evaluateLifecycle(entity, action, plan.dependencies) };
 }
 
@@ -236,11 +238,13 @@ export async function GET(request: NextRequest, context: { params: Promise<{ org
   const entity = normalizeEntity(rawEntity);
   const action = normalizeAction(new URL(request.url).searchParams.get('action'));
   if (!validId(orgId) || !validId(recordId) || !entity || !action) return response(400, { error: 'Invalid lifecycle preview request.' });
-  if (!await getAuthorizedMembership(orgId, uid)) return response(403, { error: 'You are not allowed to inspect this record lifecycle.' });
+  const authorization = await getAuthorizedMembership(orgId, uid);
+  if (!authorization || !['ADMIN', 'MANAGER', 'USER'].includes(String(authorization.membership.role))) return response(403, { error: 'You are not allowed to inspect this record lifecycle.' });
   try {
-    const { decision } = await getDecision(entity, orgId, recordId, action);
+    const { decision } = await getDecision(entity, orgId, recordId, action, { uid, role: String(authorization.membership.role) });
     return NextResponse.json({ ok: true, entity, recordId, action, decision });
   } catch (error) {
+    if (error instanceof Error && error.message === 'FORBIDDEN') return response(403, { error: 'You are not allowed to inspect this record lifecycle.' });
     if (error instanceof Error && error.message === 'NOT_FOUND') return response(404, { error: `The ${entity.toLowerCase()} could not be found.` });
     return response(500, { error: 'Unable to evaluate this lifecycle action.' });
   }
