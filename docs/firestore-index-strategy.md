@@ -2,7 +2,16 @@
 
 The Client App's `firestore.indexes.json` is the canonical V1 composite-index manifest for both BSM Client App and BSM Console App. Both applications use Firebase project `bsm-client-app-web`.
 
-The Console repository does not maintain a second index definition. Its Firebase configuration references this manifest. Console's current organization, member-status, license/settings, and createdAt-only audit-log queries require no additional composite indexes.
+The Console repository does not maintain a second index definition. Its Firebase configuration references this manifest. Console's current organization, member-status, license/settings, and createdAt-only audit-log queries require no additional composite indexes. Organization-filtered Console audit pagination requires the following composite index, included in this shared manifest:
+
+```text
+collectionGroup: platformAuditLogs
+queryScope: COLLECTION
+organizationId ASCENDING
+createdAt DESCENDING
+```
+
+The index source is prepared locally; filtered-query acceptance still requires a separately authorized deployment and readiness check. Adding this index does not change documents, roles, rules, or tenant lifecycle data.
 
 The current membership discovery index is collection-group scoped:
 

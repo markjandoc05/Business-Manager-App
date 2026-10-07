@@ -46,6 +46,7 @@ const requiredIndexes = [
   ['tasks', 'COLLECTION', [['archived', 'ASCENDING'], ['status', 'ASCENDING'], ['dueDate', 'ASCENDING']]],
   ['tasks', 'COLLECTION', [['assignedToUid', 'ASCENDING'], ['archived', 'ASCENDING'], ['status', 'ASCENDING'], ['dueDate', 'ASCENDING']]],
   ['activities', 'COLLECTION', [['entityType', 'ASCENDING'], ['entityId', 'ASCENDING']]],
+  ['platformAuditLogs', 'COLLECTION', [['organizationId', 'ASCENDING'], ['createdAt', 'DESCENDING']]],
 ];
 
 for (const [collectionGroup, queryScope, fields] of requiredIndexes) {
@@ -62,4 +63,4 @@ assert.ok(requiredFieldOverride, 'Missing required COLLECTION_GROUP ASCENDING si
 
 const fieldOverrideIndexCount = manifest.fieldOverrides.reduce((count, override) => count + (override.indexes || []).length, 0);
 console.log(`Validated ${manifest.indexes.length + fieldOverrideIndexCount} canonical Firestore indexes (${manifest.indexes.length} composite, ${fieldOverrideIndexCount} single-field overrides); no exact duplicates found.`);
-console.log('Console critical organization, member-status, license/settings, and createdAt-only audit-log queries require no additional composite index.');
+console.log('Console organization-filtered audit pagination requires the validated platformAuditLogs organizationId/createdAt composite index; createdAt-only audit queries require no additional composite index.');
