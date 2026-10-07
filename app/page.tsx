@@ -373,6 +373,9 @@ export default function DashboardPage() {
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
   const [leadSaving, setLeadSaving] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskError, setTaskError] = useState<string | null>(null);
+  const taskSaveRef = useRef(false);
 
   const handleCompleteDashboardTask = async (taskId: string) => {
     if (!canWrite || completingTaskId === taskId) return;
@@ -385,8 +388,14 @@ export default function DashboardPage() {
   };
 
   const openQuickAction = (modal: 'lead' | 'client' | 'task') => {
+    if (taskSaveRef.current) return;
     if (modal === 'lead') setLeadError(null);
+    if (modal === 'task') setTaskError(null);
     setActiveModal(modal);
+  };
+
+  const closeQuickAction = () => {
+    if (!taskSaveRef.current) setActiveModal(null);
   };
 
   // KPI Calculations
@@ -487,18 +496,28 @@ export default function DashboardPage() {
     setActiveModal(null);
   };
 
-  const handleCreateTask = (e: React.FormEvent) => {
+  const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!taskForm.title) return;
-    addTask({
-      title: taskForm.title,
-      description: taskForm.description,
-      type: 'Follow-up',
-      dueDate: taskForm.dueDate || new Date().toISOString().split('T')[0],
-      priority: taskForm.priority,
-    });
-    setTaskForm({ title: '', description: '', dueDate: '', priority: 'Medium' });
-    setActiveModal(null);
+    if (!taskForm.title || taskSaveRef.current || !canManageTasksAction) return;
+    taskSaveRef.current = true;
+    setTaskSaving(true);
+    setTaskError(null);
+    try {
+      await addTask({
+        title: taskForm.title,
+        description: taskForm.description,
+        type: 'Follow-up',
+        dueDate: taskForm.dueDate,
+        priority: taskForm.priority,
+      });
+      setTaskForm({ title: '', description: '', dueDate: '', priority: 'Medium' });
+      setActiveModal(null);
+    } catch (error) {
+      setTaskError(userFacingErrorMessage(error, 'Unable to save the Task. Please try again.'));
+    } finally {
+      taskSaveRef.current = false;
+      setTaskSaving(false);
+    }
   };
 
   return (
@@ -510,9 +529,9 @@ export default function DashboardPage() {
           subtitle="Overview of your sales, follow-ups, and activity."
           actions={<>
             <div className="dashboard-desktop-actions hidden w-full gap-2 sm:flex sm:w-auto">
-              {canManage && <Button disabled={!workspaceReady} onClick={() => { setLeadError(null); setActiveModal('lead'); }} className="gap-2"><Plus size={16} /> Add Lead</Button>}
-              <Button variant="outline" disabled={!canManageClientsAction} onClick={() => setActiveModal('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
-              <Button variant="outline" disabled={!canManageTasksAction} onClick={() => setActiveModal('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
+              {canManage && <Button disabled={!workspaceReady} onClick={() => openQuickAction('lead')} className="gap-2"><Plus size={16} /> Add Lead</Button>}
+              <Button variant="outline" disabled={!canManageClientsAction} onClick={() => openQuickAction('client')} className="gap-2"><Plus size={16} /> Add Client</Button>
+              <Button variant="outline" disabled={!canManageTasksAction} onClick={() => openQuickAction('task')} className="gap-2"><Plus size={16} /> Add Task</Button>
             </div>
 
           </>}
@@ -780,7 +799,7 @@ export default function DashboardPage() {
       {activeModal && (
         <div className="app-modal fixed inset-0 z-50 flex items-center justify-center bg-[var(--app-primary)]/45 p-4">
           <div className="app-modal-panel relative w-full max-w-lg space-y-5 p-5" role="dialog" aria-modal="true" aria-label={`${activeModal === 'lead' ? 'Add Lead' : activeModal === 'client' ? 'Add Client' : 'Add Task'} dialog`}>
-              <div className="absolute right-3 top-3"><ModalCloseButton onClose={() => setActiveModal(null)} /></div>
+              <div className="absolute right-3 top-3"><ModalCloseButton onClose={closeQuickAction} /></div>
 
               {activeModal === 'lead' && (
                 <form onSubmit={handleCreateLead} className="space-y-4">
@@ -898,6 +917,7 @@ export default function DashboardPage() {
               {activeModal === 'task' && (
                 <form onSubmit={handleCreateTask} className="space-y-4">
                   <h3 className="text-lg font-bold text-[var(--app-text)]">Create Task & Follow-up</h3>
+                  {taskError && <p role="alert" className="text-sm text-[var(--app-danger)]">{taskError}</p>}
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Task Title</label>
                     <input 
@@ -910,9 +930,9 @@ export default function DashboardPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Due Date</label>
+                      <label className="text-xs font-bold text-[var(--app-muted)] uppercase">Due date and time (your local timezone)</label>
                       <input 
-                        type="date" 
+                        type="datetime-local"
                         required 
                         className="w-full px-4 py-2 border border-[var(--app-border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-primary)]"
                         value={taskForm.dueDate}
@@ -942,8 +962,8 @@ export default function DashboardPage() {
                     />
                   </div>
                   <div className="app-modal-footer">
-                    <Button type="button" variant="outline" onClick={() => setActiveModal(null)}>Cancel</Button>
-                    <Button type="submit">Create Task</Button>
+                    <Button type="button" variant="outline" disabled={taskSaving} onClick={closeQuickAction}>Cancel</Button>
+                    <Button type="submit" disabled={taskSaving}>{taskSaving ? 'Saving…' : 'Create Task'}</Button>
                   </div>
                 </form>
               )}
