@@ -1219,9 +1219,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     requireWritableLicense();
     if (!currentOrganizationId) throw new Error('No active organization is selected.');
-    await updateTaskRepository(user, currentOrganizationId, taskId, taskData);
+    const saved = await updateTaskRepository(user, currentOrganizationId, taskId, taskData);
     invalidateDashboardMetrics(currentOrganizationId);
-    setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...taskData, updatedAt: new Date().toISOString() } : task));
+    setTasks(prev => prev.map(task => task.id === taskId ? { ...task, ...saved, updatedAt: new Date().toISOString() } : task));
   };
 
   const completeTask = async (taskId: string) => {

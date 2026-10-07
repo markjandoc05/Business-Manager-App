@@ -1,4 +1,5 @@
 import type { Task } from '@/types';
+import { isLegacyTaskSchedule } from './task-schedule.ts';
 
 export type TaskDisplayState = 'Scheduled' | 'Overdue' | 'Completed' | 'Pending';
 export type TaskCalendarBucket = 'Today' | 'Upcoming' | 'Overdue' | 'Invalid';
@@ -26,12 +27,14 @@ export function getTaskDisplayState(task: Task, now = Date.now()): TaskDisplaySt
 }
 
 export function formatTaskDueDate(value: string, timezone?: string) {
+  if (isLegacyTaskSchedule(value)) return `${value.replace('T', ' ')} (timezone unknown)`;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return 'No valid due date';
   return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', ...(timezone ? { timeZone: timezone } : {}) });
 }
 
 export function formatCompactDateTime(value: string, timezone?: string) {
+  if (isLegacyTaskSchedule(value)) return `${value.replace('T', ' ')} (timezone unknown)`;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return 'No valid date';
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', ...(timezone ? { timeZone: timezone } : {}) });

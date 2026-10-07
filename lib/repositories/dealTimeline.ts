@@ -95,6 +95,9 @@ export async function createDealTimelineEntry(
 }
 
 export function dealSystemTimelineRef(organizationId: string, dealId: string, event: string) {
+  // Each repeatable operation allocates once per batch; Firestore's retries
+  // reuse this reference. Creation keeps its existing stable event identity.
+  if (event !== 'created' && event !== 'system-created') return doc(timelineCollection(organizationId, dealId));
   return organizationSubcollectionDocument(db, organizationId, 'deals', dealId, 'timeline', `system-${event}`);
 }
 

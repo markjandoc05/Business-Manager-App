@@ -15,13 +15,13 @@ import { canManageTasks } from '@/lib/permissions';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import type { Task } from '@/types';
 import { Archive, Check, Pencil, Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
-import { format } from 'date-fns';
 import { getDefaultAssignment } from '@/lib/ownership';
 import { ConfirmActionDialog } from '@/components/ConfirmActionDialog';
 import { IconActionButton } from '@/components/IconActionButton';
 import { LoadedListStatus } from '@/components/LoadedListStatus';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
-import { getTaskCalendarBucket } from '@/lib/task-utils';
+import { formatTaskDueDate, getTaskCalendarBucket } from '@/lib/task-utils';
+import { isLegacyTaskSchedule } from '@/lib/task-schedule';
 import { getTaskById } from '@/lib/repositories/tasks';
 import { useRecordDetails } from '@/hooks/use-record-details';
 import { TaskDetailsModal } from '@/components/TaskDetailsModal';
@@ -34,6 +34,7 @@ const emptyForm: TaskForm = { title: '', description: '', type: 'Follow-up', due
 
 function toDateTimeInput(value?: string) {
   if (!value) return '';
+  if (isLegacyTaskSchedule(value)) return value.slice(0, 16);
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return '';
   const offset = date.getTimezoneOffset();
@@ -43,10 +44,6 @@ function currentDateTimeInput() {
   const date = new Date();
   const offset = date.getTimezoneOffset();
   return new Date(date.getTime() - offset * 60_000).toISOString().slice(0, 16);
-}
-function formatTaskDueDate(value: string) {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? format(date, 'MMM d, yyyy h:mm a') : 'No valid due date';
 }
 function relatedValue(relatedTo?: Task['relatedTo']) { return relatedTo ? `${relatedTo.type}:${relatedTo.id}` : ''; }
 function parseRelated(value: string): Task['relatedTo'] {
@@ -196,7 +193,7 @@ function TaskFields({ form, setForm, leads, clients, deals, users, usersLoading,
     <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Title<input required className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" value={form.title} onChange={(event) => update({ title: event.target.value })} /></label>
     <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Description<textarea className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" rows={3} value={form.description || ''} onChange={(event) => update({ description: event.target.value })} /></label>
     <div className="grid gap-4 sm:grid-cols-2">
-      <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Schedule Date &amp; Time<input required type="datetime-local" className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" value={toDateTimeInput(form.dueDate)} onChange={(event) => update({ dueDate: event.target.value })} /></label>
+      <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Schedule Date &amp; Time (your local timezone)<input required type="datetime-local" className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" value={toDateTimeInput(form.dueDate)} onChange={(event) => update({ dueDate: event.target.value })} /></label>
       <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Priority<select className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" value={form.priority} onChange={(event) => update({ priority: event.target.value as Task['priority'] })}><option>Low</option><option>Medium</option><option>High</option></select></label>
     </div>
     {canAssign ? <label className="block space-y-2 text-xs font-bold uppercase text-[var(--app-muted)]">Assigned To<select className="w-full rounded-xl border border-[var(--app-border)] px-4 py-2 text-sm font-normal normal-case" value={form.assignedToUid} disabled={usersLoading} onChange={(event) => { const assignee = users.find((item) => item.uid === event.target.value); update({ assignedToUid: event.target.value, assignedToName: assignee?.name || '' }); }}><option value="">Unassigned</option>{form.assignedToUid && !users.some((item) => item.uid === form.assignedToUid) && <option value={form.assignedToUid}>{form.assignedToName || 'Legacy assignee'}</option>}{users.map((item) => <option key={item.uid} value={item.uid}>{item.name} ({item.role})</option>)}</select></label> : <div className="text-xs font-bold uppercase text-[var(--app-muted)]">Assigned To<div className="mt-2 rounded-xl border border-[var(--app-border)] bg-[var(--app-surface-subtle)] px-4 py-2 text-sm font-normal normal-case text-[var(--app-text)]">{form.assignedToName || 'You'}</div></div>}

@@ -206,6 +206,8 @@ export async function completeLeadTimelineActivity(
 }
 
 export function systemTimelineRef(organizationId: string, leadId: string, event: 'created' | 'lost' | 'converted') {
+  // Lost can recur after reopening. Conversion retains its transaction identity.
+  if (event === 'lost') return doc(organizationSubcollection(db, organizationId, 'leads', leadId, 'timeline'));
   return organizationSubcollectionDocument(db, organizationId, 'leads', leadId, 'timeline', `system-${event}`);
 }
 

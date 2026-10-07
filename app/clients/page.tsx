@@ -54,6 +54,7 @@ import { getDealProductServiceName, getDealValue } from '@/lib/deal-items';
 import type { ClientTabCounts } from '@/lib/repositories/clientCounts';
 import { listActivitiesForClientPage } from '@/lib/repositories/activities';
 import { activityBelongsToClient } from '@/lib/activity-history';
+import { isLegacyTaskSchedule } from '@/lib/task-schedule';
 import { userFacingErrorMessage } from '@/lib/repositories/pagination';
 import { getClientDocumentSizeError } from '@/lib/client-documents';
 import { CLIENT_PAGE_SIZE, getClientById } from '@/lib/repositories/clients';
@@ -77,6 +78,7 @@ function currentDateTimeValue() {
 }
 
 function toDateTimeInput(value?: string) {
+  if (value && isLegacyTaskSchedule(value)) return value.slice(0, 16);
   if (!value || !isValidDate(value)) return currentDateTimeValue();
   const date = new Date(value);
   const offset = date.getTimezoneOffset();

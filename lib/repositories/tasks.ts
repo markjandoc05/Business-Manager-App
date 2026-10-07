@@ -1,4 +1,4 @@
-import { collection, deleteDoc, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
+import { collection, deleteDoc, deleteField, doc, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, where, writeBatch, type QueryConstraint } from 'firebase/firestore';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Task } from '@/types';
@@ -8,6 +8,7 @@ import { organizationCollection, organizationDocumentInCollection } from '@/lib/
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { firestoreQueryErrorMessage } from '@/lib/repositories/pagination';
 import { addActivityToBatch } from '@/lib/repositories/activityEvents';
+import { normalizeTaskSchedule } from '@/lib/task-schedule';
 
 export const TASK_PAGE_SIZE = 25;
 export type TaskListFilters = { status?: Task['status'] | 'All'; priority?: Task['priority'] | 'All'; due?: 'Today' | 'Upcoming' | 'Overdue' | 'All'; type?: Task['type'] | 'All' };
@@ -66,12 +67,12 @@ function reportFirestoreFailure(operation: string, error: unknown, details: Reco
   console.error(`[Firestore] tasks:${operation} failed code=${firebaseError.code || 'unknown'} message=${firebaseError.message || 'unknown error'}`, details);
 }
 
-function taskPayload(input: TaskInput) {
+function taskPayload(input: TaskInput, previous?: Task) {
   return {
     title: input.title.trim(),
     description: input.description?.trim() || '',
-    type: input.type === 'Task' ? 'Task' : 'Follow-up',
-    dueDate: input.dueDate,
+    type: input.type === 'Task' ? 'Task' as const : 'Follow-up' as const,
+    dueDate: normalizeTaskSchedule(input.dueDate, previous?.dueDate),
     priority: input.priority,
     ...(input.relatedTo ? { relatedTo: input.relatedTo } : {}),
     assignedToUid: input.assignedToUid?.trim() || '',
@@ -176,9 +177,10 @@ export async function createTask(user: AppUser | null, organizationId: string, i
   if (!user) throw new Error('You must be signed in to create a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
   const relatedClientId = await requireRelatedRecords(organizationId, input.relatedTo);
+  const normalized = taskPayload(input);
 
   try {
-    const payload = { ...taskPayload(input), ...(await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName, membership)) };
+    const payload = { ...normalized, ...(await resolveAssignment(user, organizationId, input.assignedToUid, input.assignedToName, membership)) };
     const taskRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'tasks'));
     const taskData = {
       ...payload,
@@ -213,11 +215,13 @@ export async function updateTask(user: AppUser | null, organizationId: string, t
   if (!user) throw new Error('You must be signed in to update a task.');
   if (!input.title.trim() || !input.dueDate) throw new Error('Task title and due date are required.');
   const metadata = await taskActivityMetadata(organizationId, input.relatedTo);
+  const payload = taskPayload(input, existingTask);
   try {
     const batch = writeBatch(db);
-    batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { ...taskPayload(input), updatedAt: serverTimestamp(), updatedBy: user.uid });
+    batch.update(organizationDocumentInCollection(db, organizationId, 'tasks', taskId), { ...payload, relatedTo: input.relatedTo || deleteField(), updatedAt: serverTimestamp(), updatedBy: user.uid });
     addActivityToBatch(batch, organizationId, user, { type: 'task_update', description: `Task edited: ${input.title.trim()}`, entityType: 'Task', entityId: taskId, ...(metadata ? { metadata } : {}) });
     await batch.commit();
+    return { ...payload, relatedTo: input.relatedTo };
   } catch (error) {
     reportFirestoreFailure('update', error, { role: membership.role, relatedType: input.relatedTo?.type || 'None' });
     throw new Error('Unable to update the task. Please try again.');
