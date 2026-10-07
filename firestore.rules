@@ -472,60 +472,6 @@ service cloud.firestore {
         || (request.resource.data.items is list && request.resource.data.items.size() <= 50);
     }
 
-    function saleHasValidPayment() {
-      return (request.resource.data.paymentStatus == 'PAID'
-        && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
-          && request.resource.data.amountPaid == request.resource.data.total
-          && request.resource.data.balance == 0)
-        || (request.resource.data.paymentStatus == 'PARTIAL'
-          && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
-          && request.resource.data.amountPaid > 0
-          && request.resource.data.amountPaid < request.resource.data.total
-          && request.resource.data.balance == request.resource.data.total - request.resource.data.amountPaid)
-        || (request.resource.data.paymentStatus == 'UNPAID'
-          && request.resource.data.amountPaid == 0
-          && request.resource.data.balance == request.resource.data.total
-          && request.resource.data.paymentMethod == null);
-    }
-
-    function saleHasValidCreationData(organizationId) {
-      // Individual snapshot maps are normalized by the Sales repository; rules
-      // bound their count and lock the financial/lifecycle invariants.
-      return request.resource.data.saleNumber is string
-        && request.resource.data.saleDate is string
-        && request.resource.data.customerType in ['WALK_IN', 'CLIENT']
-        && request.resource.data.customerName is string
-        && request.resource.data.items is list
-        && request.resource.data.items.size() >= 1
-        && request.resource.data.items.size() <= 50
-        && request.resource.data.subtotal is number
-        && request.resource.data.total is number
-        && request.resource.data.subtotal >= 0
-        && request.resource.data.total == request.resource.data.subtotal
-        && request.resource.data.amountPaid is number
-        && request.resource.data.balance is number
-        && request.resource.data.amountPaid >= 0
-        && request.resource.data.balance >= 0
-        && saleHasValidPayment()
-        && (!request.resource.data.keys().hasAny(['source']) || request.resource.data.source in ['WALK_IN', 'CLIENT', 'DEAL'])
-        && ((request.resource.data.customerType == 'WALK_IN' && request.resource.data.clientId == null)
-          || (request.resource.data.customerType == 'CLIENT'
-            && request.resource.data.clientId is string
-            && exists(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId))
-            && get(/databases/$(database)/documents/organizations/$(organizationId)/clients/$(request.resource.data.clientId)).data.status != 'ARCHIVED'))
-        && ((!request.resource.data.keys().hasAny(['source']) || request.resource.data.source != 'DEAL')
-          || (request.resource.data.source == 'DEAL'
-            && request.resource.data.customerType == 'CLIENT'
-            && request.resource.data.dealId is string
-            && exists(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId))
-            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.status == 'Won'
-            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.stage == 'Won'
-            && get(/databases/$(database)/documents/organizations/$(organizationId)/deals/$(request.resource.data.dealId)).data.clientId == request.resource.data.clientId))
-        && (!request.resource.data.keys().hasAny(['dealId'])
-          || (request.resource.data.keys().hasAny(['source'])
-            && request.resource.data.source == 'DEAL'
-            && request.resource.data.dealId is string));
-    }
 
     match /organizations/{organizationId}/catalogCategories/{categoryId} {
       allow read: if organizationCanView(organizationId);
@@ -799,46 +745,13 @@ service cloud.firestore {
     // management never changes financial totals.
     match /organizations/{organizationId}/sales/{saleId} {
       allow read: if organizationCanView(organizationId);
-      allow create: if organizationCanManageWrite(organizationId)
-        && request.resource.data.keys().hasOnly(['saleNumber', 'saleDate', 'customerType', 'source', 'customerName', 'clientId', 'dealId', 'items', 'subtotal', 'total', 'paymentStatus', 'paymentMethod', 'amountPaid', 'balance', 'notes', 'status', 'archived', 'archivedAt', 'archivedBy', 'trashed', 'trashedAt', 'trashedBy', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'])
-        && saleHasValidCreationData(organizationId)
-        && request.resource.data.status == 'ACTIVE'
-        && request.resource.data.archived == false
-        && request.resource.data.archivedAt == null
-        && request.resource.data.archivedBy == null
-        && request.resource.data.trashed == false
-        && request.resource.data.trashedAt == null
-        && request.resource.data.trashedBy == null
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.createdAt is timestamp
-        && request.resource.data.updatedAt is timestamp
-        && ((!request.resource.data.keys().hasAny(['source']) || request.resource.data.source != 'DEAL')
-          || (getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(request.resource.data.dealId)).data.status == 'ACTIVE'
-            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/dealSaleLocks/$(request.resource.data.dealId)).data.saleId == saleId));
+      // Financial creation is authorized and validated by the server transaction.
+      allow create: if false;
       allow update: if organizationCanManageWrite(organizationId)
         && (
-          // Record an additional payment and update the Sale aggregate in the
-          // same atomic request. Product, customer, and total fields stay fixed.
-          (resource.data.status == 'ACTIVE'
-            && request.resource.data.status == 'ACTIVE'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paymentStatus', 'paymentMethod', 'amountPaid', 'balance', 'lastPaymentId', 'updatedAt', 'updatedBy'])
-            && request.resource.data.lastPaymentId is string
-            && request.resource.data.paymentMethod in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
-            && request.resource.data.amountPaid is number
-            && request.resource.data.amountPaid > resource.data.amountPaid
-            && request.resource.data.amountPaid <= resource.data.total
-            && request.resource.data.balance == resource.data.total - request.resource.data.amountPaid
-            && ((request.resource.data.balance == 0 && request.resource.data.paymentStatus == 'PAID')
-              || (request.resource.data.balance > 0 && request.resource.data.paymentStatus == 'PARTIAL'))
-            && request.resource.data.updatedBy == request.auth.uid
-            && request.resource.data.updatedAt == request.time
-            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.saleId == saleId
-            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.amount == request.resource.data.amountPaid - resource.data.amountPaid
-            && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)/payments/$(request.resource.data.lastPaymentId)).data.method == request.resource.data.paymentMethod)
           // The only financial transition. Deal-linked Sales also release their
           // lock in this same atomic write.
-          || (resource.data.status == 'ACTIVE'
+          (resource.data.status == 'ACTIVE'
             && request.resource.data.status == 'VOIDED'
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'voidedAt', 'voidedBy', 'voidReason', 'updatedAt', 'updatedBy'])
             && request.resource.data.voidedAt is timestamp
@@ -899,18 +812,8 @@ service cloud.firestore {
 
       match /payments/{paymentId} {
         allow read: if organizationCanView(organizationId);
-        allow create: if organizationCanManageWrite(organizationId)
-          && request.resource.data.keys().hasOnly(['saleId', 'amount', 'method', 'paymentDate', 'notes', 'createdAt', 'createdBy'])
-          && request.resource.data.saleId == saleId
-          && request.resource.data.amount is number
-          && request.resource.data.amount > 0
-          && request.resource.data.method in ['CASH', 'GCASH', 'MAYA', 'BANK_TRANSFER', 'CARD', 'OTHER']
-          && request.resource.data.paymentDate is string
-          && (request.resource.data.notes == null || request.resource.data.notes is string)
-          && request.resource.data.createdAt == request.time
-          && request.resource.data.createdBy == request.auth.uid
-          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.lastPaymentId == paymentId
-          && getAfter(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.amountPaid == get(/databases/$(database)/documents/organizations/$(organizationId)/sales/$(saleId)).data.amountPaid + request.resource.data.amount;
+        // Server transactions alone create immutable receipts and advance totals.
+        allow create: if false;
         allow update, delete: if false;
       }
     }
@@ -1001,7 +904,7 @@ service cloud.firestore {
             && (!request.resource.data.keys().hasAny(['wonAt']) || request.resource.data.wonAt == null)
             && (resource.data.status == 'Lost' ? request.resource.data.lostAt == resource.data.lostAt : request.resource.data.lostAt == request.time)
             && request.resource.data.lossReason is string && request.resource.data.lossReason != ''));
-      allow delete: if organizationCanUpdateDeal(organizationId) && licenseAllowsWrites(organizationId) && resource.data.archived == true;
+      allow delete: if false; // Server deletion checks all historical Sales and locks.
     }
 
     match /organizations/{organizationId}/deals/{dealId}/timeline/{entryId} {

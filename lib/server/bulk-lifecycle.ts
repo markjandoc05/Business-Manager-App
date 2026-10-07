@@ -1,5 +1,6 @@
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
 import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { assertClientFinancialRetention } from '@/lib/server/financial-retention';
 import { evaluateLifecycle, type LifecycleDependencies, type LifecycleDecision, type LifecycleEntity } from '@/lib/record-lifecycle';
 
 export type BulkLifecycleAction = 'archive' | 'trash' | 'restore' | 'permanent-delete';
@@ -77,13 +78,14 @@ export async function buildBulkCleanupPlan(entity: LifecycleEntity, organization
   const taskActivityQuery = action === 'permanent-delete' ? organization.collection('activities').where('entityType', '==', 'Task') : undefined;
   const noteQuery = client.ref.collection('notes');
   const documentQuery = client.ref.collection('documents');
-  const [deals, tasks, taskActivities, activities, notes, documents] = await Promise.all([
+  const [deals, tasks, taskActivities, activities, notes, documents, sales] = await Promise.all([
     organization.collection('deals').where('clientId', '==', recordId).get(),
     taskQuery.get(),
     taskActivityQuery ? taskActivityQuery.get() : Promise.resolve(null),
     organization.collection('activities').where('entityType', '==', 'Client').where('entityId', '==', recordId).get(),
     noteQuery.get(),
     documentQuery.get(),
+    organization.collection('sales').where('clientId', '==', recordId).get(),
   ]);
   const relatedTasks = countRelatedTasks(tasks, 'Client', recordId);
   const relatedTaskActivities = taskActivities ? countTaskActivities(taskActivities, new Set(relatedTasks.map((item) => item.id))) : [];
@@ -106,6 +108,7 @@ export async function buildBulkCleanupPlan(entity: LifecycleEntity, organization
       activeDeals: deals.docs.filter((item) => item.data().archived !== true && item.data().status === 'Active').length,
       wonDeals: deals.docs.filter((item) => item.data().status === 'Won').length,
       lostDeals: deals.docs.filter((item) => item.data().status === 'Lost').length,
+      sales: sales.size,
       invalidDocuments: documents.size - documentRecords.length,
     },
     taskQuery,
@@ -157,6 +160,7 @@ async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: s
   await adminDb.runTransaction(async (transaction) => {
     const latest = await transaction.get(parentRef);
     if (!latest.exists || latest.data()?.trashed !== true) throw new Error('RECORD_CHANGED');
+    if (entity === 'Client') await assertClientFinancialRetention(transaction, parentRef.parent.parent!, recordId);
     const taskSnapshot = plan.taskQuery ? await transaction.get(plan.taskQuery) : null;
     const taskActivitySnapshot = plan.taskActivityQuery ? await transaction.get(plan.taskActivityQuery) : null;
     const timelineSnapshot = plan.timelineQuery ? await transaction.get(plan.timelineQuery) : null;
@@ -219,7 +223,7 @@ export async function executeBulkLifecycleAction(entity: LifecycleEntity, organi
       }
     } catch (error) {
       const message = error instanceof Error
-        ? error.message === 'RECORD_STATE' ? 'The record is no longer in the selected lifecycle view.' : error.message
+        ? error.message === 'FINANCIAL_REFERENCES' ? 'Permanent deletion is blocked by recorded financial history. Keep the Client archived or in Trash.' : error.message === 'RECORD_STATE' ? 'The record is no longer in the selected lifecycle view.' : error.message
         : 'The action failed.';
       results.push({ id, ok: false, error: message });
     }

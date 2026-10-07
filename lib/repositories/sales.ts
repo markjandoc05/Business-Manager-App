@@ -2,8 +2,9 @@ import { collection, count, doc, getAggregateFromServer, getDoc, getDocs, limit,
 import { db } from '@/lib/firebase/client';
 import { organizationCollection, organizationDocumentInCollection } from '@/lib/organizations/paths';
 import { requireOrganizationAccess } from '@/lib/permissions';
-import { createSaleNumber, normalizeAdditionalSalePayment, normalizeSaleDate, normalizeSalePayment } from '@/lib/sale-workflow';
-import { getSaleItemsTotal, normalizeSaleLineItems, readSaleLineItems } from '@/lib/sale-items';
+import { financialRequest } from '@/lib/repositories/financialRequest';
+import { normalizeSaleDate } from '@/lib/sale-workflow';
+import { getSaleItemsTotal, readSaleLineItems } from '@/lib/sale-items';
 import type { AppUser } from '@/types/auth';
 import type { Sale, SaleCustomerType, SaleLineItem, SalePayment, SalePaymentMethod, SalePaymentStatus, SaleSource } from '@/types';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
@@ -124,16 +125,6 @@ function mapSalePayment(id: string, data: Record<string, unknown>): SalePayment 
 
 async function requireSalesManager(user: AppUser | null, organizationId: string) {
   await requireOrganizationAccess(user, organizationId, ['ADMIN', 'MANAGER']);
-}
-
-function nextSaleNumber(documentId: string, settings: Record<string, unknown>, sequence: Record<string, unknown>, transaction: { set: (ref: ReturnType<typeof organizationDocumentInCollection>, data: Record<string, unknown>, options?: { merge?: boolean }) => void }, sequenceRef: ReturnType<typeof organizationDocumentInCollection>, uid: string) {
-  if (settings.salesReferenceMode !== 'SEQUENTIAL') return createSaleNumber(documentId);
-  const prefix = typeof settings.salesReferencePrefix === 'string' ? settings.salesReferencePrefix : 'SALE-';
-  const starting = typeof settings.salesReferenceStartingNumber === 'number' && settings.salesReferenceStartingNumber >= 1 ? Math.floor(settings.salesReferenceStartingNumber) : 1;
-  const digits = typeof settings.salesReferenceDigits === 'number' && settings.salesReferenceDigits >= 1 && settings.salesReferenceDigits <= 12 ? Math.floor(settings.salesReferenceDigits) : 6;
-  const current = typeof sequence.nextNumber === 'number' && sequence.nextNumber >= starting ? Math.floor(sequence.nextNumber) : starting;
-  transaction.set(sequenceRef, { nextNumber: current + 1, updatedAt: serverTimestamp(), updatedBy: uid }, { merge: true });
-  return `${prefix}${String(current).padStart(digits, '0')}`;
 }
 
 export async function listSalesPage(user: AppUser | null, organizationId: string, filters: SalesListFilters, cursor: FirestoreCursor = null, pageSize = SALES_PAGE_SIZE): Promise<PageResult<Sale>> {
@@ -328,85 +319,14 @@ export async function listSalePayments(user: AppUser | null, organizationId: str
 export async function recordSalePayment(user: AppUser | null, organizationId: string, saleId: string, input: RecordSalePaymentInput) {
   await requireSalesManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to record a payment.');
-  const paymentDate = normalizeSaleDate(input.paymentDate);
-  const saleRef = organizationDocumentInCollection(db, organizationId, 'sales', saleId);
-  const paymentRef = doc(collection(saleRef, 'payments'));
-  const notes = text(input.notes);
-  return runTransaction(db, async (transaction) => {
-    const snapshot = await transaction.get(saleRef);
-    if (!snapshot.exists()) throw new Error('The sale could not be found.');
-    const sale = snapshot.data();
-    if (sale.status !== 'ACTIVE') throw new Error('Payments cannot be added to a voided Sale.');
-    const payment = normalizeAdditionalSalePayment(sale.total, sale.amountPaid, input.amount, input.method);
-    transaction.set(paymentRef, { saleId, amount: payment.amount, method: payment.method, paymentDate, notes: notes || null, createdAt: serverTimestamp(), createdBy: user.uid });
-    transaction.update(saleRef, { paymentStatus: payment.paymentStatus, paymentMethod: payment.method, amountPaid: payment.amountPaid, balance: payment.balance, lastPaymentId: paymentRef.id, updatedAt: serverTimestamp(), updatedBy: user.uid });
-    return { paymentStatus: payment.paymentStatus, paymentMethod: payment.method, amountPaid: payment.amountPaid, balance: payment.balance };
-  });
+  return financialRequest<Pick<Sale, 'paymentStatus' | 'paymentMethod' | 'amountPaid' | 'balance'>>(user.uid, `/api/organizations/${encodeURIComponent(organizationId)}/sales/${encodeURIComponent(saleId)}/payments`, input);
 }
 
 export async function createSale(user: AppUser | null, organizationId: string, input: CreateSaleInput) {
   await requireSalesManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to record a sale.');
-  const saleDate = normalizeSaleDate(input.saleDate);
-  const items = normalizeSaleLineItems(input.items);
-  const total = getSaleItemsTotal(items);
-  const payment = normalizeSalePayment(total, input.paymentStatus, input.paymentMethod, input.amountPaid);
-  const customerType = input.customerType === 'CLIENT' ? 'CLIENT' : input.customerType === 'WALK_IN' ? 'WALK_IN' : null;
-  if (!customerType) throw new Error('Choose a customer type.');
-  let customerName = text(input.customerName);
-  let clientId: string | null = null;
-  if (customerType === 'CLIENT') {
-    clientId = text(input.clientId);
-    if (!clientId) throw new Error('Choose a client.');
-    const client = await getDoc(organizationDocumentInCollection(db, organizationId, 'clients', clientId));
-    if (!client.exists() || client.data().trashed === true || client.data().archived === true || client.data().status === 'ARCHIVED') throw new Error('The selected client is not available.');
-    customerName = text(client.data().name);
-    if (!customerName) throw new Error('The selected client has no name.');
-  }
-  const source: SaleSource = input.source || (customerType === 'CLIENT' ? 'CLIENT' : 'WALK_IN');
-  if (source === 'DEAL' && customerType !== 'CLIENT') throw new Error('Deal sales must be linked to a client.');
-  const dealId = text(input.dealId);
-  if (source === 'DEAL' && !dealId) throw new Error('The Deal reference is required.');
-  if (source !== 'DEAL' && dealId) throw new Error('Only Deal sales may include a Deal reference.');
-  const saleRef = doc(organizationCollection<Record<string, unknown>>(db, organizationId, 'sales'));
-  const notes = text(input.notes);
-  const baseSaleData = {
-    saleDate, customerType, source, customerName, clientId,
-    ...(dealId ? { dealId } : {}), items, subtotal: total, total, ...payment, paymentMethod: payment.paymentMethod || null, notes: notes || null, status: 'ACTIVE',
-    archived: false, archivedAt: null, archivedBy: null, trashed: false, trashedAt: null, trashedBy: null,
-    createdAt: serverTimestamp(), createdBy: user.uid, updatedAt: serverTimestamp(), updatedBy: user.uid,
-  };
-  if (source === 'DEAL' && dealId) {
-    const dealRef = organizationDocumentInCollection(db, organizationId, 'deals', dealId);
-    const clientRef = organizationDocumentInCollection(db, organizationId, 'clients', clientId as string);
-    const lockRef = organizationDocumentInCollection(db, organizationId, 'dealSaleLocks', dealId);
-    await runTransaction(db, async (transaction) => {
-      const settingsRef = organizationDocumentInCollection(db, organizationId, 'settings', 'settings');
-      const sequenceRef = organizationDocumentInCollection(db, organizationId, 'settings', 'salesSequence');
-      const settingsSnapshot = await transaction.get(settingsRef);
-      const sequenceSnapshot = await transaction.get(sequenceRef);
-      const dealSnapshot = await transaction.get(dealRef);
-      const clientSnapshot = await transaction.get(clientRef);
-      const lockSnapshot = await transaction.get(lockRef);
-      if (!dealSnapshot.exists() || dealSnapshot.data().status !== 'Won' || dealSnapshot.data().stage !== 'Won') throw new Error('Only Won Deals can be recorded as Sales.');
-      if (dealSnapshot.data().clientId !== clientId) throw new Error('The selected client does not match the Deal.');
-      if (!clientSnapshot.exists() || clientSnapshot.data().archived === true || clientSnapshot.data().trashed === true || clientSnapshot.data().status === 'ARCHIVED') throw new Error('The Deal client is not available.');
-      if (lockSnapshot.exists() && lockSnapshot.data().status === 'ACTIVE') throw new Error('An active Sale has already been recorded for this Deal.');
-      const saleNumber = nextSaleNumber(saleRef.id, settingsSnapshot.exists() ? settingsSnapshot.data() : {}, sequenceSnapshot.exists() ? sequenceSnapshot.data() : {}, transaction, sequenceRef, user.uid);
-      transaction.set(saleRef, { saleNumber, ...baseSaleData });
-      transaction.set(lockRef, { dealId, saleId: saleRef.id, status: 'ACTIVE', updatedAt: serverTimestamp(), updatedBy: user.uid });
-    });
-  } else {
-    const settingsRef = organizationDocumentInCollection(db, organizationId, 'settings', 'settings');
-    const sequenceRef = organizationDocumentInCollection(db, organizationId, 'settings', 'salesSequence');
-    await runTransaction(db, async (transaction) => {
-      const settingsSnapshot = await transaction.get(settingsRef);
-      const sequenceSnapshot = await transaction.get(sequenceRef);
-      const saleNumber = nextSaleNumber(saleRef.id, settingsSnapshot.exists() ? settingsSnapshot.data() : {}, sequenceSnapshot.exists() ? sequenceSnapshot.data() : {}, transaction, sequenceRef, user.uid);
-      transaction.set(saleRef, { saleNumber, ...baseSaleData });
-    });
-  }
-  return saleRef.id;
+  const result = await financialRequest<{ saleId: string }>(user.uid, `/api/organizations/${encodeURIComponent(organizationId)}/sales`, input);
+  return result.saleId;
 }
 
 export async function voidSale(user: AppUser | null, organizationId: string, saleId: string, reason?: string) {

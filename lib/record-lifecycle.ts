@@ -13,6 +13,7 @@ export type LifecycleDependencies = {
   activeDeals: number;
   wonDeals: number;
   lostDeals: number;
+  sales?: number;
   convertedClientName?: string;
 };
 
@@ -37,6 +38,7 @@ export const emptyLifecycleDependencies: LifecycleDependencies = {
   activeDeals: 0,
   wonDeals: 0,
   lostDeals: 0,
+  sales: 0,
 };
 
 function affectedRecords(dependencies: LifecycleDependencies) {
@@ -51,6 +53,7 @@ function affectedRecords(dependencies: LifecycleDependencies) {
       'Active Deals': dependencies.activeDeals,
       'Won Deals': dependencies.wonDeals,
       'Lost Deals': dependencies.lostDeals,
+      'Recorded Sales': dependencies.sales || 0,
     }).filter(([, count]) => count > 0),
   );
 }
@@ -73,6 +76,7 @@ function blockingRecords(dependencies: LifecycleDependencies) {
       'Active Deals': dependencies.activeDeals,
       'Won Deals': dependencies.wonDeals,
       'Lost Deals': dependencies.lostDeals,
+      'Recorded Sales': dependencies.sales || 0,
       'Invalid Documents': dependencies.invalidDocuments,
     }).filter(([, count]) => count > 0),
   );
@@ -81,6 +85,7 @@ function blockingRecords(dependencies: LifecycleDependencies) {
 function preservedRecords(entity: LifecycleEntity, dependencies: LifecycleDependencies) {
   const preserved: Record<string, number | string> = {};
   if (dependencies.activities > 0) preserved.Activities = dependencies.activities;
+  if (entity === 'Client' && dependencies.sales) preserved['Recorded Sales'] = dependencies.sales;
   if (entity === 'Lead' && dependencies.convertedClientName) preserved['Converted Client'] = dependencies.convertedClientName;
   return preserved;
 }
@@ -147,6 +152,16 @@ export function evaluateLifecycle(
       affectedRecords: affected,
       ...details,
       recommendedAction: 'Repair or remove the invalid Document first, then try again.',
+    };
+  }
+
+  if (entity === 'Client' && (dependencies.sales || 0) > 0) {
+    return {
+      outcome: 'BLOCKED',
+      reason: `This Client cannot be permanently deleted because it has ${dependencies.sales} recorded Sale${dependencies.sales === 1 ? '' : 's'} with retained financial history.`,
+      affectedRecords: affected,
+      ...details,
+      recommendedAction: 'Keep the Client in Trash or archive it to preserve its Sales and payment references.',
     };
   }
 

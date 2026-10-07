@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Timestamp, type Query, type QuerySnapshot } from 'firebase-admin/firestore';
 import { adminDb, adminStorageBucket } from '@/lib/server/firebase-admin';
+import { assertClientFinancialRetention } from '@/lib/server/financial-retention';
 import { getAuthenticatedUser, isApplicationUserActive } from '@/lib/server/auth';
 import { evaluateLifecycle, type LifecycleAction, type LifecycleDependencies, type LifecycleEntity } from '@/lib/record-lifecycle';
 
@@ -114,13 +115,14 @@ async function buildCleanupPlan(entity: LifecycleEntity, organizationId: string,
   const taskActivityQuery = action === 'permanent-delete' ? organization.collection('activities').where('entityType', '==', 'Task') : undefined;
   const noteQuery = client.ref.collection('notes');
   const documentQuery = client.ref.collection('documents');
-  const [deals, tasks, taskActivities, activities, notes, documents] = await Promise.all([
+  const [deals, tasks, taskActivities, activities, notes, documents, sales] = await Promise.all([
     organization.collection('deals').where('clientId', '==', recordId).get(),
     taskQuery.get(),
     taskActivityQuery ? taskActivityQuery.get() : Promise.resolve(null),
     organization.collection('activities').where('entityType', '==', 'Client').where('entityId', '==', recordId).get(),
     noteQuery.get(),
     documentQuery.get(),
+    organization.collection('sales').where('clientId', '==', recordId).get(),
   ]);
   const relatedTasks = countRelatedTasks(tasks, 'Client', recordId);
   const relatedTaskActivities = taskActivities ? countTaskActivities(taskActivities, new Set(relatedTasks.map((item) => item.id))) : [];
@@ -144,6 +146,7 @@ async function buildCleanupPlan(entity: LifecycleEntity, organizationId: string,
       activeDeals: deals.docs.filter((item) => item.data().archived !== true && item.data().status === 'Active').length,
       wonDeals: deals.docs.filter((item) => item.data().status === 'Won').length,
       lostDeals: deals.docs.filter((item) => item.data().status === 'Lost').length,
+      sales: sales.size,
       invalidDocuments: invalidDocumentCount,
     },
     taskQuery,
@@ -196,6 +199,7 @@ async function cleanupAndDeleteParent(entity: LifecycleEntity, organizationId: s
     await adminDb.runTransaction(async (transaction) => {
       const latest = await transaction.get(parentRef);
       if (!latest.exists || latest.data()?.trashed !== true) throw new Error('RECORD_CHANGED');
+      if (entity === 'Client') await assertClientFinancialRetention(transaction, parentRef.parent.parent!, recordId);
       const taskSnapshot = plan.taskQuery ? await transaction.get(plan.taskQuery) : null;
       const taskActivitySnapshot = plan.taskActivityQuery ? await transaction.get(plan.taskActivityQuery) : null;
       const timelineSnapshot = plan.timelineQuery ? await transaction.get(plan.timelineQuery) : null;
@@ -272,6 +276,7 @@ export async function DELETE(request: NextRequest, context: { params: Promise<{ 
     await cleanupAndDeleteParent(entity, orgId, recordId, plan);
     return NextResponse.json({ ok: true, decision });
   } catch (error) {
+    if (error instanceof Error && error.message === 'FINANCIAL_REFERENCES') return response(409, { error: 'Permanent deletion is blocked by recorded financial history. Keep the Client archived or in Trash.' });
     if (error instanceof Error && error.message === 'INVALID_DOCUMENT_REFERENCE') return response(409, { error: 'Permanent deletion is blocked because a document has an invalid stored file reference.', recommendedAction: 'Repair or remove the document individually, then try again.' });
     if (error instanceof Error && error.message === 'STORAGE_DELETE_FAILED') return response(502, { error: 'Unable to delete a stored document file. No success was reported; please try again.' });
     if (error instanceof Error && (error.message.includes('changed before deletion') || error.message.includes('Related records changed'))) return response(409, { error: error.message });

@@ -1,10 +1,11 @@
-import { count, deleteDoc, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, sum, where, writeBatch, type DocumentData } from 'firebase/firestore';
+import { count, doc, getAggregateFromServer, getDoc, getDocs, limit, orderBy, query, serverTimestamp, startAfter, sum, where, writeBatch, type DocumentData } from 'firebase/firestore';
 import type { FirestoreCursor, PageResult } from '@/lib/repositories/pagination';
 import { firestoreQueryErrorMessage, splitLookaheadPage } from '@/lib/repositories/pagination';
 import { db } from '@/lib/firebase/client';
 import type { AppUser, OrganizationMembership } from '@/types/auth';
 import type { Deal } from '@/types';
 import { requireOrganizationAccess } from '@/lib/permissions';
+import { authenticatedFetch } from '@/lib/repositories/authenticatedRequest';
 import { DEAL_ACTIVE_STAGES, getDealStatusForStage } from '@/lib/deal-workflow';
 import { getDealValue, normalizeDealLineItems, readDealLineItems } from '@/lib/deal-items';
 import { resolveAssignment } from '@/lib/ownership';
@@ -404,8 +405,7 @@ export async function restoreDeal(user: AppUser | null, organizationId: string, 
 export async function permanentlyDeleteDeal(user: AppUser | null, organizationId: string, dealId: string) {
   await requireDealManager(user, organizationId);
   if (!user) throw new Error('You must be signed in to delete a deal.');
-  const dealRef = organizationDocumentInCollection(db, organizationId, 'deals', dealId);
-  const snapshot = await getDoc(dealRef);
-  if (!snapshot.exists() || snapshot.data().archived !== true) throw new Error('Only archived deals can be permanently deleted.');
-  await deleteDoc(dealRef);
+  const response = await authenticatedFetch(`/api/organizations/${encodeURIComponent(organizationId)}/deals/${encodeURIComponent(dealId)}`, { method: 'DELETE' });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || 'Unable to delete the Deal.');
 }
